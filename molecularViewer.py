@@ -691,7 +691,7 @@ class MolecularViewer:
 
     def _update_measurement_label(self, text_value: str):
         if getattr(self, "measurement_label", None):
-            self.measurement_label.text = text_value
+            self.measurement_label.value = text_value
 
     def get_system_center(self, frame_data: Optional[Frame] = None):
         """Compute the center of the molecular system in the current frame."""
@@ -860,12 +860,20 @@ class MolecularViewer:
             return [(indices[0], indices[1]), (indices[1], indices[2]), (indices[2], indices[3])]
         return []
 
+    def get_atom_label(self, atom_index: int, frame_data: Optional[Frame] = None) -> str:
+        if frame_data is None:
+            frame_data = self.get_current_frame_data()
+        if atom_index < 0 or atom_index >= len(frame_data):
+            return str(atom_index + 1)
+        element, _ = frame_data[atom_index]
+        return f"{element}{atom_index + 1}"
+
     def compute_measurement_value(
         self,
         measure_type: Optional[str],
         indices: List[int],
         frame_data: Optional[Frame] = None,
-    ) -> Tuple[Optional[float], str]:
+    ) -> Tuple[Optional[object], str]:
         if frame_data is None:
             frame_data = self.get_current_frame_data()
 
@@ -901,12 +909,15 @@ class MolecularViewer:
                 w = b2 - np.dot(b2, b1) * b1
                 value = float(np.degrees(np.arctan2(np.dot(np.cross(b1, v), w), np.dot(v, w))))
                 return value, f"tau = {value:.3f} deg"
+            if measure_type == "Atom coordinates" and len(coords) == 1:
+                x, y, z = (float(coord) for coord in coords[0])
+                return (x, y, z), ""
         except Exception:
             return None, ""
 
         return None, ""
 
-    def format_measurement_label(self, measure_type: Optional[str], indices: List[int], value: Optional[float]) -> str:
+    def format_measurement_label(self, measure_type: Optional[str], indices: List[int], value: Optional[object]) -> str:
         if value is None or not measure_type:
             return "Measurement: "
         if measure_type == "Bond length" and len(indices) == 2:
@@ -915,6 +926,10 @@ class MolecularViewer:
             return f"Measurement: ∠({indices[0]+1},{indices[1]+1},{indices[2]+1}) = {value:.3f}°"
         if measure_type == "Dihedral angle" and len(indices) == 4:
             return f"Measurement: τ({indices[0]+1},{indices[1]+1},{indices[2]+1},{indices[3]+1}) = {value:.3f}°"
+        if measure_type == "Atom coordinates" and len(indices) == 1:
+            x, y, z = value
+            atom_label = self.get_atom_label(indices[0])
+            return f"Atom coordinates: {atom_label} {x:.4f} {y:.4f} {z:.4f}"
         return "Measurement: "
 
     def get_measurement_text_position(
@@ -1386,8 +1401,9 @@ class MolecularViewerUI(MolecularViewer):
             style=Pack(margin=(0, 0, 4, 4), text_align=LEFT, width=70),
         )
         self.measure_type_selection = toga.Selection(
-            items=["Bond length", "Bond angle", "Dihedral angle"],
-            style=Pack(width=120, margin=(4, 4)),
+            items=["Bond length", "Bond angle", "Dihedral angle", "Atom coordinates"],
+            style=Pack(width=150, margin=(4, 4)),
+            on_change=self.update_measurement_input_hint,
         )
         self.measure_type_selection.value = "Bond length"
         self.measure_indices_input = toga.TextInput(
@@ -1404,9 +1420,10 @@ class MolecularViewerUI(MolecularViewer):
         measure_box.add(self.measure_indices_input)
         measure_box.add(measure_button)
 
-        self.measurement_label = toga.Label(
-            "Measurement: ",
-            style=Pack(margin=(2, 0, 6, 0), font_size=10, text_align=LEFT),
+        self.measurement_label = toga.TextInput(
+            value="Measurement: ",
+            readonly=True,
+            style=Pack(margin=(2, 0, 6, 0), font_size=10),
         )
 
         box_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
@@ -1851,6 +1868,15 @@ class MolecularViewerUI(MolecularViewer):
             "Atomic symbols enabled." if self.show_atom_symbols else "Atomic symbols disabled."
         )
 
+    def update_measurement_input_hint(self, widget):
+        if not getattr(self, "measure_indices_input", None):
+            return
+        measure_type = self.measure_type_selection.value
+        if measure_type == "Atom coordinates":
+            self.measure_indices_input.placeholder = "Atom label, e.g. 5 or C-5"
+        else:
+            self.measure_indices_input.placeholder = "1,2 or 1,2,3 or 1,2,3,4"
+
     def _parse_measurement_indices(self, expected_count: int) -> List[int]:
         raw = (self.measure_indices_input.value or "").replace(';', ',')
         parts = [p.strip() for p in raw.split(',') if p.strip()]
@@ -1865,6 +1891,56 @@ class MolecularViewerUI(MolecularViewer):
             raise ValueError(f"Atom indices must be between 1 and {natoms}.")
         return indices
 
+    def _parse_atom_label(self) -> int:
+        raw = (self.measure_indices_input.value or "").strip()
+        if not raw:
+            raise ValueError("Enter one valid atom label, for example 5 or C-5.")
+
+        frame_data = self.get_current_frame_data()
+        natoms = len(frame_data)
+        if natoms == 0:
+            raise ValueError("No molecular data loaded.")
+
+        compact = raw.replace(" ", "").replace("_", "-")
+        if compact.isdigit():
+            atom_index = int(compact) - 1
+            if 0 <= atom_index < natoms:
+                return atom_index
+            raise ValueError(f"Atom label must identify an atom between 1 and {natoms}.")
+
+        label_parts = compact.split("-", 1)
+        if len(label_parts) == 2 and label_parts[1].isdigit():
+            symbol_part, number_part = label_parts
+        else:
+            symbol_part = "".join(ch for ch in compact if ch.isalpha())
+            number_part = "".join(ch for ch in compact if ch.isdigit())
+
+        if symbol_part and number_part:
+            atom_index = int(number_part) - 1
+            if 0 <= atom_index < natoms:
+                expected_symbol = symbol_part[0].upper() + symbol_part[1:].lower()
+                actual_symbol = frame_data[atom_index][0]
+                if actual_symbol == expected_symbol:
+                    return atom_index
+                raise ValueError(
+                    f"Atom {atom_index + 1} is {actual_symbol}, not {expected_symbol}."
+                )
+
+        if symbol_part and not number_part:
+            expected_symbol = symbol_part[0].upper() + symbol_part[1:].lower()
+            matches = [
+                index for index, (element, _) in enumerate(frame_data)
+                if element == expected_symbol
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"Multiple {expected_symbol} atoms found. Use a numbered label such as {expected_symbol}-{matches[0] + 1}."
+                )
+
+        raise ValueError("Enter one valid atom label, for example 5 or C-5.")
+
     async def run_measurement(self, widget):
         try:
             measure_type = self.measure_type_selection.value
@@ -1878,14 +1954,21 @@ class MolecularViewerUI(MolecularViewer):
                 value = self.measure_bond_angle(i, j, k)
                 self.set_measurement_overlay(measure_type, [i, j, k])
                 text_value = self.format_measurement_label(measure_type, [i, j, k], value)
-            else:
+            elif measure_type == "Dihedral angle":
                 i, j, k, l = self._parse_measurement_indices(4)
                 value = self.measure_dihedral_angle(i, j, k, l)
                 self.set_measurement_overlay(measure_type, [i, j, k, l])
                 text_value = self.format_measurement_label(measure_type, [i, j, k, l], value)
+            elif measure_type == "Atom coordinates":
+                i = self._parse_atom_label()
+                value, _ = self.compute_measurement_value(measure_type, [i])
+                self.set_measurement_overlay(measure_type, [i])
+                text_value = self.format_measurement_label(measure_type, [i], value)
+            else:
+                raise ValueError("Select a valid measurement type.")
 
             self.measurement_result = text_value
-            self.measurement_label.text = text_value
+            self.measurement_label.value = text_value
             self.set_status_message(text_value)
         except Exception as exc:
             self.clear_measurement_overlay()
