@@ -1,4 +1,5 @@
-1. I have used auto-py-to-exe to convert the script to exe.
+1. Use auto-py-to-exe to convert the script to exe.
+   >> cd ~/venv
    >> pip install auto-py-to-exe
 2. The installation can be carried out using inno setup
 3. The auto-py-to-exe do not get to find the file
@@ -9,7 +10,6 @@
     "matplotlib",
     "numpy",
 	"scipy",
-    "paramiko",
 	"glfw",
     "PyOpenGL",
     "PyOpenGL-accelerate",
