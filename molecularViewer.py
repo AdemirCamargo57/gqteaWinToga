@@ -10,6 +10,7 @@ import numpy as np
 import toga
 from OpenGL.GL import *
 from OpenGL.GLU import *
+import OpenGL.GLUT as ogl_glut
 from OpenGL.GLUT import *
 from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
@@ -48,7 +49,7 @@ class MolecularViewer:
         # Annotation / measurement options
         self.show_atom_numbers = False
         self.show_atom_symbols = False
-        self.label_font = GLUT_BITMAP_HELVETICA_18
+        self.label_font = getattr(ogl_glut, "GLUT_BITMAP_HELVETICA_18")
         self.measurement_result = ""
         self.active_measurement_type: Optional[str] = None
         self.active_measurement_indices: List[int] = []
