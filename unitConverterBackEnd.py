@@ -10,6 +10,7 @@ ELEMENTARY_CHARGE = Decimal("1.602176634e-19")
 HARTREE_ENERGY = Decimal("4.3597447222060e-18")
 CALORIE_TO_JOULE = Decimal("4.184")
 ATOMIC_TIME_UNIT = Decimal("2.4188843265857e-17")
+BOHR_RADIUS = Decimal("5.29177210903e-11")
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class EnergyConverter:
             "length": self._build_length_units(),
             "density": self._build_density_units(),
             "time": self._build_time_units(),
+            "velocity": self._build_velocity_units(),
         }
 
     def _build_energy_units(self) -> Dict[str, UnitDefinition]:
@@ -182,6 +184,66 @@ class EnergyConverter:
                 "kilograms per liter (kg/L)",
                 Decimal("1"),
                 aliases=("kg/liter", "kg/L"),
+            ),
+        )
+        return {unit.key: unit for unit in units}
+
+    def _build_velocity_units(self) -> Dict[str, UnitDefinition]:
+        meter = Decimal("1")
+        kilometer = Decimal("1000") * meter
+        centimeter = Decimal("0.01") * meter
+        millimeter = Decimal("0.001") * meter
+        foot = Decimal("0.3048") * meter
+        yard = Decimal("0.9144") * meter
+        mile = Decimal("1609.344") * meter
+        second = Decimal("1")
+        minute = Decimal("60") * second
+        hour = Decimal("60") * minute
+
+        units = (
+            UnitDefinition("m/s", "meter/second (m/s)", meter / second, aliases=("meter/second", "meter per second", "metre/second")),
+            UnitDefinition("km/h", "kilometer/hour (km/h)", kilometer / hour, aliases=("kilometer/hour", "kph", "kilometre/hour")),
+            UnitDefinition("mi/h", "mile/hour (mi/h)", mile / hour, aliases=("mile/hour", "mph")),
+            UnitDefinition("m/h", "meter/hour (m/h)", meter / hour, aliases=("meter/hour",)),
+            UnitDefinition("m/min", "meter/minute (m/min)", meter / minute, aliases=("meter/minute",)),
+            UnitDefinition("km/min", "kilometer/minute (km/min)", kilometer / minute, aliases=("kilometer/minute",)),
+            UnitDefinition("km/s", "kilometer/second (km/s)", kilometer / second, aliases=("kilometer/second",)),
+            UnitDefinition("cm/h", "centimeter/hour (cm/h)", centimeter / hour, aliases=("centimeter/hour",)),
+            UnitDefinition("cm/min", "centimeter/minute (cm/min)", centimeter / minute, aliases=("centimeter/minute",)),
+            UnitDefinition("cm/s", "centimeter/second (cm/s)", centimeter / second, aliases=("centimeter/second",)),
+            UnitDefinition("mm/h", "millimeter/hour (mm/h)", millimeter / hour, aliases=("millimeter/hour",)),
+            UnitDefinition("mm/min", "millimeter/minute (mm/min)", millimeter / minute, aliases=("millimeter/minute",)),
+            UnitDefinition("mm/s", "millimeter/second (mm/s)", millimeter / second, aliases=("millimeter/second",)),
+            UnitDefinition("ft/h", "foot/hour (ft/h)", foot / hour, aliases=("foot/hour",)),
+            UnitDefinition("ft/min", "foot/minute (ft/min)", foot / minute, aliases=("foot/minute",)),
+            UnitDefinition("ft/s", "foot/second (ft/s)", foot / second, aliases=("foot/second", "fps")),
+            UnitDefinition("yd/h", "yard/hour (yd/h)", yard / hour, aliases=("yard/hour",)),
+            UnitDefinition("yd/min", "yard/minute (yd/min)", yard / minute, aliases=("yard/minute",)),
+            UnitDefinition("yd/s", "yard/second (yd/s)", yard / second, aliases=("yard/second",)),
+            UnitDefinition("mi/min", "mile/minute (mi/min)", mile / minute, aliases=("mile/minute",)),
+            UnitDefinition("mi/s", "mile/second (mi/s)", mile / second, aliases=("mile/second",)),
+            UnitDefinition("knot", "knot (kt, kn)", Decimal("0.5144444444"), aliases=("kt", "kn")),
+            UnitDefinition("knot_uk", "knot (UK) (kt UK)", Decimal("0.5147733333"), aliases=("kt uk", "kt (uk)", "knot uk")),
+            UnitDefinition("c", "Velocity of light in vacuum", Decimal("299792458"), aliases=("speed of light", "light speed")),
+            UnitDefinition("cosmic_first", "Cosmic velocity - first", Decimal("7899.9999999999"), aliases=("first cosmic velocity",)),
+            UnitDefinition("cosmic_second", "Cosmic velocity - second", Decimal("11200"), aliases=("second cosmic velocity",)),
+            UnitDefinition("cosmic_third", "Cosmic velocity - third", Decimal("16670"), aliases=("third cosmic velocity",)),
+            UnitDefinition("earth_velocity", "Earth's velocity", Decimal("29765"), aliases=("earth velocity",)),
+            UnitDefinition("sound_pure_water", "Velocity of sound in pure water", Decimal("1482.6999999998"), aliases=("sound pure water",)),
+            UnitDefinition(
+                "sound_sea_water",
+                "Velocity of sound in sea water (20 C, 10 m deep)",
+                Decimal("1521.6"),
+                aliases=("sound sea water",),
+            ),
+            UnitDefinition("mach_20c", "Mach (20 C, 1 atm)", Decimal("343.6"), aliases=("mach 20c", "mach 20 c")),
+            UnitDefinition("mach_si", "Mach (SI standard)", Decimal("295.0464000003"), aliases=("mach si",)),
+            UnitDefinition("angstrom/fs", "Angstrom/femtosecond (Angstrom/fs)", Decimal("1e5"), aliases=("angstrom per fs", "ang/fs", "a/fs")),
+            UnitDefinition(
+                "atomic_velocity",
+                "Atomic unit of velocity (a.u.)",
+                BOHR_RADIUS / ATOMIC_TIME_UNIT,
+                aliases=("au velocity", "a.u. velocity", "bohr/atomic time unit"),
             ),
         )
         return {unit.key: unit for unit in units}

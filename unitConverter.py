@@ -25,12 +25,14 @@ class UnitConvertUI:
             "Length": "length",
             "Density": "density",
             "Time": "time",
+            "Velocity": "velocity",
         }
         self.default_units = {
             "energy": ("hartree", "ev"),
             "length": ("meter", "nanometer"),
             "density": ("amu/angstrom^3", "g/cm^3"),
             "time": ("second", "femtosecond"),
+            "velocity": ("m/s", "angstrom/fs"),
         }
         self.current_unit_labels: dict[str, str] = {}
         self.main_window = toga.Window(title="Unit Converter", size=(520, 340))
@@ -131,8 +133,10 @@ class UnitConvertUI:
             self.status_label.text = "Length conversions are normalized through meters."
         elif self.category == "density":
             self.status_label.text = "Density conversions are normalized through grams per cubic centimeter."
-        else:
+        elif self.category == "time":
             self.status_label.text = "Time conversions are normalized through seconds. Month = year/12 and year = 365 days."
+        else:
+            self.status_label.text = "Velocity conversions are normalized through meters per second."
         self.status_label.style.color = "#555555"
 
     def handle_category_change(self, widget: toga.Selection) -> None:
