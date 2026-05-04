@@ -49,7 +49,7 @@ class gqteaWin(toga.App):
         # 2. Header Section
         header_box = toga.Box(style=Pack(direction=COLUMN, align_items=CENTER, margin_bottom=15))
         title_label = toga.Label(
-            "gQTEA-0.3.2 Molecular Analysis Toolkit",
+            "gQTEA-0.3.3 Molecular Analysis Toolkit",
             style=Pack(font_size=18, font_weight='bold', margin_bottom=5)
         )
         welcome_label = toga.Label(

@@ -555,6 +555,7 @@ Controls include:
 - Atom display style.
 - Atom scale.
 - Bond thickness.
+- Bond mode.
 - Show atom numbers.
 - Show atomic symbols.
 - Measure distance, angle, or dihedral by entering atom labels.
@@ -566,6 +567,16 @@ Controls include:
 - Save the current frame as XYZ.
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
+
+Bond mode controls how the viewer updates connectivity while stepping through or playing a trajectory:
+
+- **Static first frame**: calculates bonds from frame 0 and reuses that same connectivity for all frames. This is useful when you want stable visual connectivity during normal vibrations or rotations.
+- **Dynamic cached**: recalculates bonds for each frame and stores the result for faster revisiting of frames. This is useful for trajectories where bonds may form or break and you still want smooth playback.
+- **Dynamic live**: recalculates bonds every time the current frame is rendered, without using cached bond lists. This is useful when you are actively changing bond-length settings or want the freshest possible connectivity during inspection.
+
+To use this feature, open **Tools > 3D Molecular Viewer**, load an XYZ trajectory, then choose the desired option from the **Bond mode** selector in the playback/performance controls. The viewer updates the displayed bonds using the selected mode.
+
+Example: if a trajectory shows two atoms separating during a dissociation event, choose **Dynamic cached** or **Dynamic live**. As you step through the frames, the bond disappears when the atom distance exceeds the current upper bond-length limit. If you choose **Static first frame**, that bond remains visible throughout playback because the viewer keeps the first-frame connectivity.
 
 #### Energy Plots
 

@@ -153,7 +153,7 @@ class MolecularViewer:
         # Cache for bond lists by frame and connectivity settings
         self._bond_cache: Dict[Tuple[int, float, float], List[Tuple[int, int]]] = {}
         self._bond_cache_limit = 250
-        self.reuse_bonds_across_frames = True
+        self.bond_rendering_mode = "Static first frame"
         self._reference_bonds: Optional[List[Tuple[int, int]]] = None
 
         # Playback timing
@@ -581,6 +581,24 @@ class MolecularViewer:
             return min(self.connection_distance, r1 + r2 + self.bond_tolerance)
         return self.connection_distance
 
+    def _compute_bonds_for_frame(self, frame_index: int) -> List[Tuple[int, int]]:
+        frame_data = self.frames[frame_index]
+        coords = np.array([pos for _, pos in frame_data], dtype=float)
+        elements = [element for element, _ in frame_data]
+        bonds: List[Tuple[int, int]] = []
+
+        natoms = len(frame_data)
+        for i in range(natoms):
+            elem_i = elements[i]
+            for j in range(i + 1, natoms):
+                threshold = self.get_bond_distance_threshold(elem_i, elements[j])
+                diff = coords[i] - coords[j]
+                distance_sq = float(np.dot(diff, diff))
+                if distance_sq <= threshold * threshold:
+                    bonds.append((i, j))
+
+        return bonds
+
     def calculate_bonds(self, frame_index: Optional[int] = None):
         with self._state_lock:
             if not self.frames:
@@ -593,8 +611,14 @@ class MolecularViewer:
                 self.bonds = []
                 return
 
-            if self.reuse_bonds_across_frames and self._reference_bonds is not None:
+            if self.bond_rendering_mode == "Static first frame":
+                if self._reference_bonds is None:
+                    self._reference_bonds = self._compute_bonds_for_frame(0)
                 self.bonds = list(self._reference_bonds)
+                return
+
+            if self.bond_rendering_mode == "Dynamic live":
+                self.bonds = self._compute_bonds_for_frame(frame_index)
                 return
 
             key = self._bond_cache_key(frame_index)
@@ -603,25 +627,9 @@ class MolecularViewer:
                 self.bonds = list(cached)
                 return
 
-            frame_data = self.frames[frame_index]
-            coords = np.array([pos for _, pos in frame_data], dtype=float)
-            elements = [element for element, _ in frame_data]
-            bonds: List[Tuple[int, int]] = []
-
-            natoms = len(frame_data)
-            for i in range(natoms):
-                elem_i = elements[i]
-                for j in range(i + 1, natoms):
-                    threshold = self.get_bond_distance_threshold(elem_i, elements[j])
-                    diff = coords[i] - coords[j]
-                    distance_sq = float(np.dot(diff, diff))
-                    if distance_sq <= threshold * threshold:
-                        bonds.append((i, j))
-
+            bonds = self._compute_bonds_for_frame(frame_index)
             self._bond_cache[key] = list(bonds)
             self._trim_bond_cache_if_needed()
-            if self.reuse_bonds_across_frames and frame_index == 0:
-                self._reference_bonds = list(bonds)
             self.bonds = bonds
 
     def advance_frame(self):
@@ -1272,7 +1280,7 @@ class MolecularViewerUI(MolecularViewer):
         self.box_c_input = None
         self.box_visibility_switch = None
         self.fast_playback_switch = None
-        self.reuse_bonds_switch = None
+        self.bond_rendering_selection = None
 
         self.layout_main_window()
 
@@ -1581,19 +1589,20 @@ class MolecularViewerUI(MolecularViewer):
             on_change=self.toggle_fast_playback_mode,
         )
         self.fast_playback_switch.value = self.fast_playback_mode
-        reuse_bonds_label = toga.Label(
-            "Reuse Bonds:",
-            style=Pack(margin=(0, 0, 5, 12), text_align=LEFT, width=90),
+        bond_rendering_label = toga.Label(
+            "Bond mode:",
+            style=Pack(margin=(0, 0, 5, 12), text_align=LEFT, width=80),
         )
-        self.reuse_bonds_switch = toga.Switch(
-            "Keep first-frame connectivity",
-            on_change=self.toggle_reuse_bonds,
+        self.bond_rendering_selection = toga.Selection(
+            items=["Static first frame", "Dynamic cached", "Dynamic live"],
+            style=Pack(width=135, margin=(5, 5)),
+            on_change=self.set_bond_rendering_mode,
         )
-        self.reuse_bonds_switch.value = self.reuse_bonds_across_frames
+        self.bond_rendering_selection.value = self.bond_rendering_mode
         performance_box.add(fast_playback_label)
         performance_box.add(self.fast_playback_switch)
-        performance_box.add(reuse_bonds_label)
-        performance_box.add(self.reuse_bonds_switch)
+        performance_box.add(bond_rendering_label)
+        performance_box.add(self.bond_rendering_selection)
 
         action_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
         self.display_button = toga.Button(
@@ -1826,15 +1835,16 @@ class MolecularViewerUI(MolecularViewer):
             else "Fast playback mode disabled."
         )
 
-    def toggle_reuse_bonds(self, widget):
-        self.reuse_bonds_across_frames = bool(self.reuse_bonds_switch.value)
+    def set_bond_rendering_mode(self, widget):
+        self.bond_rendering_mode = self.bond_rendering_selection.value or "Static first frame"
         self.invalidate_bond_cache()
         self.calculate_bonds(self.current_frame if self.frames else None)
-        self.set_status_message(
-            "Reusing first-frame bonds for playback."
-            if self.reuse_bonds_across_frames
-            else "Dynamic bond recalculation enabled for every frame."
-        )
+        messages = {
+            "Static first frame": "Using first-frame connectivity for playback.",
+            "Dynamic cached": "Dynamic bond recalculation enabled with per-frame caching.",
+            "Dynamic live": "Dynamic live bond recalculation enabled for every frame.",
+        }
+        self.set_status_message(messages.get(self.bond_rendering_mode, "Bond rendering mode updated."))
 
     async def set_box_sizes(self, widget):
         try:
