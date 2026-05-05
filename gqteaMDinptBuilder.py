@@ -12,11 +12,12 @@ from toga.style.pack import COLUMN, ROW
 class GqteaMDInputBuilder:
     """Backend logic for building gqteaMD TOML input files."""
 
-    FORCE_PROVIDER_CHOICES = ["harmonic", "uff", "gaussian", "classical"]
+    FORCE_PROVIDER_CHOICES = ["harmonic", "uff", "xtb", "gaussian", "classical"]
     BOOL_CHOICES = ["false", "true"]
     UFF_ELECTROSTATICS_CHOICES = ["auto", "true", "false"]
     UFF_EXCLUSION_CHOICES = ["exclude_12_13", "exclude_12", "none"]
     UFF_LJ_CUTOFF_CHOICES = ["plain", "shift"]
+    XTB_METHOD_CHOICES = ["GFN2-xTB", "GFN1-xTB", "GFN0-xTB", "GFN-FF", "Custom"]
     GAUSSIAN_COMMAND_CHOICES = ["g16", "g16.exe", "g09", "g09.exe", "Custom"]
     ROUTE_CHOICES = [
         "# B3LYP/6-31G(d) Force NoSymm SCF=Tight",
@@ -30,7 +31,7 @@ class GqteaMDInputBuilder:
         "- [input]: starting XYZ geometry.\n"
         "- [cell]: orthorhombic a, b, c box lengths in angstrom.\n"
         "- [dynamics]: velocity Verlet timestep_fs and steps.\n"
-        "- [force_provider]: harmonic, classical, uff, or gaussian.\n"
+        "- [force_provider]: harmonic, classical, uff, xtb, or gaussian.\n"
         "- [output]: trajectory and log settings. GEOMETRY is written automatically.\n"
         "- [restart]: optional restart writing and resume behavior.\n\n"
         "Gaussian notes:\n"
@@ -52,7 +53,14 @@ class GqteaMDInputBuilder:
         "- UFF nonbonded settings include 1-2/1-3 exclusions, 1-4 LJ/Coulomb scaling, and plain or shifted LJ cutoffs."
         "\n- UFF topology can be controlled with explicit bonds, angles, torsions, and inversions; omitted lists are generated."
         "\n- UFF can use a Verlet neighbor list for cutoff nonbonded interactions; the skin controls rebuild frequency."
-        "\n- Validation examples include uff_water_charged.toml and uff_ethene_explicit_topology.toml."
+        "\n- Validation examples include uff_water_charged.toml and uff_ethene_explicit_topology.toml.\n\n"
+        "xTB notes:\n"
+        "- gqteaMD can use xTB results for single-point energies and Cartesian forces through the xtb-python ASE calculator.\n"
+        "- On Windows, set command to the full xtb.exe path, for example C:/xTB/xtb-6.7.1/bin/xtb.exe.\n"
+        "- xTB energies are used in eV and forces in eV/angstrom, matching gqteaMD internal units.\n"
+        "- Typical settings include method, charge, multiplicity, accuracy, electronic_temperature, max_iterations, and solvent.\n"
+        "- Install the optional gqteaMD xTB dependencies, or install ASE and xtb-python in the active environment.\n"
+        "- use_unwrapped_positions should usually remain true to avoid passing broken molecules across periodic boundaries."
     )
 
     @staticmethod
@@ -191,6 +199,26 @@ class GqteaMDInputBuilder:
             if topology_text:
                 lines.append("")
                 lines.extend(topology_text.splitlines())
+        elif force_type == "xtb":
+            method = payload["xtb_method_custom"].strip() if payload["xtb_method"] == "Custom" else payload["xtb_method"]
+            if not method:
+                raise ValueError("xTB method is required.")
+            command = (payload.get("xtb_command", "") or "").strip()
+            if command:
+                lines.append(f"command = {self.toml_string(command)}")
+            lines.extend(
+                [
+                    f"method = {self.toml_string(method)}",
+                    f"charge = {self.parse_float(payload['xtb_charge'], 'xTB charge')}",
+                    f"multiplicity = {self.parse_positive_int(payload['xtb_multiplicity'], 'xTB multiplicity')}",
+                    f"accuracy = {self.parse_float(payload['xtb_accuracy'], 'xTB accuracy')}",
+                    f"electronic_temperature = {self.parse_float(payload['xtb_electronic_temperature'], 'xTB electronic temperature')}",
+                    f"max_iterations = {self.parse_positive_int(payload['xtb_max_iterations'], 'xTB max iterations')}",
+                    f"solvent = {self.toml_string(payload.get('xtb_solvent', 'none'))}",
+                    f"cache_api = {str(self.parse_bool(payload.get('xtb_cache_api', 'true'))).lower()}",
+                    f"use_unwrapped_positions = {str(self.parse_bool(payload.get('xtb_use_unwrapped_positions', 'true'))).lower()}",
+                ]
+            )
         elif force_type == "gaussian":
             command = payload["gaussian_command_custom"].strip() if payload["gaussian_command"] == "Custom" else payload["gaussian_command"]
             if not command:
@@ -578,6 +606,68 @@ class GqteaMDInputBuilderUI:
                 "",
             )
             self.on_gaussian_choice_change(None)
+        elif force_type == "xtb":
+            self.xtb_method_selection = self.make_selection_row(
+                self.force_options_container,
+                "Method",
+                self.builder.XTB_METHOD_CHOICES,
+                "GFN2-xTB",
+                self.on_xtb_choice_change,
+            )
+            self.xtb_method_custom_input = self.make_text_row(
+                self.force_options_container,
+                "Custom method",
+                "Custom xTB method name",
+                "",
+            )
+            self.xtb_command_input = self.make_text_row(
+                self.force_options_container,
+                "Command",
+                "Full path to xtb.exe",
+                "C:/xTB/xtb-6.7.1/bin/xtb.exe",
+            )
+            xtb_charge_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+            xtb_charge_row.add(toga.Label("Charge/mult", style=Pack(width=130, margin_top=6)))
+            self.xtb_charge_input = toga.TextInput(value="0", style=Pack(width=80, margin_right=8))
+            self.xtb_multiplicity_input = toga.TextInput(value="1", style=Pack(width=80, margin_right=18))
+            xtb_charge_row.add(self.xtb_charge_input)
+            xtb_charge_row.add(self.xtb_multiplicity_input)
+            xtb_charge_row.add(toga.Label("max iter", style=Pack(width=70, margin_top=6)))
+            self.xtb_max_iterations_input = toga.TextInput(value="250", style=Pack(width=80))
+            xtb_charge_row.add(self.xtb_max_iterations_input)
+            self.force_options_container.add(xtb_charge_row)
+            xtb_numeric_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+            xtb_numeric_row.add(toga.Label("Acc/temp K", style=Pack(width=130, margin_top=6)))
+            self.xtb_accuracy_input = toga.TextInput(value="1.0", style=Pack(width=90, margin_right=8))
+            self.xtb_electronic_temperature_input = toga.TextInput(value="300.0", style=Pack(width=100))
+            xtb_numeric_row.add(self.xtb_accuracy_input)
+            xtb_numeric_row.add(self.xtb_electronic_temperature_input)
+            self.force_options_container.add(xtb_numeric_row)
+            self.xtb_solvent_input = self.make_text_row(
+                self.force_options_container,
+                "Solvent",
+                "none, water, methanol, ...",
+                "none",
+            )
+            self.xtb_cache_api_selection = self.make_selection_row(
+                self.force_options_container,
+                "Cache API",
+                self.builder.BOOL_CHOICES,
+                "true",
+            )
+            self.xtb_use_unwrapped_positions_selection = self.make_selection_row(
+                self.force_options_container,
+                "Unwrapped pos",
+                self.builder.BOOL_CHOICES,
+                "true",
+            )
+            self.force_options_container.add(
+                toga.Label(
+                    "xTB provides potential energy and atomic forces for gqteaMD propagation.",
+                    style=Pack(margin_bottom=6),
+                )
+            )
+            self.on_xtb_choice_change(None)
         elif force_type == "classical":
             self.classical_cutoff_input = self.make_text_row(
                 self.force_options_container,
@@ -664,6 +754,13 @@ class GqteaMDInputBuilderUI:
         if not route_is_custom:
             self.gaussian_route_custom_input.value = ""
 
+    def on_xtb_choice_change(self, widget):
+        del widget
+        method_is_custom = (self.xtb_method_selection.value or "") == "Custom"
+        self.xtb_method_custom_input.enabled = method_is_custom
+        if not method_is_custom:
+            self.xtb_method_custom_input.value = ""
+
     async def open_xyz_file(self, widget):
         del widget
         self.set_action_buttons_enabled(False)
@@ -738,6 +835,18 @@ class GqteaMDInputBuilderUI:
             payload["uff_neighbor_skin_angstrom"] = self.uff_neighbor_skin_input.value or "2.0"
             payload["uff_bond_orders_text"] = self.uff_bond_orders_text.value or ""
             payload["uff_topology_text"] = self.uff_topology_text.value or ""
+        elif force_type == "xtb":
+            payload["xtb_method"] = self.xtb_method_selection.value or "GFN2-xTB"
+            payload["xtb_method_custom"] = self.xtb_method_custom_input.value or ""
+            payload["xtb_command"] = self.xtb_command_input.value or ""
+            payload["xtb_charge"] = self.xtb_charge_input.value or "0"
+            payload["xtb_multiplicity"] = self.xtb_multiplicity_input.value or "1"
+            payload["xtb_accuracy"] = self.xtb_accuracy_input.value or "1.0"
+            payload["xtb_electronic_temperature"] = self.xtb_electronic_temperature_input.value or "300.0"
+            payload["xtb_max_iterations"] = self.xtb_max_iterations_input.value or "250"
+            payload["xtb_solvent"] = self.xtb_solvent_input.value or "none"
+            payload["xtb_cache_api"] = self.xtb_cache_api_selection.value or "true"
+            payload["xtb_use_unwrapped_positions"] = self.xtb_use_unwrapped_positions_selection.value or "true"
         elif force_type == "gaussian":
             payload["gaussian_command"] = self.gaussian_command_selection.value or "g16"
             payload["gaussian_command_custom"] = self.gaussian_command_custom_input.value or ""
