@@ -37,7 +37,7 @@ from unitConverter import UnitConvertUI
 from molecularAxisAlignment import MolecularAxisAlignmentUI
 from cpx_input_builder import CPInputBuilderUI
 from orca_input_builder import ORCAInputBuilderUI
-from gqteaMDinptBuilder import GqteaMDInputBuilderUI
+from gqteaMDinputBuilder import GqteaMDInputBuilderUI
 
 class gqteaWin(toga.App):
     def startup(self):
