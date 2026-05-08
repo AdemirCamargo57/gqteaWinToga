@@ -390,6 +390,7 @@ Common settings:
 - Starting XYZ path.
 - Force provider.
 - Time step, number of steps, temperature, output intervals, restart behavior, and force-field sections.
+- For xTB force provider, **OMP threads** writes `omp_num_threads` to the TOML so gqteaMD can set `OMP_NUM_THREADS` before xTB runs.
 - Optional UFF or classical parameter blocks.
 
 #### Vanderbilt runatom.x Input Builder

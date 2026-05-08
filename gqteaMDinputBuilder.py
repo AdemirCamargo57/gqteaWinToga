@@ -59,6 +59,7 @@ class GqteaMDInputBuilder:
         "- On Windows, set command to the full xtb.exe path, for example C:/xTB/xtb-6.7.1/bin/xtb.exe.\n"
         "- xTB energies are used in eV and forces in eV/angstrom, matching gqteaMD internal units.\n"
         "- Typical settings include method, charge, multiplicity, accuracy, electronic_temperature, max_iterations, and solvent.\n"
+        "- omp_num_threads controls OMP_NUM_THREADS for xTB calculations when supported by the gqteaMD runtime.\n"
         "- Install the optional gqteaMD xTB dependencies, or install ASE and xtb-python in the active environment.\n"
         "- use_unwrapped_positions should usually remain true to avoid passing broken molecules across periodic boundaries."
     )
@@ -214,6 +215,7 @@ class GqteaMDInputBuilder:
                     f"accuracy = {self.parse_float(payload['xtb_accuracy'], 'xTB accuracy')}",
                     f"electronic_temperature = {self.parse_float(payload['xtb_electronic_temperature'], 'xTB electronic temperature')}",
                     f"max_iterations = {self.parse_positive_int(payload['xtb_max_iterations'], 'xTB max iterations')}",
+                    f"omp_num_threads = {self.parse_positive_int(payload.get('xtb_omp_num_threads', '1'), 'xTB OMP threads')}",
                     f"solvent = {self.toml_string(payload.get('xtb_solvent', 'none'))}",
                     f"cache_api = {str(self.parse_bool(payload.get('xtb_cache_api', 'true'))).lower()}",
                     f"use_unwrapped_positions = {str(self.parse_bool(payload.get('xtb_use_unwrapped_positions', 'true'))).lower()}",
@@ -623,8 +625,8 @@ class GqteaMDInputBuilderUI:
             self.xtb_command_input = self.make_text_row(
                 self.force_options_container,
                 "Command",
-                "Full path to xtb.exe",
-                "C:/xTB/xtb-6.7.1/bin/xtb.exe",
+                "xtb executable name or full path",
+                "xtb",
             )
             xtb_charge_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
             xtb_charge_row.add(toga.Label("Charge/mult", style=Pack(width=130, margin_top=6)))
@@ -639,9 +641,12 @@ class GqteaMDInputBuilderUI:
             xtb_numeric_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
             xtb_numeric_row.add(toga.Label("Acc/temp K", style=Pack(width=130, margin_top=6)))
             self.xtb_accuracy_input = toga.TextInput(value="1.0", style=Pack(width=90, margin_right=8))
-            self.xtb_electronic_temperature_input = toga.TextInput(value="300.0", style=Pack(width=100))
+            self.xtb_electronic_temperature_input = toga.TextInput(value="300.0", style=Pack(width=100, margin_right=18))
             xtb_numeric_row.add(self.xtb_accuracy_input)
             xtb_numeric_row.add(self.xtb_electronic_temperature_input)
+            xtb_numeric_row.add(toga.Label("OMP threads", style=Pack(width=90, margin_top=6)))
+            self.xtb_omp_num_threads_input = toga.TextInput(value="1", style=Pack(width=70))
+            xtb_numeric_row.add(self.xtb_omp_num_threads_input)
             self.force_options_container.add(xtb_numeric_row)
             self.xtb_solvent_input = self.make_text_row(
                 self.force_options_container,
@@ -844,6 +849,7 @@ class GqteaMDInputBuilderUI:
             payload["xtb_accuracy"] = self.xtb_accuracy_input.value or "1.0"
             payload["xtb_electronic_temperature"] = self.xtb_electronic_temperature_input.value or "300.0"
             payload["xtb_max_iterations"] = self.xtb_max_iterations_input.value or "250"
+            payload["xtb_omp_num_threads"] = self.xtb_omp_num_threads_input.value or "1"
             payload["xtb_solvent"] = self.xtb_solvent_input.value or "none"
             payload["xtb_cache_api"] = self.xtb_cache_api_selection.value or "true"
             payload["xtb_use_unwrapped_positions"] = self.xtb_use_unwrapped_positions_selection.value or "true"
