@@ -169,7 +169,7 @@ class XYZ2BohrConverterUI(XYZ2BohrConverter):
         convert_button = toga.Button(
             "Convert",
             on_press=lambda w: asyncio.create_task(self.on_convert_press(w)),
-            style=Pack(padding_left=300, alignment=CENTER, width=100)
+            style=Pack(padding_left=300, align_items=CENTER, width=100)
         )
 
         # --- Assemble the UI layout ---

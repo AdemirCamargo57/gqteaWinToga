@@ -612,7 +612,7 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
         label_style = Pack(margin=(0, 6, 0, 0), text_align=LEFT, width=170)
         input_style = Pack(flex=1, margin=0)
         button_style = Pack(margin=(0, 8, 0, 0), width=120)
-        row_style = Pack(direction=ROW, alignment=CENTER, margin=(0, 0, 4, 0))
+        row_style = Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0))
         main_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
 
         def add_field(parent, label_text, placeholder, attr_name, button=None):
@@ -657,7 +657,7 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
         main_box.add(comp_row)
 
         main_box.add(toga.Label("Packing options", style=section_style))
-        options_row = toga.Box(style=Pack(direction=ROW, alignment=CENTER, margin=(0, 0, 4, 0)))
+        options_row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
         self.switch_rotate = toga.Switch("Randomly rotate solvent", style=Pack(margin=(0, 12, 0, 0)))
         self.switch_rotate.value = True
         self.switch_density = toga.Switch("Calculate density", style=Pack(margin=(0, 12, 0, 0)))
@@ -708,7 +708,7 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
         )
 
         main_box.add(toga.Label("Run controls", style=section_style))
-        run_box = toga.Box(style=Pack(direction=ROW, alignment=CENTER, margin=(0, 0, 6, 0)))
+        run_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 6, 0)))
         self.start_button = toga.Button("Build Mixture Box", style=button_style, on_press=self.workflow)
         self.btn_close = toga.Button("Close", style=Pack(width=120), on_press=self.closeTopLevel)
         run_box.add(self.start_button)

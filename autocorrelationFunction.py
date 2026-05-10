@@ -482,7 +482,7 @@ class AutoCorrelationFunctionUI(CorrelationFunction):
         )
         input_style = Pack(flex=1, padding=(5, 5))
         button_style = Pack(padding=5, width=100)
-        box_style = Pack(direction=ROW, alignment=CENTER, padding=(0, 0, 5, 0))
+        box_style = Pack(direction=ROW, align_items=CENTER, padding=(0, 0, 5, 0))
 
         # Main container
         main_box = toga.Box(style=Pack(direction=COLUMN, padding=20))
@@ -490,7 +490,7 @@ class AutoCorrelationFunctionUI(CorrelationFunction):
         box_title = toga.Box(
             style=Pack(
                 direction=ROW,
-                alignment=CENTER,
+                align_items=CENTER,
                 padding=(0, 0, 10, 0),
             )
         )
@@ -609,7 +609,7 @@ class AutoCorrelationFunctionUI(CorrelationFunction):
 
         # Buttons at the bottom
         button_box = toga.Box(
-            style=Pack(direction=ROW, alignment=CENTER, padding_top=5)
+            style=Pack(direction=ROW, align_items=CENTER, padding_top=5)
         )
         self.btn_input_params = toga.Button(
             "Read Params", style=button_style, on_press=self.read_params

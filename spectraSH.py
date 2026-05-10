@@ -587,7 +587,7 @@ class SurfaceHoppingUI(InputSHBuilder):
         label_style = Pack(padding=(5, 5), text_align=LEFT, width=200)
         input_style = Pack(flex=1)  
         button_style = Pack(padding=5, width=150)
-        box_style = Pack(direction=ROW, alignment=CENTER, padding=(0, 0, 5, 0))
+        box_style = Pack(direction=ROW, align_items=CENTER, padding=(0, 0, 5, 0))
 
         # Main container
         main_box = toga.Box(style=Pack(direction=COLUMN, padding=20))
@@ -595,7 +595,7 @@ class SurfaceHoppingUI(InputSHBuilder):
         box_1 = toga.Box(
             style=Pack(
                 direction=ROW,
-                alignment=CENTER,
+                align_items=CENTER,
                 padding=(0, 0, 10, 0),
             )
         )
@@ -744,7 +744,7 @@ class SurfaceHoppingUI(InputSHBuilder):
 
         # Buttons at the bottom
         button_box = toga.Box(
-            style=Pack(direction=ROW, alignment=CENTER, padding_top=10)
+            style=Pack(direction=ROW, align_items=CENTER, padding_top=10)
         )
 
         self.btn_read_params= toga.Button(

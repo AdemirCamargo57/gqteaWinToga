@@ -721,6 +721,15 @@ solute at the center. Ensure a specified minimum distance between solvent molecu
 By combining two solvents in precise proportions, this feature expands the application's 
 utility for more realistic molecular simulations.
 """
+
+    shared_wall_box = f""" Shared-Wall Double Solvent Box Builder: A Step-by-Step Guide
+The Shared-Wall Double Solvent Box Builder creates two adjacent solvent regions stacked along
+the z axis. Box 1 and Box 2 share one common face, but no wall atoms or boundary markers are
+written to the final XYZ file. Each region can use its own pure solvent, binary solvent
+mixture, or binary solvent mixture with one centered solute molecule. The two regions share
+the same a and b lattice dimensions and use separate c heights. Periodic minimum-image clash
+detection is applied using the full combined box.
+"""
     
     single_solute_solvent_box = f""" Mixture Solvent Box Builder: A Step-by-Step Guide
 The Solvent Box Builder allows you to generate a solvent box with just one solute molecule simulating

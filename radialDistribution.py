@@ -282,12 +282,12 @@ class RadialFunctionUI(RadialAnalyser):
         label_style = Pack(padding=(0, 0, 5, 5), text_align=LEFT, width=200)
         input_style = Pack(flex=1, padding=(5, 5))
         button_style = Pack(padding=5, width=100)
-        box_style = Pack(direction=ROW, alignment=CENTER, padding=(0, 0, 5, 0))
+        box_style = Pack(direction=ROW, align_items=CENTER, padding=(0, 0, 5, 0))
 
         main_box = toga.Box(style=Pack(direction=COLUMN, padding=20))
 
         # Title and progress
-        box_title = toga.Box(style=Pack(direction=ROW, alignment=CENTER, padding=(0, 0, 10, 0)))
+        box_title = toga.Box(style=Pack(direction=ROW, align_items=CENTER, padding=(0, 0, 10, 0)))
         sub_title = toga.Box(style=Pack(width=410))
         sub_empty = toga.Box(style=Pack(width=140))
         sub_progress = toga.Box(style=Pack(width=100))
@@ -339,7 +339,7 @@ class RadialFunctionUI(RadialAnalyser):
         main_box.add(self.multi_line_text)
 
         # Action buttons
-        btn_box = toga.Box(style=Pack(direction=ROW, alignment=CENTER, padding_top=5))
+        btn_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, padding_top=5))
         self.btn_input_params = toga.Button("Read Params", style=button_style, on_press=self.read_params)
         self.btn_execute = toga.Button("RDF calculation", style=button_style, on_press=self.workflow)
         self.btn_help = toga.Button("Help", style=button_style, on_press=self.open_window_help)

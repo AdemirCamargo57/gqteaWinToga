@@ -25,6 +25,7 @@ from molecularViewer import MolecularViewerUI
 from autocorrelationFunction import AutoCorrelationFunctionUI
 from mixtureSolventBox import MixtureSolventBoxUI
 from single_solute_solvent_box import SingleSoluteSolventBoxUI
+from sharedWallBox import SharedWallBoxUI
 from coordinateConverter import CoordinateConverterUI
 from classicalRate import ClassicalRateUI
 from cpTrajec2xyz import CPtraj2xyzUI
@@ -101,6 +102,7 @@ class gqteaWin(toga.App):
             ("Autocorrelation function", AutoCorrelationFunctionUI),
             ("Single Solute solvent box", SingleSoluteSolventBoxUI),
             ("Mixture of two solvent box", MixtureSolventBoxUI),
+            ("Shared-wall double solvent box", SharedWallBoxUI),
         ]
 
         Thermo_tools = [

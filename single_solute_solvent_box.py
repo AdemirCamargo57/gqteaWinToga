@@ -753,15 +753,33 @@ class SingleSoluteSolventBox:
         self.final_density = 0.0
         self.num_target_solvent_molecules = 0
 
+    def insertion_progress_percent(self, attempts, accepted, target):
+        """Return determinate progress for the random insertion loop.
+
+        The loop can finish either by accepting the target number of solvent
+        molecules or by exhausting max_attempts. The progress bar therefore
+        tracks the closer completion condition so a successful early finish
+        still reaches 100%.
+        """
+        attempt_fraction = attempts / max(1, self.max_attempts)
+        accepted_fraction = 1.0 if target <= 0 else accepted / max(1, target)
+        progress_fraction = max(attempt_fraction, accepted_fraction)
+        return max(0.0, min(100.0, 100.0 * progress_fraction))
+
     def update_progress_display(self, attempts, accepted, target):
+        progress_percent = self.insertion_progress_percent(attempts, accepted, target)
         if hasattr(self, "progress_bar"):
-            self.progress_bar.max = max(1, self.max_attempts)
-            self.progress_bar.value = min(attempts, self.max_attempts)
+            # Keep the Toga widget in a stable 0-100 range; some backends do
+            # not repaint reliably when max is changed during a long callback.
+            self.progress_bar.max = 100
+            self.progress_bar.value = progress_percent
         if hasattr(self, "status_label"):
-            percent = 100.0 * attempts / max(1, self.max_attempts)
+            attempt_percent = 100.0 * attempts / max(1, self.max_attempts)
+            accepted_percent = 100.0 if target <= 0 else 100.0 * accepted / max(1, target)
             self.status_label.text = (
-                f"Insertion progress: {attempts}/{self.max_attempts} attempts "
-                f"({percent:.1f}%) | accepted {accepted}/{target} solvent molecules"
+                f"Insertion progress: {progress_percent:.1f}% | "
+                f"attempts {attempts}/{self.max_attempts} ({attempt_percent:.1f}%) | "
+                f"accepted {accepted}/{target} solvent molecules ({accepted_percent:.1f}%)"
             )
 
     async def fill_solvent_box_async(self):
@@ -778,10 +796,10 @@ class SingleSoluteSolventBox:
         self.num_target_solvent_molecules = self.estimate_target_num_solvent_molecules()
         accepted = 0
         attempts = 0
-        update_every = max(100, min(2000, self.max_attempts // 100 if self.max_attempts > 0 else 100))
+        update_every = max(25, min(1000, self.max_attempts // 100 if self.max_attempts > 0 else 25))
 
         self.update_progress_display(attempts, accepted, self.num_target_solvent_molecules)
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.001)
 
         while accepted < self.num_target_solvent_molecules and attempts < self.max_attempts:
             attempts += 1
@@ -811,11 +829,12 @@ class SingleSoluteSolventBox:
                 if hasattr(self, "multi_line_text"):
                     self.multi_line_text.value = (
                         "Running random insertion...\n"
+                        "Progress reaches 100% when the solvent target is reached or max attempts are exhausted.\n"
                         f"Target solvent molecules: {self.num_target_solvent_molecules}\n"
                         f"Accepted so far: {accepted}\n"
                         f"Attempts used: {attempts}\n"
                     )
-                await asyncio.sleep(0)
+                await asyncio.sleep(0.001)
 
         self.solvent_insertion_count = accepted
         self.solvent_attempts_used = attempts
@@ -918,9 +937,7 @@ class SingleSoluteSolventBox:
             await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving summary TXT file: {e}\n"))
             return None
         if hasattr(self, "status_label"):
-            self.status_label.text = "Completed"
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.value = self.max_attempts if self.solvent_insertion_count < self.num_target_solvent_molecules else min(self.solvent_attempts_used, self.max_attempts)
+            self.status_label.text = "Writing output files..."
         return None
 
 
@@ -940,7 +957,7 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
         label_style = Pack(margin=(0, 6, 0, 0), text_align=LEFT, width=150)
         input_style = Pack(flex=1, margin=0)
         button_style = Pack(margin=(0, 8, 0, 0), width=120)
-        row_style = Pack(direction=ROW, alignment=CENTER, margin=(0, 0, 4, 0))
+        row_style = Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0))
         main_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
 
         def add_field(parent, label_text, placeholder, attr_name, button=None):
@@ -976,7 +993,7 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
         main_box.add(params_row)
 
         main_box.add(toga.Label("Packing options", style=section_style))
-        options_row = toga.Box(style=Pack(direction=ROW, alignment=CENTER, margin=(0, 0, 4, 0)))
+        options_row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
         self.switch = toga.Switch("Randomly rotate solvent", style=Pack(margin=(0, 12, 0, 0)))
         self.switch.value = True
         self.switch_density = toga.Switch("Calculate density", style=Pack(margin=(0, 12, 0, 0)))
@@ -1019,7 +1036,7 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
         )
 
         main_box.add(toga.Label("Run controls", style=section_style))
-        run_box = toga.Box(style=Pack(direction=ROW, alignment=CENTER, margin=(0, 0, 6, 0)))
+        run_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 6, 0)))
         self.start_button = toga.Button("Build Solvent Box", style=button_style, on_press=self.workflow)
         self.btn_close = toga.Button("Close", style=Pack(width=120), on_press=self.closeTopLevel)
         run_box.add(self.start_button)
@@ -1110,38 +1127,42 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
             self.center_of_mass()
             await self.fill_solvent_box_async()
             await self.save_and_display_results()
+
+            output_file = f"{self.output_dir}/single_solute_solvent.txt"
+            with open(output_file, "w") as f:
+                f.write(f"Target density: {self.target_density:.4f} g/cm³\n")
+                f.write(f"Final density: {self.final_density:.4f} g/cm³\n")
+                f.write(f"Box lattice vectors:\n")
+                f.write(f"  a: {self.lattice_vectors[0]:.3f} Å\n")
+                f.write(f"  b: {self.lattice_vectors[1]:.3f} Å\n")
+                f.write(f"  c: {self.lattice_vectors[2]:.3f} Å\n")
+                f.write(f"Extra wall padding: {self.spacing:.3f} Å\n")
+                f.write(f"vdW scale: {self.vdw_scale:.3f}\n")
+                f.write(f"Target solvent molecules: {self.num_target_solvent_molecules}\n")
+                f.write(f"Inserted solvent molecules: {self.solvent_insertion_count}\n")
+                f.write(f"Insertion attempts used: {self.solvent_attempts_used}\n")
+                f.write(f"Failed insertion attempts: {self.failed_insertions}\n")
+                f.write(f"Periodic minimum-image clash detection: {'ON' if self.use_periodic_minimum_image else 'OFF'}\n")
+                if self.switch_include_solute.value:
+                    f.write(f"Extra solute clearance: {self.min_distance:.3f} Å\n")
+
+            if self.switch_density.value:
+                self.multi_line_text.value += (
+                    f"\nTarget density: {self.target_density:.4f} g/cm³\n"
+                    f"Final density: {self.final_density:.4f} g/cm³\n"
+                )
+
+            self.element_count()
+            self.center_box()
+            self.status_label.text = "Completed"
+            self.progress_bar.max = 100
+            self.progress_bar.value = 100
         except Exception as e:
+            self.status_label.text = "Failed"
             await self.main_window.dialog(toga.ErrorDialog("Error", f"Failed to build solvent box: {e}"))
             return
         finally:
             self.set_running_state(False)
-
-        output_file = f"{self.output_dir}/single_solute_solvent.txt"
-        with open(output_file, "w") as f:
-            f.write(f"Target density: {self.target_density:.4f} g/cm³\n")
-            f.write(f"Final density: {self.final_density:.4f} g/cm³\n")
-            f.write(f"Box lattice vectors:\n")
-            f.write(f"  a: {self.lattice_vectors[0]:.3f} Å\n")
-            f.write(f"  b: {self.lattice_vectors[1]:.3f} Å\n")
-            f.write(f"  c: {self.lattice_vectors[2]:.3f} Å\n")
-            f.write(f"Extra wall padding: {self.spacing:.3f} Å\n")
-            f.write(f"vdW scale: {self.vdw_scale:.3f}\n")
-            f.write(f"Target solvent molecules: {self.num_target_solvent_molecules}\n")
-            f.write(f"Inserted solvent molecules: {self.solvent_insertion_count}\n")
-            f.write(f"Insertion attempts used: {self.solvent_attempts_used}\n")
-            f.write(f"Failed insertion attempts: {self.failed_insertions}\n")
-            f.write(f"Periodic minimum-image clash detection: {'ON' if self.use_periodic_minimum_image else 'OFF'}\n")
-            if self.switch_include_solute.value:
-                f.write(f"Extra solute clearance: {self.min_distance:.3f} Å\n")
-
-        if self.switch_density.value:
-            self.multi_line_text.value += (
-                f"\nTarget density: {self.target_density:.4f} g/cm³\n"
-                f"Final density: {self.final_density:.4f} g/cm³\n"
-            )
-
-        self.element_count()
-        self.center_box()
 
     def closeTopLevel(self, widget):
         self.main_window.close()
