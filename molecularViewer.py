@@ -1,5 +1,4 @@
 import asyncio
-import math
 import os
 import threading
 import time
@@ -124,6 +123,13 @@ class MolecularViewer:
 
         self.rotation_angle_x = 0.0
         self.rotation_angle_y = 0.0
+        self.molecule_rotation_x = 0.0
+        self.molecule_rotation_y = 0.0
+        self.molecule_rotation_z = 0.0
+        self.continuous_rotation_axis: Optional[str] = None
+        self.continuous_rotation_direction = 0
+        self.continuous_rotation_speed = 60.0
+        self._last_continuous_rotation_time: Optional[float] = None
         self.translation_vector = [0.0, 0.0, 0.0]
         self.base_camera_distance = 5.0
         self.mouse_down = False
@@ -167,6 +173,7 @@ class MolecularViewer:
 
         # Orthorhombic box properties
         self.box_sizes = (4.0, 4.0, 4.0)
+        self.box_centering_mode = "Geometric center"
         self.show_box = False
 
         # UI-loop pointer (set by subclass)
@@ -736,8 +743,15 @@ class MolecularViewer:
 
         if self.show_box:
             a, b, c = self.box_sizes
-            half_diagonal = 0.5 * math.sqrt(a * a + b * b + c * c)
-            max_distance = max(max_distance, half_diagonal)
+            hx, hy, hz = a / 2.0, b / 2.0, c / 2.0
+            box_center = np.array(self.get_box_center(frame_data), dtype=float)
+            for dx in (-hx, hx):
+                for dy in (-hy, hy):
+                    for dz in (-hz, hz):
+                        corner = box_center + np.array((dx, dy, dz), dtype=float)
+                        distance = float(np.linalg.norm(corner - center))
+                        if distance > max_distance:
+                            max_distance = distance
 
         final_radius = max(max_distance, 2.0)
         with self._state_lock:
@@ -792,12 +806,23 @@ class MolecularViewer:
             scene_radius = self.get_scene_radius()
         return max(scene_radius * 1.3, 4.0)
 
-    def draw_box(self, frame_data: Optional[Frame] = None):
-        """Draw an orthorhombic box centered at the system center."""
+    def get_box_center(self, frame_data: Optional[Frame] = None):
+        """Return the center used for drawing the displayed simulation box."""
         if frame_data is None:
             frame_data = self.get_current_frame_data()
 
-        center = self.get_system_center(frame_data)
+        system_center = self.get_system_center(frame_data)
+        if self.box_centering_mode == "Bottom at z=0":
+            _, _, c = self.box_sizes
+            return (system_center[0], system_center[1], c / 2.0)
+        return system_center
+
+    def draw_box(self, frame_data: Optional[Frame] = None):
+        """Draw an orthorhombic box using the selected box centering mode."""
+        if frame_data is None:
+            frame_data = self.get_current_frame_data()
+
+        center = self.get_box_center(frame_data)
         a, b, c = self.box_sizes
         hx, hy, hz = a / 2.0, b / 2.0, c / 2.0
         cx, cy, cz = center
@@ -846,6 +871,29 @@ class MolecularViewer:
         glVertex3f(*end)
         glEnd()
         glEnable(GL_LIGHTING)
+
+    def update_continuous_molecule_rotation(self):
+        with self._state_lock:
+            axis = self.continuous_rotation_axis
+            direction = self.continuous_rotation_direction
+            if axis is None or direction == 0:
+                self._last_continuous_rotation_time = None
+                return
+
+            now = time.time()
+            if self._last_continuous_rotation_time is None:
+                self._last_continuous_rotation_time = now
+                return
+
+            elapsed = min(now - self._last_continuous_rotation_time, 0.1)
+            self._last_continuous_rotation_time = now
+            delta = elapsed * self.continuous_rotation_speed * direction
+            if axis == "x":
+                self.molecule_rotation_x = (self.molecule_rotation_x + delta) % 360.0
+            elif axis == "y":
+                self.molecule_rotation_y = (self.molecule_rotation_y + delta) % 360.0
+            elif axis == "z":
+                self.molecule_rotation_z = (self.molecule_rotation_z + delta) % 360.0
 
     def draw_dotted_line(self, start, end, color):
         glDisable(GL_LIGHTING)
@@ -1080,9 +1128,6 @@ class MolecularViewer:
                 measurement_overlay_text,
             )
 
-        if self.show_box and not self.fast_playback_mode:
-            self.draw_box(frame_data)
-
     def main_loop(self):
         try:
             self.init_glfw()
@@ -1105,6 +1150,8 @@ class MolecularViewer:
                 if self.consume_projection_update_request():
                     self.set_projection()
 
+                self.update_continuous_molecule_rotation()
+
                 with self._state_lock:
                     frame_data = self.get_current_frame_data()
                     bonds = list(self.bonds)
@@ -1123,7 +1170,17 @@ class MolecularViewer:
                 glTranslatef(-scene_center[0], -scene_center[1], -scene_center[2])
 
                 if frame_data:
+                    glPushMatrix()
+                    glTranslatef(scene_center[0], scene_center[1], scene_center[2])
+                    glRotatef(self.molecule_rotation_x, 1, 0, 0)
+                    glRotatef(self.molecule_rotation_y, 0, 1, 0)
+                    glRotatef(self.molecule_rotation_z, 0, 0, 1)
+                    glTranslatef(-scene_center[0], -scene_center[1], -scene_center[2])
                     self.render_frame(frame_data, bonds)
+                    glPopMatrix()
+
+                if self.show_box and not self.fast_playback_mode:
+                    self.draw_box(frame_data)
 
                 if not self.fast_playback_mode:
                     self.draw_cartesian_axes_overlay()
@@ -1268,6 +1325,9 @@ class MolecularViewerUI(MolecularViewer):
         self.atom_display_style_selection = None
         self.atom_scale_input = None
         self.bond_thickness_input = None
+        self.rotation_x_input = None
+        self.rotation_y_input = None
+        self.rotation_z_input = None
         self.atom_numbers_switch = None
         self.atom_symbols_switch = None
         self.measure_indices_input = None
@@ -1278,6 +1338,7 @@ class MolecularViewerUI(MolecularViewer):
         self.box_a_input = None
         self.box_b_input = None
         self.box_c_input = None
+        self.box_centering_selection = None
         self.box_visibility_switch = None
         self.fast_playback_switch = None
         self.bond_rendering_selection = None
@@ -1396,6 +1457,94 @@ class MolecularViewerUI(MolecularViewer):
         scale_box.add(self.bond_thickness_input)
         scale_box.add(set_bond_thickness_button)
 
+        rotation_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
+        rotation_label = toga.Label(
+            "Rotate:",
+            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=58),
+        )
+        rotation_x_label = toga.Label(
+            "X:",
+            style=Pack(margin=(0, 0, 5, 2), text_align=LEFT, width=16),
+        )
+        self.rotation_x_input = toga.TextInput(
+            value="0.0",
+            placeholder="deg",
+            style=Pack(width=46, margin=(2, 2)),
+        )
+        rotate_x_negative_button = toga.Button(
+            "<",
+            on_press=lambda widget: self.toggle_continuous_molecule_rotation("x", -1),
+            style=Pack(margin=2, width=26),
+        )
+        rotate_x_positive_button = toga.Button(
+            ">",
+            on_press=lambda widget: self.toggle_continuous_molecule_rotation("x", 1),
+            style=Pack(margin=2, width=26),
+        )
+        rotation_y_label = toga.Label(
+            "Y:",
+            style=Pack(margin=(0, 0, 5, 8), text_align=LEFT, width=16),
+        )
+        self.rotation_y_input = toga.TextInput(
+            value="0.0",
+            placeholder="deg",
+            style=Pack(width=46, margin=(2, 2)),
+        )
+        rotate_y_negative_button = toga.Button(
+            "<",
+            on_press=lambda widget: self.toggle_continuous_molecule_rotation("y", -1),
+            style=Pack(margin=2, width=26),
+        )
+        rotate_y_positive_button = toga.Button(
+            ">",
+            on_press=lambda widget: self.toggle_continuous_molecule_rotation("y", 1),
+            style=Pack(margin=2, width=26),
+        )
+        rotation_z_label = toga.Label(
+            "Z:",
+            style=Pack(margin=(0, 0, 5, 8), text_align=LEFT, width=16),
+        )
+        self.rotation_z_input = toga.TextInput(
+            value="0.0",
+            placeholder="deg",
+            style=Pack(width=46, margin=(2, 2)),
+        )
+        rotate_z_negative_button = toga.Button(
+            "<",
+            on_press=lambda widget: self.toggle_continuous_molecule_rotation("z", -1),
+            style=Pack(margin=2, width=26),
+        )
+        rotate_z_positive_button = toga.Button(
+            ">",
+            on_press=lambda widget: self.toggle_continuous_molecule_rotation("z", 1),
+            style=Pack(margin=2, width=26),
+        )
+        apply_rotation_button = toga.Button(
+            "Apply",
+            on_press=self.apply_molecule_rotation,
+            style=Pack(margin=(2, 2, 2, 8), width=52),
+        )
+        reset_rotation_button = toga.Button(
+            "Reset",
+            on_press=self.reset_molecule_rotation,
+            style=Pack(margin=2, width=52),
+        )
+        rotation_box.add(rotation_label)
+        rotation_box.add(rotation_x_label)
+        rotation_box.add(self.rotation_x_input)
+        rotation_box.add(rotate_x_negative_button)
+        rotation_box.add(rotate_x_positive_button)
+        rotation_box.add(rotation_y_label)
+        rotation_box.add(self.rotation_y_input)
+        rotation_box.add(rotate_y_negative_button)
+        rotation_box.add(rotate_y_positive_button)
+        rotation_box.add(rotation_z_label)
+        rotation_box.add(self.rotation_z_input)
+        rotation_box.add(rotate_z_negative_button)
+        rotation_box.add(rotate_z_positive_button)
+        rotation_box.add(apply_rotation_button)
+        rotation_box.add(reset_rotation_button)
+
         labels_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
         self.atom_numbers_switch = toga.Switch("Atom numbers", on_change=self.toggle_atom_numbers)
         self.atom_numbers_switch.value = False
@@ -1463,6 +1612,22 @@ class MolecularViewerUI(MolecularViewer):
         box_box.add(box_c_label)
         box_box.add(self.box_c_input)
         box_box.add(set_box_button)
+
+        box_centering_box = toga.Box(
+            style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0))
+        )
+        box_centering_label = toga.Label(
+            "Box center:",
+            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
+        )
+        self.box_centering_selection = toga.Selection(
+            items=["Geometric center", "Bottom at z=0"],
+            style=Pack(flex=1, margin=(5, 5)),
+            on_change=self.set_box_centering_mode,
+        )
+        self.box_centering_selection.value = self.box_centering_mode
+        box_centering_box.add(box_centering_label)
+        box_centering_box.add(self.box_centering_selection)
 
         box_visibility_box = toga.Box(
             style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0))
@@ -1629,10 +1794,12 @@ class MolecularViewerUI(MolecularViewer):
         main_box.add(style_box)
         main_box.add(atom_style_box)
         main_box.add(scale_box)
+        main_box.add(rotation_box)
         main_box.add(labels_box)
         main_box.add(measure_box)
         main_box.add(self.measurement_label)
         main_box.add(box_box)
+        main_box.add(box_centering_box)
         main_box.add(box_visibility_box)
         main_box.add(nav_box)
         main_box.add(playback_box)
@@ -1777,6 +1944,69 @@ class MolecularViewerUI(MolecularViewer):
                 "Invalid Input", "Please enter a valid positive number for bond thickness scale."
             )
 
+    async def apply_molecule_rotation(self, widget):
+        try:
+            delta_x = float(self.rotation_x_input.value.strip())
+            delta_y = float(self.rotation_y_input.value.strip())
+            delta_z = float(self.rotation_z_input.value.strip())
+        except (TypeError, ValueError, AttributeError):
+            await self._show_error(
+                "Invalid Input", "Please enter valid numeric rotation angles in degrees."
+            )
+            return
+
+        with self._state_lock:
+            self.molecule_rotation_x = (self.molecule_rotation_x + delta_x) % 360.0
+            self.molecule_rotation_y = (self.molecule_rotation_y + delta_y) % 360.0
+            self.molecule_rotation_z = (self.molecule_rotation_z + delta_z) % 360.0
+            rotation_x = self.molecule_rotation_x
+            rotation_y = self.molecule_rotation_y
+            rotation_z = self.molecule_rotation_z
+
+        self.set_status_message(
+            "Molecular rotation set to "
+            f"x={rotation_x:.3f}, "
+            f"y={rotation_y:.3f}, "
+            f"z={rotation_z:.3f} degrees."
+        )
+
+    def toggle_continuous_molecule_rotation(self, axis: str, direction: int):
+        if axis not in {"x", "y", "z"} or direction not in {-1, 1}:
+            return
+
+        with self._state_lock:
+            is_same_rotation = (
+                self.continuous_rotation_axis == axis
+                and self.continuous_rotation_direction == direction
+            )
+            if is_same_rotation:
+                self.continuous_rotation_axis = None
+                self.continuous_rotation_direction = 0
+                self._last_continuous_rotation_time = None
+                message = f"Continuous {axis.upper()} rotation stopped."
+            else:
+                self.continuous_rotation_axis = axis
+                self.continuous_rotation_direction = direction
+                self._last_continuous_rotation_time = None
+                direction_label = "positive" if direction > 0 else "negative"
+                message = f"Continuous {axis.upper()} rotation started in the {direction_label} direction."
+
+        self.set_status_message(message)
+
+    def reset_molecule_rotation(self, widget):
+        with self._state_lock:
+            self.molecule_rotation_x = 0.0
+            self.molecule_rotation_y = 0.0
+            self.molecule_rotation_z = 0.0
+            self.continuous_rotation_axis = None
+            self.continuous_rotation_direction = 0
+            self._last_continuous_rotation_time = None
+
+        self.rotation_x_input.value = "0.0"
+        self.rotation_y_input.value = "0.0"
+        self.rotation_z_input.value = "0.0"
+        self.set_status_message("Molecular rotation reset.")
+
     async def set_frame_skip(self, widget):
         try:
             skip = int(self.frame_skip_input.value.strip())
@@ -1861,6 +2091,18 @@ class MolecularViewerUI(MolecularViewer):
             await self._show_error(
                 "Invalid Input", "Please enter valid positive numbers for the box sizes."
             )
+
+    def set_box_centering_mode(self, widget):
+        selected_mode = getattr(self.box_centering_selection, "value", None)
+        if selected_mode not in {"Geometric center", "Bottom at z=0"}:
+            selected_mode = "Geometric center"
+
+        self.box_centering_mode = selected_mode
+        self.invalidate_scene_cache()
+        if selected_mode == "Bottom at z=0":
+            self.set_status_message("Box centered in a-b plane with bottom face at z=0.")
+        else:
+            self.set_status_message("Box centered on the molecular geometric center.")
 
     def set_box_visibility(self, widget):
         self.show_box = bool(self.box_visibility_switch.value)
