@@ -1177,10 +1177,9 @@ class MolecularViewer:
                     glRotatef(self.molecule_rotation_z, 0, 0, 1)
                     glTranslatef(-scene_center[0], -scene_center[1], -scene_center[2])
                     self.render_frame(frame_data, bonds)
+                    if self.show_box and not self.fast_playback_mode:
+                        self.draw_box(frame_data)
                     glPopMatrix()
-
-                if self.show_box and not self.fast_playback_mode:
-                    self.draw_box(frame_data)
 
                 if not self.fast_playback_mode:
                     self.draw_cartesian_axes_overlay()
