@@ -1,5 +1,80 @@
 # gqteaWinToga User Manual
 
+## Index
+
+- [Overview](#overview)
+- [Installation and Requirements](#installation-and-requirements)
+  - [Requirements](#requirements)
+  - [Install from Source](#install-from-source)
+  - [Start the Program](#start-the-program)
+- [Input File Basics](#input-file-basics)
+  - [XYZ Files](#xyz-files)
+  - [Atom Labels](#atom-labels)
+  - [Common Units](#common-units)
+- [Basic Workflows](#basic-workflows)
+  - [Analyze a Bond Length](#analyze-a-bond-length)
+  - [Build CPMD Input Files](#build-cpmd-input-files)
+  - [Select Frames and Generate Gaussian Inputs](#select-frames-and-generate-gaussian-inputs)
+  - [Plot CPMD Energy Data](#plot-cpmd-energy-data)
+- [Features and Commands](#features-and-commands)
+  - [Main Window](#main-window)
+  - [Geometry Tools](#geometry-tools)
+    - [Bond Length Analysis](#bond-length-analysis)
+    - [Bond Angle Analysis](#bond-angle-analysis)
+    - [Dihedral Angle Analysis](#dihedral-angle-analysis)
+    - [Hydrogen Bond Analysis](#hydrogen-bond-analysis)
+  - [Input Builders](#input-builders)
+    - [CPMD Inputs](#cpmd-inputs)
+    - [Surface Hopping Input Builder](#surface-hopping-input-builder)
+    - [Collision Input](#collision-input)
+    - [Quantum ESPRESSO cp.x Input Builder](#quantum-espresso-cpx-input-builder)
+    - [ORCA Input Builder](#orca-input-builder)
+    - [gqteaMD Input Builder](#gqteamd-input-builder)
+    - [Vanderbilt runatom.x Input Builder](#vanderbilt-runatomx-input-builder)
+  - [Structural Tools](#structural-tools)
+    - [Radial Distribution Function](#radial-distribution-function)
+    - [Mean Residence Time](#mean-residence-time)
+    - [Legacy Mean Residence Time](#legacy-mean-residence-time)
+    - [Autocorrelation Function](#autocorrelation-function)
+    - [Single Solute Solvent Box](#single-solute-solvent-box)
+    - [Mixture of Two Solvent Box](#mixture-of-two-solvent-box)
+    - [Shared-Wall Double Solvent Box](#shared-wall-double-solvent-box)
+  - [Thermo Tools](#thermo-tools)
+    - [Classical Rate Constant](#classical-rate-constant)
+  - [General Tools](#general-tools)
+    - [3D Molecular Viewer](#3d-molecular-viewer)
+    - [Energy Plots](#energy-plots)
+    - [Molecular Axis Alignment](#molecular-axis-alignment)
+    - [Select Frames](#select-frames)
+    - [Frame Selection by Interatomic Distance Range](#frame-selection-by-interatomic-distance-range)
+    - [CPMD Input to XYZ Converter](#cpmd-input-to-xyz-converter)
+    - [SH Geometry Analyzer](#sh-geometry-analyzer)
+    - [Convert cp.x .pos File to trajec.xyz](#convert-cpx-pos-file-to-trajecxyz)
+    - [Compute Forces from cp.x .for File](#compute-forces-from-cpx-for-file)
+    - [Coordinate Converter](#coordinate-converter)
+    - [Convert Coordinates from Angstrom to Bohr](#convert-coordinates-from-angstrom-to-bohr)
+    - [Unit Converter](#unit-converter)
+- [Configuration](#configuration)
+- [Practical Examples](#practical-examples)
+  - [Example 1: Find a Bond-Length Free-Energy Minimum](#example-1-find-a-bond-length-free-energy-minimum)
+  - [Example 2: Prepare a CPMD Collision Restart](#example-2-prepare-a-cpmd-collision-restart)
+  - [Example 3: Group Surface Hopping Frames by State](#example-3-group-surface-hopping-frames-by-state)
+  - [Example 4: Convert a cp.x Trajectory](#example-4-convert-a-cpx-trajectory)
+- [Troubleshooting](#troubleshooting)
+  - ["No file was selected!"](#no-file-was-selected)
+  - ["Please input a valid value for ..."](#please-input-a-valid-value-for-)
+  - ["Invalid format for ... Please input exactly two atom labels."](#invalid-format-for--please-input-exactly-two-atom-labels)
+  - ["Failed to open file" or "Failed to read file"](#failed-to-open-file-or-failed-to-read-file)
+  - ["The file is empty!"](#the-file-is-empty)
+  - ["Invalid line format in TRAJECTORY file"](#invalid-line-format-in-trajectory-file)
+  - ["The stop frame must be less than the total number of frames"](#the-stop-frame-must-be-less-than-the-total-number-of-frames)
+  - [ENERGY file format errors](#energy-file-format-errors)
+  - [Solvent box insertion warnings](#solvent-box-insertion-warnings)
+  - [Missing `SH_STATE.dat` or `TRAJEC.xyz`](#missing-sh_statedat-or-trajecxyz)
+  - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
+  - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
+- [Version, Contributors, and License](#version-contributors-and-license)
+
 ## Overview
 
 gqteaWinToga is a desktop molecular analysis toolkit developed by the gQTEA group. It helps users prepare, inspect, convert, visualize, and analyze molecular simulation data from CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping workflows, and related molecular dynamics tools.
@@ -529,6 +604,62 @@ Inputs and options:
 
 Outputs include a generated XYZ structure and a TXT summary with composition and insertion statistics.
 
+#### Shared-Wall Double Solvent Box
+
+Use **Structural > Shared-wall double solvent box** to build two adjacent solvent regions that share one face. The module is intended for interface models, bilayer-like solvent arrangements, or any setup where two different solvent environments should occupy neighboring slabs in the same simulation box.
+
+The generated structure is a single combined XYZ file. Box 1 occupies the lower z region, from `z = 0` to `z = c1`, and Box 2 occupies the upper z region, from `z = c1` to `z = c1 + c2`. The two boxes share the same `a` and `b` lattice dimensions, but each box has its own z height. No wall atoms or boundary markers are written at the shared interface.
+
+How it works:
+
+- Reads one or two solvent XYZ templates for each box.
+- Optionally reads one solute XYZ template for each box.
+- Recenters each molecule template, using center of mass when atomic masses are available.
+- Estimates the target number of solvent molecules from the requested density, slab volume, solvent composition, and optional solute mass.
+- Randomly inserts solvent molecules into Box 1 and then Box 2.
+- Optionally randomizes solvent orientation before insertion.
+- Keeps atoms inside the assigned z slab and applies the requested wall padding at the outside boundaries.
+- Rejects placements that clash using van der Waals radii scaled by the selected vdW factor.
+- Uses the full combined box for periodic minimum-image clash detection when that option is enabled.
+- Reports insertion statistics and warns if the target number of molecules cannot be reached.
+
+Shared geometry inputs:
+
+- **Shared a b**: two lattice dimensions used by both boxes.
+- **Box 1 c**: z height of the lower region.
+- **Box 2 c**: z height of the upper region.
+- **Periodic minimum-image clash detection**: checks overlaps across periodic boundaries using the full `a x b x (c1 + c2)` box.
+
+Per-box inputs and options:
+
+- Wall padding.
+- Target density in g/cm^3.
+- Solvent A and Solvent B composition percentages.
+- Maximum insertion attempts.
+- vdW scale.
+- Optional random seed.
+- Optional solute gap.
+- Rotate solvent molecules during insertion.
+- Include a centered solute.
+- Solvent A, Solvent B, and optional solute XYZ files.
+
+Typical outputs:
+
+- `shared_wall_box.xyz`
+- `shared_wall_box.txt`
+
+Example workflow:
+
+1. Open **Structural > Shared-wall double solvent box**.
+2. Enter shared lattice values, for example `30.0 30.0`, in **Shared a b**.
+3. Enter `25.0` for **Box 1 c** and `25.0` for **Box 2 c**. The combined box will have `c = 50.0`, with the shared interface at `z = 25.0`.
+4. For Box 1, set **Density** to `0.95`, **Solvent A (%)** to `100`, **Solvent B (%)** to `0`, and browse for a Box 1 Solvent A XYZ file such as water.
+5. For Box 2, set **Density** to `0.80`, **Solvent A (%)** to `100`, **Solvent B (%)** to `0`, and browse for a Box 2 Solvent A XYZ file such as an organic solvent.
+6. Leave **Rotate Box 1** and **Rotate Box 2** enabled unless you need fixed solvent orientations.
+7. Enable **Box 1 solute** or **Box 2 solute** only if that slab should contain a centered solute, then browse for the corresponding solute XYZ file and set a solute gap if needed.
+8. Click **Build Shared-Wall Box**.
+9. Inspect the progress and summary panel. If the summary warns that not all solvent molecules were inserted, try a larger slab, lower density, smaller vdW scale, or more insertion attempts.
+
 ### Thermo Tools
 
 #### Classical Rate Constant
@@ -556,11 +687,13 @@ Controls include:
 - Atom display style.
 - Atom scale.
 - Bond thickness.
+- Rotate the molecular system around the X, Y, and Z axes.
 - Bond mode.
 - Show atom numbers.
 - Show atomic symbols.
 - Measure distance, angle, or dihedral by entering atom labels.
 - Set periodic box dimensions.
+- Choose how the displayed periodic box is centered.
 - Show or hide the box.
 - Step through trajectory frames.
 - Play/pause trajectory animation.
@@ -568,6 +701,13 @@ Controls include:
 - Save the current frame as XYZ.
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
+
+The rotation controls let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees and click **Apply** to add those increments to the current molecular orientation. Click **Reset** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
+
+When the periodic box is shown, it rotates with the molecular system. The **Box center** selector controls where the displayed orthorhombic box is placed:
+
+- **Geometric center**: centers the box on the molecular system's geometric center.
+- **Bottom at z=0**: centers the box in the a-b plane while placing the bottom face of the box at `z = 0`.
 
 Bond mode controls how the viewer updates connectivity while stepping through or playing a trajectory:
 
@@ -892,4 +1032,3 @@ Core development team:
 - Flavio O. Sanches - flavio.neto@ifg.edu.br
 
 No license file is currently included in the source tree. Before distributing the program publicly, add a `LICENSE` file so users know how they may use, modify, and redistribute the code.
-
