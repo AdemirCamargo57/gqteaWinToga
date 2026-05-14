@@ -9,6 +9,9 @@ from toga.style.pack import COLUMN, ROW, CENTER, LEFT
 
 # --- Existing imports ---
 from bond import BondUI
+from allBondAnalysis import allBondAnalysisUI
+from allAnglesAnalysis import allAnglesAnalysisUI
+from allDihedralAnalysis import allDihedralAnalysisUI
 from hbond import HBondUI
 from bondAngle import BondAngleUI
 from dihedralAngle import DihedralUI
@@ -80,8 +83,11 @@ class gqteaWin(toga.App):
         # --- Define the layout for each tab ---        
         geometry_tools = [
             ("Bond length analysis", BondUI),
+            ("All bond distance analysis", allBondAnalysisUI),
             ("Bond angle analysis", BondAngleUI),
+            ("All bond angle analysis", allAnglesAnalysisUI),
             ("Dihedral angle analysis", DihedralUI),
+            ("All dihedral angle analysis", allDihedralAnalysisUI),
             ("Hydrogen bond analysis", HBondUI),
         ]
 
