@@ -1,6 +1,5 @@
 """
 Program developed by gqtea group.
-Revised and updated in March, 2026
 """
 
 import toga

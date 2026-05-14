@@ -20,8 +20,11 @@
   - [Main Window](#main-window)
   - [Geometry Tools](#geometry-tools)
     - [Bond Length Analysis](#bond-length-analysis)
+    - [All Bond Distance Analysis](#all-bond-distance-analysis)
     - [Bond Angle Analysis](#bond-angle-analysis)
+    - [All Bond Angle Analysis](#all-bond-angle-analysis)
     - [Dihedral Angle Analysis](#dihedral-angle-analysis)
+    - [All Dihedral Angle Analysis](#all-dihedral-angle-analysis)
     - [Hydrogen Bond Analysis](#hydrogen-bond-analysis)
   - [Input Builders](#input-builders)
     - [CPMD Inputs](#cpmd-inputs)
@@ -60,6 +63,9 @@
   - [Example 2: Prepare a CPMD Collision Restart](#example-2-prepare-a-cpmd-collision-restart)
   - [Example 3: Group Surface Hopping Frames by State](#example-3-group-surface-hopping-frames-by-state)
   - [Example 4: Convert a cp.x Trajectory](#example-4-convert-a-cpx-trajectory)
+  - [Example 5: Analyze All Solute Bond Distances](#example-5-analyze-all-solute-bond-distances)
+  - [Example 6: Analyze All Solute Bond Angles](#example-6-analyze-all-solute-bond-angles)
+  - [Example 7: Analyze All Solute Dihedral Angles](#example-7-analyze-all-solute-dihedral-angles)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
   - ["Please input a valid value for ..."](#please-input-a-valid-value-for-)
@@ -232,7 +238,7 @@ The program is GUI-based. The "commands" below refer to the buttons and controls
 
 The main window organizes tools by category:
 
-- **Geometry**: bond length, bond angle, dihedral angle, and hydrogen bond analysis.
+- **Geometry**: bond length, all bond distances, bond angle, all bond angles, dihedral angle, all dihedral angles, and hydrogen bond analysis.
 - **Inputs**: CPMD, surface hopping, collision, Quantum ESPRESSO `cp.x`, ORCA, gqteaMD, and Vanderbilt `runatom.x` input builders.
 - **Structural**: radial distribution function, mean residence time, autocorrelation function, and solvent box builders.
 - **Thermo**: classical rate constant calculation.
@@ -267,6 +273,54 @@ Typical outputs:
 - `summary_<atom1>_<atom2>.txt`
 - Optional CSV files with matching names.
 
+#### All Bond Distance Analysis
+
+Use **Geometry > All bond distance analysis** to calculate distance statistics for every connected atom pair in an XYZ trajectory. This tool is intended for complete solute geometry monitoring in a molecular dynamics run. For a solute in a solvent box, provide the solute atom indices so solvent-solvent and solute-solvent distances are ignored.
+
+How connectivity is detected:
+
+- The program reads the first frame of the trajectory.
+- Two atoms are considered connected if their first-frame distance is less than or equal to the **Maximum connection distance**.
+- The default maximum connection distance is `1.5` Angstrom.
+- If **Solute atom indices** is filled, only pairs where both atoms belong to the solute are considered.
+
+Inputs:
+
+- `trajectory.xyz` or `TRAJEC.xyz` trajectory file.
+- **Maximum connection distance (A)**, for example `1.5`.
+- **Solute atom indices**, for example `1 2 3 4 5`; leave blank to use all atoms.
+- Output TXT filename, default `all_bond_analysis.txt`.
+
+Step-by-step:
+
+1. Open **Geometry > All bond distance analysis**.
+2. Click **Browse** and select the trajectory XYZ file.
+3. Enter the maximum connection distance. Use `1.5` for the default behavior.
+4. If the system contains a solute in solvent, enter the solute atom labels in **Solute atom indices**. Use 1-based labels, separated by spaces.
+5. Enter the output filename or keep `all_bond_analysis.txt`.
+6. Click **Analyze**.
+7. Wait until the final summary appears in the text area.
+8. Open the statistics file and pair mapping file in the trajectory directory.
+
+Output files:
+
+- `all_bond_analysis.txt`: three whitespace-separated columns.
+- `all_bond_analysis_pairs.txt`: row-to-atom-pair mapping.
+
+The statistics file contains:
+
+```text
+# average variance standard_deviation
+```
+
+Each following row contains one connected atom pair:
+
+```text
+average_distance  population_variance  standard_deviation
+```
+
+The mapping file contains the number of frames, atom scope, solute atom list when used, and the atom pair associated with each row.
+
 #### Bond Angle Analysis
 
 Use this tool to calculate bond angles across a trajectory, angle distributions, and free-energy profiles.
@@ -287,6 +341,49 @@ Options:
 - **Save CSV outputs**.
 - **Use sin(theta) Jacobian**: applies the angular Jacobian correction to the distribution/free-energy calculation.
 
+#### All Bond Angle Analysis
+
+Use **Geometry > All bond angle analysis** to calculate angle statistics for every connected `atom_i-atom_j-atom_k` angle in an XYZ trajectory. The central atom is `atom_j`. The tool first detects connected bonds from the first frame, then builds every angle where `atom_i` and `atom_k` are both connected to the central atom.
+
+For a solute in a solvent box, provide the solute atom indices. The program then builds angles only from solute atoms, excluding any angle involving solvent atoms.
+
+Inputs:
+
+- `trajectory.xyz` or `TRAJEC.xyz` trajectory file.
+- **Maximum connection distance (A)**, default `1.5`.
+- **Solute atom indices**, for example `1 2 3 4 5`; leave blank to use all atoms.
+- Output TXT filename, default `all_angles_analysis.txt`.
+
+Step-by-step:
+
+1. Open **Geometry > All bond angle analysis**.
+2. Click **Browse** and select the trajectory XYZ file.
+3. Enter the maximum connection distance used to detect first-frame bonds.
+4. Enter solute atom labels if solvent atoms must be excluded.
+5. Enter the output filename or keep `all_angles_analysis.txt`.
+6. Click **Analyze**.
+7. Wait until the text area reports that the analysis is completed.
+8. Inspect the statistics file and triplet mapping file.
+
+Output files:
+
+- `all_angles_analysis.txt`: three whitespace-separated columns.
+- `all_angles_analysis_triplets.txt`: row-to-atom-triplet mapping.
+
+The statistics file contains:
+
+```text
+# average_angle_degrees variance_degrees2 standard_deviation_degrees
+```
+
+Each following row contains one connected angle:
+
+```text
+average_angle  population_variance  standard_deviation
+```
+
+The mapping file identifies each `atom_i atom_j atom_k` triplet and reports the first-frame angle in degrees.
+
 #### Dihedral Angle Analysis
 
 Use this tool to calculate dihedral angles across a trajectory, dihedral distributions, and free-energy profiles.
@@ -306,6 +403,55 @@ Options:
 - **Show plots at the end**.
 - **Save CSV outputs**.
 - **Wrap dihedral to [-180, 180]**: reports wrapped dihedral angles instead of a 0 to 360 degree range.
+
+#### All Dihedral Angle Analysis
+
+Use **Geometry > All dihedral angle analysis** to calculate statistics for every connected `atom_i-atom_j-atom_k-atom_l` dihedral path in an XYZ trajectory. The tool detects first-frame connectivity, then builds dihedrals around every connected central bond `atom_j-atom_k`.
+
+For a solute in a solvent box, provide the solute atom indices. The program then builds only solute dihedrals and ignores all solvent atoms.
+
+Dihedral convention:
+
+- Dihedrals are signed angles in degrees.
+- The range is `(-180, 180]`.
+- This convention matches the single **Dihedral angle analysis** tool.
+
+Inputs:
+
+- `trajectory.xyz` or `TRAJEC.xyz` trajectory file.
+- **Maximum connection distance (A)**, default `1.5`.
+- **Solute atom indices**, for example `1 2 3 4 5`; leave blank to use all atoms.
+- Output TXT filename, default `all_dihedral_analysis.txt`.
+
+Step-by-step:
+
+1. Open **Geometry > All dihedral angle analysis**.
+2. Click **Browse** and select the trajectory XYZ file.
+3. Enter the maximum connection distance used to detect first-frame bonds.
+4. Enter solute atom labels if solvent atoms must be excluded.
+5. Enter the output filename or keep `all_dihedral_analysis.txt`.
+6. Click **Analyze**.
+7. Wait until the text area reports that the analysis is completed.
+8. Inspect the statistics file and quadruplet mapping file.
+
+Output files:
+
+- `all_dihedral_analysis.txt`: three whitespace-separated columns.
+- `all_dihedral_analysis_quadruplets.txt`: row-to-atom-quadruplet mapping.
+
+The statistics file contains:
+
+```text
+# average_dihedral_degrees variance_degrees2 standard_deviation_degrees
+```
+
+Each following row contains one connected dihedral:
+
+```text
+average_dihedral  population_variance  standard_deviation
+```
+
+The mapping file identifies each `atom_i atom_j atom_k atom_l` quadruplet, reports the signed dihedral convention, and reports the first-frame dihedral in degrees.
 
 #### Hydrogen Bond Analysis
 
@@ -947,6 +1093,182 @@ Histogram bin width: 0.02
 3. Browse to the `*.pos` file.
 4. Click **Convert**.
 5. Use the generated XYZ trajectory in the viewer or analysis tools.
+
+### Example 5: Analyze All Solute Bond Distances
+
+Suppose atoms `1 2 3 4` are the solute and the remaining atoms are solvent. A small trajectory might begin like this:
+
+```text
+5
+frame 1
+C  0.0  1.0  0.0
+C  0.0  0.0  0.0
+C  1.0  0.0  0.0
+H  1.0  0.0  1.0
+O  0.0  0.5  0.0
+5
+frame 2
+C  0.0  1.1  0.0
+C  0.0  0.0  0.0
+C  1.1  0.0  0.0
+H  1.0  0.0  1.1
+O  0.0  0.5  0.0
+```
+
+Atom `5` is a solvent atom close to the solute, but it must not contribute to the solute bond analysis.
+
+1. Open **Geometry > All bond distance analysis**.
+2. Browse to the trajectory file.
+3. Set **Maximum connection distance (A)** to `1.5`.
+4. Set **Solute atom indices** to:
+
+```text
+1 2 3 4
+```
+
+5. Keep the output filename as:
+
+```text
+all_bond_analysis.txt
+```
+
+6. Click **Analyze**.
+
+The statistics file has three columns:
+
+```text
+# average variance standard_deviation
+      1.05000000       0.00250000       0.05000000
+```
+
+The pair mapping file tells which atom pair belongs to each row:
+
+```text
+# frames_used 2
+# atom_scope solute_atoms
+# solute_atom_indices 1 2 3 4
+# row atom_i atom_j element_i element_j first_frame_distance
+     1        1        2        C        C       1.00000000
+```
+
+Only solute-solute pairs are reported.
+
+### Example 6: Analyze All Solute Bond Angles
+
+Use the same idea for all connected solute angles. For a water-like solute with atoms `1 2 3` and a nearby solvent atom `4`:
+
+```text
+4
+frame 1
+H  0.0  0.0  0.0
+O  1.0  0.0  0.0
+H  1.0  1.0  0.0
+H  1.0  0.5  0.0
+4
+frame 2
+H  0.0  0.0  0.0
+O  1.0  0.0  0.0
+H  0.5  0.8660254  0.0
+H  1.0  0.5  0.0
+```
+
+Atom `4` is solvent and should be excluded.
+
+1. Open **Geometry > All bond angle analysis**.
+2. Browse to the trajectory file.
+3. Set **Maximum connection distance (A)** to `1.1`.
+4. Set **Solute atom indices** to:
+
+```text
+1 2 3
+```
+
+5. Keep the output filename as:
+
+```text
+all_angles_analysis.txt
+```
+
+6. Click **Analyze**.
+
+The statistics file has three columns:
+
+```text
+# average_angle_degrees variance_degrees2 standard_deviation_degrees
+     74.99999995     225.00000163      15.00000005
+```
+
+The triplet mapping file identifies the angle:
+
+```text
+# frames_used 2
+# atom_scope solute_atoms
+# solute_atom_indices 1 2 3
+# row atom_i atom_j atom_k element_i element_j element_k first_frame_angle_degrees
+     1        1        2        3        H        O        H      90.00000000
+```
+
+The angle is interpreted as `atom_i-atom_j-atom_k`, so atom `2` is the central atom in this example.
+
+### Example 7: Analyze All Solute Dihedral Angles
+
+For a solute chain `1-2-3-4` in a solvent environment, use **All dihedral angle analysis**. Example trajectory:
+
+```text
+5
+frame 1
+C  0.0  1.0  0.0
+C  0.0  0.0  0.0
+C  1.0  0.0  0.0
+H  1.0  0.0  1.0
+O  0.0  0.5  0.0
+5
+frame 2
+C  0.0  1.0  0.0
+C  0.0  0.0  0.0
+C  1.0  0.0  0.0
+H  1.0  0.0 -1.0
+O  0.0  0.5  0.0
+```
+
+Atom `5` is solvent and should not be used to build dihedral paths.
+
+1. Open **Geometry > All dihedral angle analysis**.
+2. Browse to the trajectory file.
+3. Set **Maximum connection distance (A)** to `1.1`.
+4. Set **Solute atom indices** to:
+
+```text
+1 2 3 4
+```
+
+5. Keep the output filename as:
+
+```text
+all_dihedral_analysis.txt
+```
+
+6. Click **Analyze**.
+
+The statistics file has three columns:
+
+```text
+# average_dihedral_degrees variance_degrees2 standard_deviation_degrees
+      0.00000000    8100.00000000      90.00000000
+```
+
+The quadruplet mapping file identifies the dihedral:
+
+```text
+# frames_used 2
+# dihedral_convention signed_degrees_minus180_to_180
+# atom_scope solute_atoms
+# solute_atom_indices 1 2 3 4
+# row atom_i atom_j atom_k atom_l element_i element_j element_k element_l first_frame_dihedral_degrees
+     1        1        2        3        4        C        C        C        H     -90.00000000
+```
+
+Dihedrals are reported as signed degrees using the range `(-180, 180]`.
 
 ## Troubleshooting
 
