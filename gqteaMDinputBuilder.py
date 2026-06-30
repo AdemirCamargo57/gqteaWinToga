@@ -12,7 +12,8 @@ from toga.style.pack import COLUMN, ROW
 class GqteaMDInputBuilder:
     """Backend logic for building gqteaMD TOML input files."""
 
-    FORCE_PROVIDER_CHOICES = ["harmonic", "uff", "xtb", "gaussian", "classical"]
+    FORCE_PROVIDER_CHOICES = ["harmonic", "uff", "xtb", "gaussian", "classical", "gaussian_td", "tully_model"]
+    THERMOSTAT_CHOICES = ["none", "bussi"]
     BOOL_CHOICES = ["false", "true"]
     UFF_ELECTROSTATICS_CHOICES = ["auto", "true", "false"]
     UFF_EXCLUSION_CHOICES = ["exclude_12_13", "exclude_12", "none"]
@@ -25,14 +26,37 @@ class GqteaMDInputBuilder:
         "# AM1 Force NoSymm SCF=(MaxCycle=1000)",
         "Custom",
     ]
+    # Base route for the TD-DFT excited-state provider. gqteaMD appends the
+    # TD(NStates=...,Root=...) keyword and Force/NoSymm automatically, so the
+    # builder offers plain method/basis routes here without those keywords.
+    TD_ROUTE_CHOICES = [
+        "# B3LYP/6-31G(d)",
+        "# CAM-B3LYP/6-31+G(d)",
+        "# PBE0/def2-SVP",
+        "Custom",
+    ]
+    # Surface-hopping (FSSH) configuration choices, mirroring the gqteaMD
+    # [surface_hopping] schema and its CLI builders.
+    SURFACE_HOPPING_PROPAGATOR_CHOICES = ["local_diabatization", "nac_vector"]
+    SURFACE_HOPPING_DECOHERENCE_CHOICES = ["none", "sdm", "odc"]
+    SURFACE_HOPPING_RESCALING_CHOICES = ["nac", "isotropic"]
+    SURFACE_HOPPING_FRUSTRATED_CHOICES = ["reject", "reverse"]
+    # Force providers that expose more than one electronic state and can
+    # therefore drive surface hopping.
+    MANY_STATE_FORCE_PROVIDERS = ["gaussian_td", "tully_model"]
+    TULLY_MODEL_CHOICES = ["tully1", "tully2", "tully3"]
 
     MANUAL_SUMMARY = (
         "gqteaMD TOML sections used by this builder:\n"
         "- [input]: starting XYZ geometry.\n"
         "- [cell]: orthorhombic a, b, c box lengths in angstrom.\n"
-        "- [dynamics]: velocity Verlet timestep_fs and steps.\n"
+        "- [dynamics]: velocity Verlet timestep_fs and steps; optional temperature_K, seed, "
+        "and remove_com_motion generate Maxwell-Boltzmann initial velocities.\n"
+        "- [dynamics] thermostat = \"bussi\" with thermostat_tau_fs enables Bussi (CSVR) NVT "
+        "temperature control and requires temperature_K.\n"
         "- [force_provider]: harmonic, classical, uff, xtb, or gaussian.\n"
-        "- [output]: trajectory and log settings. GEOMETRY is written automatically.\n"
+        "- [output]: trajectory and log settings; wrap_trajectory true keeps atoms inside the cell, "
+        "false writes unwrapped coordinates. GEOMETRY is written automatically.\n"
         "- [restart]: optional restart writing and resume behavior.\n\n"
         "Gaussian notes:\n"
         "- gqteaMD supports command, route, charge, multiplicity, nproc, memory, chk, and workdir.\n"
@@ -61,7 +85,29 @@ class GqteaMDInputBuilder:
         "- Typical settings include method, charge, multiplicity, accuracy, electronic_temperature, max_iterations, and solvent.\n"
         "- omp_num_threads controls OMP_NUM_THREADS for xTB calculations when supported by the gqteaMD runtime.\n"
         "- Install the optional gqteaMD xTB dependencies, or install ASE and xtb-python in the active environment.\n"
-        "- use_unwrapped_positions should usually remain true to avoid passing broken molecules across periodic boundaries."
+        "- use_unwrapped_positions should usually remain true to avoid passing broken molecules across periodic boundaries.\n\n"
+        "Surface hopping (FSSH) notes:\n"
+        "- gqteaMD runs excited-state (nonadiabatic) dynamics with Tully fewest-switches surface hopping.\n"
+        "- Surface hopping needs a many-state force provider: gaussian_td (TD-DFT) or tully_model (analytic test models).\n"
+        "- The gaussian_td provider reuses the Gaussian command, route, charge, multiplicity, nproc, memory, chk, and "
+        "workdir fields and adds n_states (ground state + excited states). gqteaMD appends TD(NStates=...,Root=...) and "
+        "Force/NoSymm to the route automatically, so the base route is just method/basis.\n"
+        "- The tully_model provider needs only a model name: tully1 (single avoided crossing), tully2 (dual avoided "
+        "crossing), or tully3 (extended coupling with reflection). It is for validating and teaching the method.\n"
+        "- The [surface_hopping] section is written only when surface hopping is enabled; other runs are unchanged.\n"
+        "- propagator: local_diabatization uses orthonormalized wavefunction time-overlaps (stable through crossings, "
+        "the Newton-X default); nac_vector uses explicit nonadiabatic coupling vectors (classic Tully 1990).\n"
+        "- decoherence: none (pure FSSH), sdm (simplified decay of mixing), or odc (overlap-driven decoherence).\n"
+        "- rescaling: after an accepted hop velocities are rescaled to conserve total energy along the coupling vector "
+        "(nac) or uniformly (isotropic); frustrated hops are rejected (reject) or velocity-reversed (reverse).\n"
+        "- initial_state selects the starting surface (0 = ground state); electronic_substeps sets the electronic "
+        "integration sub-steps per nuclear step; seed makes the stochastic hops reproducible.\n"
+        "- A SURFACE_HOPPING log is written with the active state, per-state energies, and populations; set "
+        "surface_hopping_log to rename it.\n"
+        "- Limitation: the gaussian_td backend currently supplies state energies and the active-state gradient, but the "
+        "amplitude propagators also need wavefunction overlaps or coupling vectors, which Gaussian does not emit "
+        "directly; full Gaussian surface hopping needs an external overlap step. The tully_model provider runs the "
+        "complete algorithm end to end."
     )
 
     @staticmethod
@@ -133,6 +179,54 @@ class GqteaMDInputBuilder:
             raise ValueError("The XYZ file has fewer atom lines than declared.")
         return atom_count, lines[1].strip()
 
+    def _surface_hopping_lines(self, payload: Dict[str, Any], force_type: str) -> list[str]:
+        """Build the [surface_hopping] TOML lines, or none when disabled.
+
+        Returns an empty list unless surface hopping is enabled, so non-FSSH
+        runs produce exactly the same TOML as before. When enabled, the force
+        provider must expose more than one electronic state.
+        """
+        if not self.parse_bool(payload.get("sh_enabled", "false")):
+            return []
+        if force_type not in self.MANY_STATE_FORCE_PROVIDERS:
+            raise ValueError(
+                "Surface hopping requires a many-state force provider; choose gaussian_td or tully_model."
+            )
+
+        initial_state = self.parse_int(payload.get("sh_initial_state", "0"), "Initial state", required=False)
+        if initial_state is None:
+            initial_state = 0
+        if initial_state < 0:
+            raise ValueError("Initial state must be zero or greater (0 is the ground state).")
+
+        propagator = (payload.get("sh_propagator", "local_diabatization") or "local_diabatization").strip().lower()
+        if propagator not in self.SURFACE_HOPPING_PROPAGATOR_CHOICES:
+            raise ValueError(f"Unsupported surface-hopping propagator: {propagator}")
+        decoherence = (payload.get("sh_decoherence", "none") or "none").strip().lower()
+        if decoherence not in self.SURFACE_HOPPING_DECOHERENCE_CHOICES:
+            raise ValueError(f"Unsupported decoherence correction: {decoherence}")
+        rescaling = (payload.get("sh_rescaling", "nac") or "nac").strip().lower()
+        if rescaling not in self.SURFACE_HOPPING_RESCALING_CHOICES:
+            raise ValueError(f"Unsupported velocity rescaling: {rescaling}")
+        frustrated = (payload.get("sh_frustrated", "reject") or "reject").strip().lower()
+        if frustrated not in self.SURFACE_HOPPING_FRUSTRATED_CHOICES:
+            raise ValueError(f"Unsupported frustrated-hop policy: {frustrated}")
+
+        sh_lines = [
+            "[surface_hopping]",
+            "enabled = true",
+            f"initial_state = {initial_state}",
+            f"propagator = {self.toml_string(propagator)}",
+            f"decoherence = {self.toml_string(decoherence)}",
+            f"rescaling = {self.toml_string(rescaling)}",
+            f"frustrated = {self.toml_string(frustrated)}",
+            f"electronic_substeps = {self.parse_positive_int(payload.get('sh_electronic_substeps', '50'), 'Electronic substeps')}",
+        ]
+        seed = self.parse_int(payload.get("sh_seed", ""), "Surface hopping seed", required=False)
+        if seed is not None:
+            sh_lines.append(f"seed = {seed}")
+        return sh_lines
+
     def generate_toml(self, payload: Dict[str, Any]) -> str:
         xyz_path = (payload["xyz"] or "").strip()
         if not xyz_path:
@@ -141,6 +235,34 @@ class GqteaMDInputBuilder:
         force_type = (payload["force_type"] or "harmonic").lower()
         if force_type not in self.FORCE_PROVIDER_CHOICES:
             raise ValueError(f"Unsupported force provider: {force_type}")
+
+        dynamics_lines: list[str] = [
+            "[dynamics]",
+            f"timestep_fs = {self.parse_float(payload['timestep_fs'], 'Timestep')}",
+            f"steps = {self.parse_positive_int(payload['steps'], 'Steps')}",
+        ]
+        temperature = self.parse_float(payload.get("temperature_K", ""), "Temperature", required=False)
+        if temperature is not None:
+            if temperature < 0:
+                raise ValueError("Temperature must be zero or greater.")
+            dynamics_lines.append(f"temperature_K = {temperature}")
+            seed = self.parse_int(payload.get("seed", ""), "Seed", required=False)
+            if seed is not None:
+                dynamics_lines.append(f"seed = {seed}")
+            dynamics_lines.append(
+                f"remove_com_motion = {str(self.parse_bool(payload.get('remove_com_motion', 'true'))).lower()}"
+            )
+
+        thermostat = (payload.get("thermostat", "none") or "none").strip().lower()
+        if thermostat not in self.THERMOSTAT_CHOICES:
+            raise ValueError(f"Unsupported thermostat: {thermostat}")
+        if thermostat != "none":
+            if temperature is None:
+                raise ValueError("A thermostat requires a Temperature K value.")
+            dynamics_lines.append(f"thermostat = {self.toml_string(thermostat)}")
+            dynamics_lines.append(
+                f"thermostat_tau_fs = {self.parse_float(payload.get('thermostat_tau_fs', '100.0'), 'Thermostat tau')}"
+            )
 
         lines: list[str] = [
             "# gqteaMD input generated by gqteaWinToga",
@@ -153,9 +275,7 @@ class GqteaMDInputBuilder:
             f"b = {self.parse_float(payload['cell_b'], 'Cell b')}",
             f"c = {self.parse_float(payload['cell_c'], 'Cell c')}",
             "",
-            "[dynamics]",
-            f"timestep_fs = {self.parse_float(payload['timestep_fs'], 'Timestep')}",
-            f"steps = {self.parse_positive_int(payload['steps'], 'Steps')}",
+            *dynamics_lines,
             "",
             "[force_provider]",
             f"type = {self.toml_string(force_type)}",
@@ -265,21 +385,80 @@ class GqteaMDInputBuilder:
             lj_text = (payload.get("classical_lj_text", "") or "").strip()
             if lj_text:
                 force_tail.extend(["", lj_text])
+        elif force_type == "tully_model":
+            # Analytic two-state Tully scattering models. They need only a model
+            # name; gqteaMD provides energies, gradient, and couplings internally.
+            model = (payload.get("tully_model", "tully1") or "tully1").strip().lower()
+            if model not in self.TULLY_MODEL_CHOICES:
+                raise ValueError(f"Unsupported Tully model: {model}")
+            lines.append(f"model = {self.toml_string(model)}")
+        elif force_type == "gaussian_td":
+            # Gaussian TD-DFT excited states. gqteaMD appends TD(NStates,Root) and
+            # Force/NoSymm to the route, so the base route is plain method/basis.
+            command = (
+                payload["gaussian_td_command_custom"].strip()
+                if payload["gaussian_td_command"] == "Custom"
+                else payload["gaussian_td_command"]
+            )
+            if not command:
+                raise ValueError("Gaussian TD-DFT command is required.")
+            route = (
+                payload["gaussian_td_route_custom"].strip()
+                if payload["gaussian_td_route"] == "Custom"
+                else payload["gaussian_td_route"]
+            )
+            if not route:
+                raise ValueError("Gaussian TD-DFT route section is required.")
+            if not route.lstrip().startswith("#"):
+                route = "# " + route.strip()
+            n_states = self.parse_positive_int(payload["gaussian_td_n_states"], "TD number of states")
+            if n_states < 2:
+                raise ValueError("Surface hopping needs at least two electronic states (ground + one excited).")
+            lines.extend(
+                [
+                    f"command = {self.toml_string(command)}",
+                    f"route = {self.toml_string(route)}",
+                    f"charge = {self.parse_int(payload['gaussian_td_charge'], 'Gaussian TD-DFT charge')}",
+                    f"multiplicity = {self.parse_positive_int(payload['gaussian_td_multiplicity'], 'Gaussian TD-DFT multiplicity')}",
+                    f"n_states = {n_states}",
+                ]
+            )
+            nproc = self.parse_positive_int(payload.get("gaussian_td_nproc", ""), "Gaussian TD-DFT nproc", required=False)
+            if nproc is not None:
+                lines.append(f"nproc = {nproc}")
+            memory = (payload.get("gaussian_td_memory", "") or "").strip()
+            if memory:
+                lines.append(f"memory = {self.toml_string(memory)}")
+            chk_file = (payload.get("gaussian_td_chk", "") or "").strip()
+            if chk_file:
+                lines.append(f"chk = {self.toml_string(chk_file)}")
+            workdir = (payload.get("gaussian_td_workdir", "") or "").strip() or "gaussian_steps"
+            lines.append(f"workdir = {self.toml_string(workdir)}")
+
+        surface_hopping_lines = self._surface_hopping_lines(payload, force_type)
 
         trajectory = (payload.get("trajectory", "") or "").strip() or "TRAJEC.xyz"
         log = (payload.get("log", "") or "").strip() or self.default_log_name(xyz_path)
 
-        lines.extend(
-            [
-                "",
-                *force_tail,
-                "",
-                "[output]",
-                f"trajectory = {self.toml_string(trajectory)}",
-                f"log = {self.toml_string(log)}",
-                f"log_interval = {self.parse_positive_int(payload['log_interval'], 'Log interval')}",
-            ]
-        )
+        lines.append("")
+        lines.extend(force_tail)
+        if surface_hopping_lines:
+            lines.append("")
+            lines.extend(surface_hopping_lines)
+
+        output_lines = [
+            "",
+            "[output]",
+            f"trajectory = {self.toml_string(trajectory)}",
+            f"log = {self.toml_string(log)}",
+            f"log_interval = {self.parse_positive_int(payload['log_interval'], 'Log interval')}",
+            f"wrap_trajectory = {str(self.parse_bool(payload.get('wrap_trajectory', 'false'))).lower()}",
+        ]
+        if surface_hopping_lines:
+            surface_hopping_log = (payload.get("surface_hopping_log", "") or "").strip()
+            if surface_hopping_log:
+                output_lines.append(f"surface_hopping_log = {self.toml_string(surface_hopping_log)}")
+        lines.extend(output_lines)
 
         if self.parse_bool(payload.get("include_restart", "true")):
             lines.extend(
@@ -352,6 +531,7 @@ class GqteaMDInputBuilderUI:
         scroll_content.add(self.make_input_box())
         scroll_content.add(self.make_cell_dynamics_box())
         scroll_content.add(self.make_force_provider_box())
+        scroll_content.add(self.make_surface_hopping_box())
         scroll_content.add(self.make_output_box())
         scroll_content.add(self.make_restart_box())
         self.scroll.content = scroll_content
@@ -392,6 +572,45 @@ class GqteaMDInputBuilderUI:
         self.steps_input = toga.TextInput(value="100", style=Pack(width=100))
         dyn_row.add(self.steps_input)
         outer.add(dyn_row)
+
+        temp_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+        temp_row.add(toga.Label("Temperature K", style=Pack(width=130, margin_top=6)))
+        self.temperature_input = toga.TextInput(
+            value="",
+            placeholder="Optional, e.g. 300.0 for thermal velocities",
+            style=Pack(width=100, margin_right=18),
+        )
+        temp_row.add(self.temperature_input)
+        temp_row.add(toga.Label("Seed", style=Pack(width=60, margin_top=6)))
+        self.seed_input = toga.TextInput(value="", placeholder="Optional", style=Pack(width=100, margin_right=18))
+        temp_row.add(self.seed_input)
+        temp_row.add(toga.Label("Remove COM", style=Pack(width=90, margin_top=6)))
+        self.remove_com_selection = toga.Selection(items=self.builder.BOOL_CHOICES, value="true", style=Pack(width=80))
+        temp_row.add(self.remove_com_selection)
+        outer.add(temp_row)
+
+        thermostat_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+        thermostat_row.add(toga.Label("Thermostat", style=Pack(width=130, margin_top=6)))
+        self.thermostat_selection = toga.Selection(
+            items=self.builder.THERMOSTAT_CHOICES,
+            value="none",
+            style=Pack(width=100, margin_right=18),
+        )
+        thermostat_row.add(self.thermostat_selection)
+        thermostat_row.add(toga.Label("tau fs", style=Pack(width=60, margin_top=6)))
+        self.thermostat_tau_input = toga.TextInput(
+            value="100.0",
+            placeholder="Relaxation time, e.g. 100.0",
+            style=Pack(width=110),
+        )
+        thermostat_row.add(self.thermostat_tau_input)
+        outer.add(thermostat_row)
+        outer.add(
+            toga.Label(
+                "Thermostat bussi enables NVT sampling and requires a Temperature K value.",
+                style=Pack(margin_bottom=6),
+            )
+        )
         return outer
 
     def make_force_provider_box(self) -> toga.Box:
@@ -411,6 +630,65 @@ class GqteaMDInputBuilderUI:
         outer.add(self.force_options_container)
         return outer
 
+    def make_surface_hopping_box(self) -> toga.Box:
+        outer = self.make_section("Surface hopping (FSSH)")
+
+        enabled_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+        enabled_row.add(toga.Label("Enable hopping", style=Pack(width=130, margin_top=6)))
+        self.sh_enabled_selection = toga.Selection(
+            items=self.builder.BOOL_CHOICES,
+            value="false",
+            style=Pack(width=90, margin_right=18),
+        )
+        enabled_row.add(self.sh_enabled_selection)
+        enabled_row.add(toga.Label("Initial state", style=Pack(width=90, margin_top=6)))
+        self.sh_initial_state_input = toga.TextInput(value="0", style=Pack(width=80))
+        enabled_row.add(self.sh_initial_state_input)
+        outer.add(enabled_row)
+
+        self.sh_propagator_selection = self.make_selection_row(
+            outer, "Propagator", self.builder.SURFACE_HOPPING_PROPAGATOR_CHOICES, "local_diabatization"
+        )
+        self.sh_decoherence_selection = self.make_selection_row(
+            outer, "Decoherence", self.builder.SURFACE_HOPPING_DECOHERENCE_CHOICES, "none"
+        )
+
+        rescale_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+        rescale_row.add(toga.Label("Rescale / frustrated", style=Pack(width=130, margin_top=6)))
+        self.sh_rescaling_selection = toga.Selection(
+            items=self.builder.SURFACE_HOPPING_RESCALING_CHOICES,
+            value="nac",
+            style=Pack(width=110, margin_right=8),
+        )
+        self.sh_frustrated_selection = toga.Selection(
+            items=self.builder.SURFACE_HOPPING_FRUSTRATED_CHOICES,
+            value="reject",
+            style=Pack(width=110),
+        )
+        rescale_row.add(self.sh_rescaling_selection)
+        rescale_row.add(self.sh_frustrated_selection)
+        outer.add(rescale_row)
+
+        substeps_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+        substeps_row.add(toga.Label("Substeps / seed", style=Pack(width=130, margin_top=6)))
+        self.sh_electronic_substeps_input = toga.TextInput(value="50", style=Pack(width=90, margin_right=8))
+        self.sh_seed_input = toga.TextInput(value="", placeholder="Optional", style=Pack(width=110))
+        substeps_row.add(self.sh_electronic_substeps_input)
+        substeps_row.add(self.sh_seed_input)
+        outer.add(substeps_row)
+
+        self.surface_hopping_log_input = self.make_text_row(
+            outer, "Hopping log", "Optional, default SURFACE_HOPPING", ""
+        )
+        outer.add(
+            toga.Label(
+                "Surface hopping needs the gaussian_td or tully_model force provider. "
+                "The [surface_hopping] section is written only when enabled.",
+                style=Pack(margin_bottom=6),
+            )
+        )
+        return outer
+
     def make_output_box(self) -> toga.Box:
         outer = self.make_section("Output")
         self.trajectory_input = self.make_text_row(outer, "Trajectory", "TRAJEC.xyz", "TRAJEC.xyz")
@@ -422,6 +700,17 @@ class GqteaMDInputBuilderUI:
             )
         )
         self.log_interval_input = self.make_text_row(outer, "Log interval", placeholder="Write LOG every N calculation steps. Default value: 1",)
+        wrap_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+        wrap_row.add(toga.Label("Wrap trajectory", style=Pack(width=130, margin_top=6)))
+        self.wrap_trajectory_selection = toga.Selection(items=self.builder.BOOL_CHOICES, value="false", style=Pack(width=80))
+        wrap_row.add(self.wrap_trajectory_selection)
+        outer.add(wrap_row)
+        outer.add(
+            toga.Label(
+                "Wrap trajectory true keeps atoms inside the cell; false writes unwrapped coordinates.",
+                style=Pack(margin_bottom=6),
+            )
+        )
         return outer
 
     def make_restart_box(self) -> toga.Box:
@@ -711,6 +1000,85 @@ class GqteaMDInputBuilderUI:
                 "sigma_angstrom = 3.1507"
             )
             self.force_options_container.add(self.classical_lj_text)
+        elif force_type == "tully_model":
+            self.tully_model_selection = self.make_selection_row(
+                self.force_options_container,
+                "Model",
+                self.builder.TULLY_MODEL_CHOICES,
+                "tully1",
+            )
+            self.force_options_container.add(
+                toga.Label(
+                    "Analytic two-state Tully scattering models for validating and teaching surface hopping. "
+                    "Enable surface hopping below; no quantum-chemistry program is needed.",
+                    style=Pack(margin_bottom=6),
+                )
+            )
+        elif force_type == "gaussian_td":
+            self.gaussian_td_command_selection = self.make_selection_row(
+                self.force_options_container,
+                "Command",
+                self.builder.GAUSSIAN_COMMAND_CHOICES,
+                "g16",
+                self.on_gaussian_td_choice_change,
+            )
+            self.gaussian_td_command_custom_input = self.make_text_row(
+                self.force_options_container,
+                "Custom command",
+                "Full path or executable name",
+                "",
+            )
+            self.gaussian_td_route_selection = self.make_selection_row(
+                self.force_options_container,
+                "Route",
+                self.builder.TD_ROUTE_CHOICES,
+                "# B3LYP/6-31G(d)",
+                self.on_gaussian_td_choice_change,
+            )
+            self.gaussian_td_route_custom_input = self.make_text_row(
+                self.force_options_container,
+                "Custom route",
+                "# method/basis (TD and Force are added automatically)",
+                "",
+            )
+            charge_row = toga.Box(style=Pack(direction=ROW, margin_bottom=6))
+            charge_row.add(toga.Label("Charge/mult", style=Pack(width=130, margin_top=6)))
+            self.gaussian_td_charge_input = toga.TextInput(value="0", style=Pack(width=70, margin_right=8))
+            self.gaussian_td_multiplicity_input = toga.TextInput(value="1", style=Pack(width=70, margin_right=18))
+            charge_row.add(self.gaussian_td_charge_input)
+            charge_row.add(self.gaussian_td_multiplicity_input)
+            charge_row.add(toga.Label("States", style=Pack(width=50, margin_top=6)))
+            self.gaussian_td_n_states_input = toga.TextInput(value="3", style=Pack(width=60, margin_right=8))
+            charge_row.add(self.gaussian_td_n_states_input)
+            charge_row.add(toga.Label("nproc", style=Pack(width=45, margin_top=6)))
+            self.gaussian_td_nproc_input = toga.TextInput(value="4", style=Pack(width=60))
+            charge_row.add(self.gaussian_td_nproc_input)
+            self.force_options_container.add(charge_row)
+            self.force_options_container.add(
+                toga.Label(
+                    "States counts the ground state plus excited states (e.g. 3 = ground + 2 excited).",
+                    style=Pack(margin_bottom=6),
+                )
+            )
+            self.gaussian_td_workdir_input = self.make_text_row(
+                self.force_options_container,
+                "Workdir",
+                "gaussian_steps",
+                "gaussian_steps",
+            )
+            self.gaussian_td_chk_input = self.make_text_row(
+                self.force_options_container,
+                "chk file",
+                "Optional note, e.g. step.chk",
+                "",
+            )
+            self.gaussian_td_memory_input = self.make_text_row(
+                self.force_options_container,
+                "Memory",
+                "Optional, e.g. 4GB",
+                "",
+            )
+            self.on_gaussian_td_choice_change(None)
 
     def make_section(self, title: str) -> toga.Box:
         outer = toga.Box(style=Pack(direction=COLUMN, margin_bottom=14))
@@ -759,6 +1127,17 @@ class GqteaMDInputBuilderUI:
         if not route_is_custom:
             self.gaussian_route_custom_input.value = ""
 
+    def on_gaussian_td_choice_change(self, widget):
+        del widget
+        command_is_custom = (self.gaussian_td_command_selection.value or "") == "Custom"
+        route_is_custom = (self.gaussian_td_route_selection.value or "") == "Custom"
+        self.gaussian_td_command_custom_input.enabled = command_is_custom
+        self.gaussian_td_route_custom_input.enabled = route_is_custom
+        if not command_is_custom:
+            self.gaussian_td_command_custom_input.value = ""
+        if not route_is_custom:
+            self.gaussian_td_route_custom_input.value = ""
+
     def on_xtb_choice_change(self, widget):
         del widget
         method_is_custom = (self.xtb_method_selection.value or "") == "Custom"
@@ -794,11 +1173,26 @@ class GqteaMDInputBuilderUI:
         self.cell_c_input.value = "20.0"
         self.timestep_input.value = "0.5"
         self.steps_input.value = "100"
+        self.temperature_input.value = ""
+        self.seed_input.value = ""
+        self.remove_com_selection.value = "true"
+        self.thermostat_selection.value = "none"
+        self.thermostat_tau_input.value = "100.0"
         self.force_provider_selection.value = "harmonic"
         self.rebuild_force_options()
+        self.sh_enabled_selection.value = "false"
+        self.sh_initial_state_input.value = "0"
+        self.sh_propagator_selection.value = "local_diabatization"
+        self.sh_decoherence_selection.value = "none"
+        self.sh_rescaling_selection.value = "nac"
+        self.sh_frustrated_selection.value = "reject"
+        self.sh_electronic_substeps_input.value = "50"
+        self.sh_seed_input.value = ""
+        self.surface_hopping_log_input.value = ""
         self.trajectory_input.value = "TRAJEC.xyz"
         self.log_input.value = ""
         self.log_interval_input.value = "1"
+        self.wrap_trajectory_selection.value = "false"
         self.include_restart_selection.value = "true"
         self.restart_path_input.value = "RESTART"
         self.restart_interval_input.value = ""
@@ -814,10 +1208,25 @@ class GqteaMDInputBuilderUI:
             "cell_c": self.cell_c_input.value or "",
             "timestep_fs": self.timestep_input.value or "",
             "steps": self.steps_input.value or "",
+            "temperature_K": self.temperature_input.value or "",
+            "seed": self.seed_input.value or "",
+            "remove_com_motion": self.remove_com_selection.value or "true",
+            "thermostat": self.thermostat_selection.value or "none",
+            "thermostat_tau_fs": self.thermostat_tau_input.value or "100.0",
             "force_type": force_type,
+            "sh_enabled": self.sh_enabled_selection.value or "false",
+            "sh_initial_state": self.sh_initial_state_input.value or "0",
+            "sh_propagator": self.sh_propagator_selection.value or "local_diabatization",
+            "sh_decoherence": self.sh_decoherence_selection.value or "none",
+            "sh_rescaling": self.sh_rescaling_selection.value or "nac",
+            "sh_frustrated": self.sh_frustrated_selection.value or "reject",
+            "sh_electronic_substeps": self.sh_electronic_substeps_input.value or "50",
+            "sh_seed": self.sh_seed_input.value or "",
+            "surface_hopping_log": self.surface_hopping_log_input.value or "",
             "trajectory": self.trajectory_input.value or "TRAJEC.xyz",
             "log": self.log_input.value or "",
             "log_interval": self.log_interval_input.value or "1",
+            "wrap_trajectory": self.wrap_trajectory_selection.value or "false",
             "include_restart": self.include_restart_selection.value or "false",
             "restart_path": self.restart_path_input.value or "RESTART",
             "restart_interval": self.restart_interval_input.value or "5",
@@ -870,6 +1279,20 @@ class GqteaMDInputBuilderUI:
             payload["classical_atom_types"] = self.classical_atom_types_input.value or ""
             payload["classical_bonds_text"] = self.classical_bonds_text.value or ""
             payload["classical_lj_text"] = self.classical_lj_text.value or ""
+        elif force_type == "tully_model":
+            payload["tully_model"] = self.tully_model_selection.value or "tully1"
+        elif force_type == "gaussian_td":
+            payload["gaussian_td_command"] = self.gaussian_td_command_selection.value or "g16"
+            payload["gaussian_td_command_custom"] = self.gaussian_td_command_custom_input.value or ""
+            payload["gaussian_td_route"] = self.gaussian_td_route_selection.value or "# B3LYP/6-31G(d)"
+            payload["gaussian_td_route_custom"] = self.gaussian_td_route_custom_input.value or ""
+            payload["gaussian_td_charge"] = self.gaussian_td_charge_input.value or "0"
+            payload["gaussian_td_multiplicity"] = self.gaussian_td_multiplicity_input.value or "1"
+            payload["gaussian_td_n_states"] = self.gaussian_td_n_states_input.value or "3"
+            payload["gaussian_td_nproc"] = self.gaussian_td_nproc_input.value or ""
+            payload["gaussian_td_workdir"] = self.gaussian_td_workdir_input.value or "gaussian_steps"
+            payload["gaussian_td_chk"] = self.gaussian_td_chk_input.value or ""
+            payload["gaussian_td_memory"] = self.gaussian_td_memory_input.value or ""
         return payload
 
     async def preview_toml(self, widget):
