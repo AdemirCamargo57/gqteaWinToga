@@ -7,7 +7,7 @@ interface built with [Toga](https://toga.readthedocs.io/) and collects several
 specialized tools for CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping, and
 trajectory analysis workflows.
 
-The current application title identifies the toolkit as **gQTEA-0.3.1 Molecular
+The current application title identifies the toolkit as **gQTEA-0.4.0 Molecular
 Analysis Toolkit**.
 
 ## Capabilities

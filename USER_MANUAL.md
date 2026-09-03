@@ -90,7 +90,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.3.1 Molecular Analysis Toolkit
+gQTEA-0.4.0 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -957,6 +957,7 @@ Controls include:
 - Bond mode.
 - Show atom numbers.
 - Show atomic symbols.
+- Click an atom to display its index on the canvas.
 - Measure distance, angle, or dihedral by entering atom labels.
 - Set periodic box dimensions.
 - Choose how the displayed periodic box is centered.
@@ -967,6 +968,8 @@ Controls include:
 - Save the current frame as XYZ.
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
+
+You can identify individual atoms directly in the 3D view by clicking on them. Left-click an atom (a click without dragging — dragging still rotates the view) and its 1-based index appears next to the atom on the canvas. This is useful for picking out only the solute atoms in a solvated `TRAJEC.xyz` without labeling every solvent atom. Left-click the same atom again to remove its label. The labels stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Click **Clear labels** (next to the atom-number and atomic-symbol switches) to remove all clicked labels at once.
 
 The rotation controls let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees and click **Apply** to add those increments to the current molecular orientation. Click **Reset** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
 
@@ -1459,7 +1462,7 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.3.1 Molecular Analysis Toolkit
+gQTEA-0.4.0 Molecular Analysis Toolkit
 ```
 
 The launcher source notes that the program was revised and updated in March 2026.

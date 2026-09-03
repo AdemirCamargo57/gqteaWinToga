@@ -53,6 +53,16 @@ class MolecularViewer:
         self.active_measurement_type: Optional[str] = None
         self.active_measurement_indices: List[int] = []
 
+        # Click-to-identify picking state
+        self.picked_atoms: set = set()
+        self.pick_label_color = (0.2, 1.0, 1.0)
+        self.pick_pixel_threshold = 15.0
+        # Snapshot of (modelview, projection, viewport) captured each render so
+        # a mouse click can be mapped back to an atom index.
+        self._pick_view: Optional[Tuple[np.ndarray, np.ndarray, Tuple[int, int, int, int]]] = None
+        self._left_press_pos: Optional[Tuple[float, float]] = None
+        self._left_dragged = False
+
         # Atom colors and approximate covalent/visual radii (Å)
         self.atom_colors = {
             "H": (1.0, 1.0, 1.0),
@@ -320,12 +330,12 @@ class MolecularViewer:
         except Exception:
             self._glut_ready = False
 
-    def _draw_text_3d(self, position, text_value: str):
+    def _draw_text_3d(self, position, text_value: str, color=(1.0, 1.0, 0.0)):
         if not text_value or not self._glut_ready:
             return
 
         glDisable(GL_LIGHTING)
-        glColor3f(1.0, 1.0, 0.0)
+        glColor3f(*color)
         glRasterPos3f(*position)
         for ch in text_value:
             glutBitmapCharacter(self.label_font, ord(ch))
@@ -424,10 +434,20 @@ class MolecularViewer:
         if button == glfw.MOUSE_BUTTON_LEFT:
             if action == glfw.PRESS:
                 self.mouse_down = True
-                self.last_mouse_pos = glfw.get_cursor_pos(window)
+                press_pos = glfw.get_cursor_pos(window)
+                self.last_mouse_pos = press_pos
+                self._left_press_pos = press_pos
+                self._left_dragged = False
             elif action == glfw.RELEASE:
                 self.mouse_down = False
+                if not self._left_dragged and self._left_press_pos is not None:
+                    px, py = self._left_press_pos
+                    picked_index = self._pick_atom_at(px, py)
+                    if picked_index is not None:
+                        self._toggle_picked_atom(picked_index)
                 self.last_mouse_pos = None
+                self._left_press_pos = None
+                self._left_dragged = False
         elif button == glfw.MOUSE_BUTTON_RIGHT:
             if action == glfw.PRESS:
                 self.right_mouse_down = True
@@ -446,6 +466,11 @@ class MolecularViewer:
         dy = ypos - last_y
 
         if self.mouse_down:
+            if self._left_press_pos is not None and not self._left_dragged:
+                pdx = xpos - self._left_press_pos[0]
+                pdy = ypos - self._left_press_pos[1]
+                if (pdx * pdx + pdy * pdy) > 9.0:  # moved > 3 px => treat as drag
+                    self._left_dragged = True
             self.rotation_angle_x += dy * 0.2
             self.rotation_angle_y += dx * 0.2
         elif self.right_mouse_down:
@@ -469,6 +494,80 @@ class MolecularViewer:
 
         self.zoom_factor = max(self.min_zoom, min(self.zoom_factor, self.max_zoom))
         self.set_projection()
+
+    # ------------------------------------------------------------------
+    # Click-to-identify picking
+    # ------------------------------------------------------------------
+    def _project_atom(self, position, modelview, projection, viewport):
+        """Project a 3D atom position to window coordinates (gluProject math).
+
+        ``modelview`` and ``projection`` are 4x4 arrays in the column-major
+        layout ``glGetDoublev`` returns, so ``vec @ matrix`` reproduces the
+        OpenGL transform. Returns ``(win_x, win_y, win_z)`` with the OpenGL
+        bottom-left window origin, or ``None`` if the point is degenerate.
+        """
+        obj = np.array([position[0], position[1], position[2], 1.0], dtype=float)
+        eye = obj @ modelview
+        clip = eye @ projection
+        w = clip[3]
+        if w == 0.0:
+            return None
+        ndc = clip[:3] / w
+        vx, vy, vw, vh = viewport
+        win_x = vx + vw * (ndc[0] + 1.0) / 2.0
+        win_y = vy + vh * (ndc[1] + 1.0) / 2.0
+        win_z = (ndc[2] + 1.0) / 2.0
+        return (float(win_x), float(win_y), float(win_z))
+
+    def _pick_atom_at(self, px, py):
+        """Return the index of the atom under cursor (px, py), or None.
+
+        ``px, py`` use the GLFW top-left cursor origin. The nearest atom whose
+        projected centre lies within ``pick_pixel_threshold`` is returned; when
+        several overlap, the one closest to the camera (smallest depth) wins.
+        """
+        view = self._pick_view
+        if view is None:
+            return None
+        modelview, projection, viewport = view
+        frame_data = self.get_current_frame_data()
+        if not frame_data:
+            return None
+
+        vx, vy, vw, vh = viewport
+        # GLFW cursor y grows downward; OpenGL window y grows upward.
+        click_x = px
+        click_y = (vy + vh) - py
+
+        candidates = []
+        for index, (_, position) in enumerate(frame_data):
+            projected = self._project_atom(position, modelview, projection, viewport)
+            if projected is None:
+                continue
+            sx, sy, sz = projected
+            if sz < 0.0 or sz > 1.0:
+                continue  # clipped by near/far planes
+            distance = float(np.hypot(sx - click_x, sy - click_y))
+            if distance <= self.pick_pixel_threshold:
+                candidates.append((sz, index))
+
+        if not candidates:
+            return None
+        candidates.sort()
+        return candidates[0][1]
+
+    def _toggle_picked_atom(self, atom_index: int):
+        with self._state_lock:
+            if atom_index in self.picked_atoms:
+                self.picked_atoms.discard(atom_index)
+            else:
+                self.picked_atoms.add(atom_index)
+
+    def clear_picked_atoms(self):
+        with self._state_lock:
+            had_labels = bool(self.picked_atoms)
+            self.picked_atoms.clear()
+        return had_labels
 
     def set_projection(self):
         glMatrixMode(GL_PROJECTION)
@@ -1128,6 +1227,18 @@ class MolecularViewer:
                 measurement_overlay_text,
             )
 
+        with self._state_lock:
+            picked = [i for i in self.picked_atoms if 0 <= i < len(frame_data)]
+        for atom_index in picked:
+            element, position = frame_data[atom_index]
+            radius = self.get_atom_radius(element) * self.atom_scale_factor
+            label_pos = (
+                position[0] + radius * 0.45,
+                position[1] + radius * 0.45,
+                position[2] + radius * 0.45,
+            )
+            self._draw_text_3d(label_pos, str(atom_index + 1), color=self.pick_label_color)
+
     def main_loop(self):
         try:
             self.init_glfw()
@@ -1176,6 +1287,13 @@ class MolecularViewer:
                     glRotatef(self.molecule_rotation_y, 0, 1, 0)
                     glRotatef(self.molecule_rotation_z, 0, 0, 1)
                     glTranslatef(-scene_center[0], -scene_center[1], -scene_center[2])
+                    # Snapshot the exact transform atoms are drawn in so a mouse
+                    # click can be mapped back to an atom index.
+                    self._pick_view = (
+                        np.array(glGetDoublev(GL_MODELVIEW_MATRIX), dtype=float),
+                        np.array(glGetDoublev(GL_PROJECTION_MATRIX), dtype=float),
+                        tuple(int(v) for v in glGetIntegerv(GL_VIEWPORT)),
+                    )
                     self.render_frame(frame_data, bonds)
                     if self.show_box and not self.fast_playback_mode:
                         self.draw_box(frame_data)
@@ -1277,8 +1395,11 @@ class MolecularViewer:
                             valid_atoms_first_frame = [element for element, _ in frame_data]
                         count_frames += 1
 
-                    if (count_frames % 100 == 0):
-                        self.set_status_message(f"Loading trajectory... {count_frames} frames")
+                    # Yield periodically so the UI stays responsive and the
+                    # "Loading trajectory..." message can paint. The per-frame
+                    # count is intentionally NOT written to the label here: that
+                    # widget update on every batch slows down large loads.
+                    if count_frames % 500 == 0:
                         await asyncio.sleep(0)
         except OSError as exc:
             self.set_status_message(f"I/O error while reading file: {exc}")
@@ -1549,8 +1670,14 @@ class MolecularViewerUI(MolecularViewer):
         self.atom_numbers_switch.value = False
         self.atom_symbols_switch = toga.Switch("Atomic symbols", on_change=self.toggle_atom_symbols)
         self.atom_symbols_switch.value = False
+        clear_labels_button = toga.Button(
+            "Clear labels",
+            on_press=self.clear_atom_labels,
+            style=Pack(margin=(4, 4, 4, 12), width=96),
+        )
         labels_box.add(self.atom_numbers_switch)
         labels_box.add(self.atom_symbols_switch)
+        labels_box.add(clear_labels_button)
 
         measure_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
         measure_label = toga.Label(
@@ -2118,6 +2245,12 @@ class MolecularViewerUI(MolecularViewer):
         self.show_atom_symbols = bool(self.atom_symbols_switch.value)
         self.set_status_message(
             "Atomic symbols enabled." if self.show_atom_symbols else "Atomic symbols disabled."
+        )
+
+    def clear_atom_labels(self, widget):
+        had_labels = self.clear_picked_atoms()
+        self.set_status_message(
+            "Cleared clicked atom labels." if had_labels else "No clicked atom labels to clear."
         )
 
     def update_measurement_input_hint(self, widget):
