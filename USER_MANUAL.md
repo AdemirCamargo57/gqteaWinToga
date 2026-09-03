@@ -631,19 +631,34 @@ Depending on the selected mode, the form shows the relevant atomic, pseudopotent
 
 #### Radial Distribution Function
 
-Use **Structural > Radial Distribution Function** to calculate an RDF for selected atoms.
+Use **Structural > Radial Distribution Function** to calculate the radial distribution function g(r) and the running coordination number around a chosen central atom, from a `TRAJEC.xyz` trajectory.
 
-Typical inputs:
+Inputs include:
 
-- Maximum radius.
-- Bin width.
-- Atom labels or atom types, depending on the selected workflow.
-- Trajectory file, usually `TRAJEC.xyz`.
+- **Maximum radius for RDF** — the cutoff distance (defaults to `6.0`). It must not exceed half the smallest cell lattice; larger values are rejected (a periodic-boundary requirement).
+- **Bin width for histogram** — width of the distance bins (defaults to `0.01`).
+- **Atom labels to be excluded** — space-separated 1-based labels to leave out, or `0` for none.
+- **Shell center atom label** — the 1-based label of the central atom that g(r) is measured from.
+- **Atomic symbol for g(r)** — the element counted as neighbours (e.g. `O`). It must be present in the trajectory.
+- **Cell lattices (a b c)** — the three orthorhombic box lengths in Å.
+- **Coordination plot limits (x y)** — the x-max and y-max for the coordination-number plot, separated by a space (defaults to `6 10`).
+- **Select input file** — click **Browse** to load the `TRAJEC.xyz` trajectory (also counts the frames).
 
-Action:
+Coordinates do not need to be wrapped into the box; periodic images are handled internally by the minimum-image convention.
 
-- **Read Params**: displays entered settings.
-- **RDF calculation**: runs the calculation.
+Actions:
+
+- **Read Params**: reads and validates the settings and shows a summary. Invalid entries raise an explanatory dialog and stop.
+- **RDF calculation**: runs the calculation. Live progress (loading, frame count) and a final completion summary — parameters used, cell volume and number density, the first g(r) peak, the coordination number, and the output file — are shown in the on-screen text area; malformed or truncated frames are reported.
+- **Help**: shows usage instructions.
+- **Close**: closes the window.
+
+Progress is reported as text in the on-screen status area rather than a progress bar.
+
+Typical outputs (written next to the trajectory):
+
+- `RDF_<center><n>_<symbol>.dat` — three columns: r (bin center), g(r), and the integrated coordination number.
+- Interactive plots of g(r) and the coordination number.
 
 #### Mean Residence Time
 
@@ -685,25 +700,130 @@ Typical outputs:
 
 #### Autocorrelation Function
 
-Use **Structural > Autocorrelation function** to calculate velocity autocorrelation and related data.
+Use **Structural > Autocorrelation function** to calculate the velocity
+autocorrelation function (VAF), the position autocorrelation function (PAF), and
+an optional power spectrum (PSD) from a CPMD `TRAJECTORY` file.
 
 Inputs:
 
-- Start frame.
-- Number of frames to use.
-- `GEOMETRY.xyz` file.
-- `TRAJECTORY` file.
+- **Starting frame for VAF and PAF** — first trajectory frame to analyze.
+- **Stop frame for VAF and PAF** — last trajectory frame to analyze.
+- **Number of frames for each ACF** — the maximum correlation lag (window length,
+  in frames).
+- **Simulation time step** (atomic units) and **Sampling interval** (frames
+  between stored steps) — used to build the physical time/frequency axes.
+- `GEOMETRY.xyz` file (defines the number of atoms and element symbols).
+- `TRAJECTORY` file (positions and velocities, atomic units).
+
+Default values (whole trajectory):
+
+- When you load the `TRAJECTORY` file, any of the three frame fields left blank is
+  filled automatically so that the analysis uses the **entire trajectory**:
+  - *Starting frame* defaults to **1** (first frame).
+  - *Stop frame* defaults to the **last available frame**.
+  - *Number of frames for each ACF* defaults to about **10% of the trajectory
+    length**, capped at **2000** frames (floor 2). Using ~10% keeps roughly 90% of
+    the frames available as time origins for averaging, which gives a statistically
+    reliable estimate while bounding the computational cost and keeping the power
+    spectrum's frequency resolution sensible on long trajectories.
+- Any value you type yourself is preserved; only blank fields are auto-filled.
+  Load `GEOMETRY.xyz` first, then `TRAJECTORY`, so the atom count is known when the
+  frames are counted.
+- If the `TRAJECTORY` was produced by a **restarted/continued** CPMD run it may
+  contain markers such as `<<<<<<  NEW DATA  >>>>>>` (and blank lines). These are
+  detected and skipped automatically, and the output box reports how many were
+  found. Frames on either side of a restart are treated as one continuous
+  trajectory.
+
+How the functions are defined:
+
+- The VAF/PAF are averaged over **all available time origins** (overlapping
+  windows), include **lag 0**, and are **normalized so that C(0) = 1**.
+- Positions are **mean-subtracted per atom**, so the PAF measures fluctuations
+  about each atom's average position rather than absolute coordinates.
 
 Options:
 
-- Save generated `newTRAJEC.xyz`.
-- Compute PSD from the VAF.
+- Save generated `newTRAJEC.xyz` (positions converted from Bohr to Angstrom).
+- Compute the **power spectrum** (vibrational density of states) from the VAF.
+
+Power-spectrum options (used when the PSD switch is enabled):
+
+- **Mass-weight the spectrum** — when checked, each atom's velocity is weighted by
+  its atomic mass, producing the true vibrational density of states (VDOS) and the
+  file `VDOS.dat`; when unchecked, an equal-weight power spectrum is written to
+  `PSD.dat`. Masses are taken from the elements in `GEOMETRY.xyz`.
+- **PSD window** — apodization applied before the FFT to suppress spectral leakage:
+  `Welch` (default), `Hann`, or `None`.
+- **Zero-pad x** — zero-padding factor (default `5`); higher values interpolate a
+  smoother spectrum without changing peak positions.
+- **Frequency unit** — `cm^-1` (default), `THz`, or `Hz`.
+- **Partial VDOS groups** — an optional field to overlay *partial* spectra
+  (per element or per atom selection) on the total, which helps **assign
+  vibrational modes** (i.e. see which atoms contribute at which frequency). Enter
+  one or more groups separated by `;`. Each group is a comma/space list of element
+  symbols and/or 1-based atom indices or ranges, for example:
+  - `H,O` — one partial for hydrogens together with oxygens;
+  - `H; C; O` — three separate partials, one per element;
+  - `1-8; 15` — atoms 1–8 as one partial and atom 15 as another.
+  Each partial is written to `PSD_<group>.dat` (or `VDOS_<group>.dat` when
+  mass-weighting is on) and drawn as a labelled curve on the power-spectrum plot,
+  together with the `Total`. Each curve is normalized to its own maximum so the
+  peak positions of every group are visible. Leave the field blank for the total
+  spectrum only.
+
+The power spectrum is computed by the Wiener–Khinchin route: the VAF is
+mean-removed, mirrored about *t* = 0, windowed, zero-padded, Fourier transformed,
+and squared; the one-sided spectrum is normalized so its strongest peak is 1. The
+frequency axis is built from the **Simulation time step** and **Sampling interval**
+you provide, so set those correctly for the frequency scale to be physical.
+
+The PAF, VAF and power-spectrum figures open as **interactive** matplotlib windows
+(zoom, pan, live cursor coordinates, and a save button in the toolbar), which makes
+it easy to zoom into spectral peaks and read off frequencies. If the program is run
+as a packaged executable where an interactive window is unavailable, the figures are
+shown as static images instead.
+
+##### Power Spectrum of a Solute Only (e.g. an Organic Molecule in a Water Box)
+
+A common case is a simulation of an organic molecule (solute) in a box of water
+(solvent) where you want the power spectrum of **only the solute**, without the
+solvent contribution. Use the **Partial VDOS groups** field, keeping these points
+in mind:
+
+- **Do not select by element.** The solute and water usually share elements
+  (H and O), so an element token such as `O` would also pick up every water oxygen.
+  To isolate the solute you must select it by **atom index**.
+- **Use the solute's atom-index range/list.** The indices come from the atom order
+  in your `GEOMETRY.xyz` file (the same order as the `TRAJECTORY`). In most solvated
+  setups the solute is written **first**, followed by the water molecules. Open
+  `GEOMETRY.xyz`, count the atoms belonging to the organic molecule, and enter that
+  range. For a solute that is the first 15 atoms, type:
+
+  ```text
+  1-15
+  ```
+
+  You may also give a list or several ranges, e.g. `1-12,14,17` or `1-15,20-22`.
+  If the solute atoms are not contiguous, list their actual indices.
+- **Read the result from the partial curve/file.** The group produces a partial
+  spectrum built from only the selected atoms, so water contributes nothing to it.
+  It is saved as `PSD_1-15.dat` (written as `PSD_1_15.dat`) — or `VDOS_1_15.dat`
+  when mass-weighting is enabled — and drawn as the `1-15` curve on the plot. That
+  file/curve is the solute-only power spectrum.
+- **Ignore the `Total` curve.** The tool still computes and overlays the `Total`
+  spectrum for the whole system (solute + water); simply use the solute partial and
+  ignore `Total`. Because each curve is normalized to its own maximum, the large
+  water background does not distort the solute spectrum.
+- **Tip:** enable **Mass-weight the spectrum** for a physically proper vibrational
+  density of states of the molecule.
 
 Typical outputs:
 
-- `PAF.dat`
-- `VAF.dat`
-- `PSD.dat` when PSD is enabled.
+- `PAF.dat` — columns: lag (frames), normalized PAF.
+- `VAF.dat` — columns: lag (frames), normalized VAF.
+- `PSD.dat` (or `VDOS.dat` when mass-weighting is on) when the power spectrum is
+  enabled — columns: frequency (in the chosen unit), normalized power.
 - `newTRAJEC.xyz` when the trajectory export option is enabled.
 
 #### Single Solute Solvent Box

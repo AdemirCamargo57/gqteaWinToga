@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -41,9 +42,12 @@ class GqteaMDInputBuilder:
     SURFACE_HOPPING_DECOHERENCE_CHOICES = ["none", "sdm", "odc"]
     SURFACE_HOPPING_RESCALING_CHOICES = ["nac", "isotropic"]
     SURFACE_HOPPING_FRUSTRATED_CHOICES = ["reject", "reverse"]
-    # Force providers that expose more than one electronic state and can
-    # therefore drive surface hopping.
+    # Force providers that expose more than one electronic state.
     MANY_STATE_FORCE_PROVIDERS = ["gaussian_td", "tully_model"]
+    # Providers that can actually drive surface hopping today. The gaussian_td
+    # backend supplies energies and the active-state gradient but not yet the
+    # wavefunction couplings the propagators need, so only tully_model is ready.
+    SURFACE_HOPPING_READY_PROVIDERS = ["tully_model"]
     TULLY_MODEL_CHOICES = ["tully1", "tully2", "tully3"]
 
     MANUAL_SUMMARY = (
@@ -188,9 +192,12 @@ class GqteaMDInputBuilder:
         """
         if not self.parse_bool(payload.get("sh_enabled", "false")):
             return []
-        if force_type not in self.MANY_STATE_FORCE_PROVIDERS:
+        if force_type not in self.SURFACE_HOPPING_READY_PROVIDERS:
             raise ValueError(
-                "Surface hopping requires a many-state force provider; choose gaussian_td or tully_model."
+                "Surface hopping currently runs only with the analytic tully_model provider. The "
+                "gaussian_td backend supplies state energies and the active-state gradient but not "
+                "yet the wavefunction couplings the propagators need. Select tully_model to enable "
+                "surface hopping, or disable it for other providers."
             )
 
         initial_state = self.parse_int(payload.get("sh_initial_state", "0"), "Initial state", required=False)
@@ -411,6 +418,12 @@ class GqteaMDInputBuilder:
                 raise ValueError("Gaussian TD-DFT route section is required.")
             if not route.lstrip().startswith("#"):
                 route = "# " + route.strip()
+            if re.search(r"(?i)\btd\b|\btd\s*=|\btd\s*\(", route):
+                raise ValueError(
+                    "The Gaussian TD-DFT route must be a plain method/basis route without a TD "
+                    "keyword (for example '# CAM-B3LYP/6-31G'). gqteaMD adds TD(NStates=...,Root=...) "
+                    "and Force automatically."
+                )
             n_states = self.parse_positive_int(payload["gaussian_td_n_states"], "TD number of states")
             if n_states < 2:
                 raise ValueError("Surface hopping needs at least two electronic states (ground + one excited).")

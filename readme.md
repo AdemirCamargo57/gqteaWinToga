@@ -233,6 +233,19 @@ to:
 venv\Lib\site-packages\glfw\glfw3.dll
 ```
 
+### Interactive plots in the packaged build
+
+The analysis tools show their figures through an interactive matplotlib window
+(zoom/pan/save toolbar). In the packaged `.exe` this window is produced by the
+application re-launching itself with a `--plot-viewer` flag, which needs an
+interactive matplotlib backend to be bundled. Ensure the build includes:
+
+- `tkinter` (the `TkAgg` backend used by the viewer; add it as a hidden import
+  if `auto-py-to-exe` does not pick it up automatically)
+
+If `tkinter`/`TkAgg` is missing from the bundle, the plot window will fail to
+open in the packaged build even though it works when running from source.
+
 ## Development Notes
 
 - The application is launched from `gqteaWinToga.py`.
@@ -254,6 +267,5 @@ gqteaWinToga core development team:
 
 ## License
 
-No license file is currently included in this repository. Add a `LICENSE` file
-before distributing the project publicly so users know how they may use, modify,
-and redistribute the code.
+This project is released under the MIT License. See the [LICENSE](LICENSE) file
+for the full text.

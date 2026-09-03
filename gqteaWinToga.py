@@ -2,6 +2,18 @@
 Program developed by gqtea group.
 """
 
+import sys
+
+# Re-entrant plot-viewer dispatch. In a packaged (frozen) build there is no
+# separate ``python.exe`` to launch ``plotViewer.py`` with, so this same
+# executable is re-launched with ``--plot-viewer <manifest.json>`` to draw the
+# interactive figures (see DisplayPlots.display_plots). Handle that mode here,
+# before the heavy Toga/OpenGL imports, so a viewer child never loads the GUI.
+if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--plot-viewer":
+    import plotViewer
+    plotViewer.main(sys.argv[2])
+    sys.exit(0)
+
 import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW, CENTER, LEFT
@@ -52,7 +64,7 @@ class gqteaWin(toga.App):
         # 2. Header Section
         header_box = toga.Box(style=Pack(direction=COLUMN, align_items=CENTER, margin_bottom=15))
         title_label = toga.Label(
-            "gQTEA-0.3.7 Molecular Analysis Toolkit",
+            "gQTEA-0.4.0 Molecular Analysis Toolkit",
             style=Pack(font_size=18, font_weight='bold', margin_bottom=5)
         )
         welcome_label = toga.Label(
