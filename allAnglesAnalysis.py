@@ -2,17 +2,26 @@ import asyncio
 import os
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import numpy as np
 import toga
 from toga.constants import LEFT
 from toga.style import Pack
 
+# Shared, unit-tested range parser (e.g. "1-5 14-16 18 20"); reused across the
+# all-bond / all-angle / all-dihedral tools so the syntax stays identical.
+from allBondAnalysis import parse_solute_index_ranges
+
 
 @dataclass
 class AngleTriplet:
-    """A bond angle triplet detected from the first-frame connectivity graph."""
+    """A bond angle i-j-k that is connected (both j-i and j-k within cutoff) in
+    at least one frame.
+
+    ``first_present_angle`` is the angle in the first frame the triplet appears;
+    ``frames_present`` is how many frames it stayed connected (its occurrence).
+    """
 
     atom_i: int
     atom_j: int
@@ -20,27 +29,29 @@ class AngleTriplet:
     element_i: str
     element_j: str
     element_k: str
-    first_frame_angle: float
+    first_present_angle: float
+    frames_present: int
 
 
 class AllAnglesAnalysis:
     """Calculate statistics for all connected interatomic angles in an XYZ trajectory."""
 
-    DEFAULT_CONNECTION_DISTANCE = 1.5
+    DEFAULT_CONNECTION_DISTANCE = 1.7
 
     def __init__(
         self,
         trajectory_file: Optional[str] = None,
         max_connection_distance: float = DEFAULT_CONNECTION_DISTANCE,
         solute_atom_indices: Optional[List[int]] = None,
+        cell_lengths: Optional[Iterable[float]] = None,
     ) -> None:
         self.trajectory_file = trajectory_file
         self.max_connection_distance = float(max_connection_distance)
         self.solute_atom_indices = solute_atom_indices
+        self.cell_lengths = None if cell_lengths is None else np.asarray(cell_lengths, dtype=float)
         self.num_atoms = 0
         self.num_frames = 0
         self.elements: List[str] = []
-        self.connected_atom_pairs: List[Tuple[int, int]] = []
         self.angle_triplets: List[AngleTriplet] = []
         self.statistics: List[Tuple[float, float, float]] = []
 
@@ -143,194 +154,217 @@ class AllAnglesAnalysis:
 
         self.solute_atom_indices = normalized_indices
 
-    def identify_connected_atom_pairs(self, coordinates: np.ndarray) -> List[Tuple[int, int]]:
-        """Infer connected solute atom pairs from first-frame distances."""
+    def _candidate_pairs(self) -> np.ndarray:
+        """All in-scope ``i<j`` atom-index pairs used for per-frame connectivity."""
+        if self.solute_atom_indices is not None:
+            scope = np.array(sorted(self.solute_atom_indices), dtype=int)
+        else:
+            scope = np.arange(self.num_atoms, dtype=int)
+        upper_i, upper_j = np.triu_indices(len(scope), k=1)
+        return np.column_stack((scope[upper_i], scope[upper_j]))
+
+    def _prepare_run(self) -> np.ndarray:
+        """Validate the cutoff / cell and return the candidate pair index array."""
         if self.max_connection_distance <= 0:
             raise ValueError("Maximum connection distance must be greater than zero.")
-
-        cutoff_sq = self.max_connection_distance * self.max_connection_distance
-        candidate_indices = (
-            self.solute_atom_indices
-            if self.solute_atom_indices is not None
-            else list(range(self.num_atoms))
-        )
-        pairs: List[Tuple[int, int]] = []
-
-        for index_i, atom_i in enumerate(candidate_indices):
-            for atom_j in candidate_indices[index_i + 1:]:
-                diff = coordinates[atom_i] - coordinates[atom_j]
-                distance_sq = float(np.dot(diff, diff))
-                if distance_sq <= cutoff_sq:
-                    pairs.append((atom_i, atom_j))
-
-        self.connected_atom_pairs = pairs
-        return pairs
-
-    def _angle_degrees(self, coordinates: np.ndarray, atom_i: int, atom_j: int, atom_k: int) -> float:
-        vector_ji = coordinates[atom_i] - coordinates[atom_j]
-        vector_jk = coordinates[atom_k] - coordinates[atom_j]
-        norm_ji = float(np.linalg.norm(vector_ji))
-        norm_jk = float(np.linalg.norm(vector_jk))
-
-        if norm_ji == 0.0 or norm_jk == 0.0:
-            raise ValueError(
-                "Cannot calculate angle because two atoms occupy the same coordinates."
-            )
-
-        cosine = float(np.dot(vector_ji, vector_jk) / (norm_ji * norm_jk))
-        cosine = max(-1.0, min(1.0, cosine))
-        return float(np.degrees(np.arccos(cosine)))
-
-    def identify_angle_triplets(self, coordinates: np.ndarray) -> List[AngleTriplet]:
-        """Build all i-j-k angles where i and k are connected to central atom j."""
-        if not self.connected_atom_pairs:
-            raise ValueError("No connected atom pairs were identified.")
-
-        adjacency = {atom_index: [] for atom_index in range(self.num_atoms)}
-        for atom_i, atom_j in self.connected_atom_pairs:
-            adjacency[atom_i].append(atom_j)
-            adjacency[atom_j].append(atom_i)
-
-        triplets: List[AngleTriplet] = []
-        for atom_j in sorted(adjacency):
-            neighbors = sorted(adjacency[atom_j])
-            for atom_i, atom_k in combinations(neighbors, 2):
-                triplets.append(
-                    AngleTriplet(
-                        atom_i=atom_i,
-                        atom_j=atom_j,
-                        atom_k=atom_k,
-                        element_i=self.elements[atom_i],
-                        element_j=self.elements[atom_j],
-                        element_k=self.elements[atom_k],
-                        first_frame_angle=self._angle_degrees(
-                            coordinates, atom_i, atom_j, atom_k
-                        ),
-                    )
+        if self.cell_lengths is not None:
+            if self.cell_lengths.shape != (3,):
+                raise ValueError("Cell lengths must be exactly three values: a b c.")
+            if np.any(self.cell_lengths <= 0):
+                raise ValueError("Cell lengths must be positive.")
+            half_box = float(np.min(self.cell_lengths)) / 2.0
+            if self.max_connection_distance > half_box:
+                raise ValueError(
+                    f"Maximum connection distance ({self.max_connection_distance}) must not "
+                    f"exceed half the smallest cell length ({half_box:.4f} Angstrom) for the "
+                    f"minimum-image convention to be valid."
                 )
+        pair_indices = self._candidate_pairs()
+        if len(pair_indices) == 0:
+            raise ValueError("At least two in-scope atoms are required to form an angle.")
+        return pair_indices
 
-        if not triplets:
-            raise ValueError("No connected angle triplets were identified.")
+    def _minimum_image(self, deltas: np.ndarray) -> np.ndarray:
+        """Apply the orthorhombic minimum-image convention to bond vectors (PBC)."""
+        if self.cell_lengths is not None:
+            deltas = deltas - self.cell_lengths * np.round(deltas / self.cell_lengths)
+        return deltas
 
-        self.angle_triplets = triplets
-        return triplets
+    def _bonded_adjacency(self, coordinates: np.ndarray, pair_indices: np.ndarray) -> dict:
+        """Neighbour lists for the pairs within the cutoff in this frame (PBC-aware)."""
+        deltas = self._minimum_image(coordinates[pair_indices[:, 0]] - coordinates[pair_indices[:, 1]])
+        distances = np.sqrt(np.sum(deltas * deltas, axis=1))
+        adjacency: dict = {}
+        for atom_i, atom_j in pair_indices[distances <= self.max_connection_distance]:
+            adjacency.setdefault(int(atom_i), []).append(int(atom_j))
+            adjacency.setdefault(int(atom_j), []).append(int(atom_i))
+        return adjacency
 
-    def _calculate_angles_for_frame(self, coordinates: np.ndarray, triplet_indices: np.ndarray) -> np.ndarray:
-        coords_i = coordinates[triplet_indices[:, 0]]
-        coords_j = coordinates[triplet_indices[:, 1]]
-        coords_k = coordinates[triplet_indices[:, 2]]
+    def _calculate_angles(self, coordinates: np.ndarray, triplet_indices: np.ndarray) -> np.ndarray:
+        """Vectorized i-j-k angles in degrees (PBC-aware); NaN for degenerate cases."""
+        vectors_ji = self._minimum_image(coordinates[triplet_indices[:, 0]] - coordinates[triplet_indices[:, 1]])
+        vectors_jk = self._minimum_image(coordinates[triplet_indices[:, 2]] - coordinates[triplet_indices[:, 1]])
+        norms = np.linalg.norm(vectors_ji, axis=1) * np.linalg.norm(vectors_jk, axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            cosines = np.where(norms > 0, np.sum(vectors_ji * vectors_jk, axis=1) / norms, np.nan)
+        return np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0)))
 
-        vectors_ji = coords_i - coords_j
-        vectors_jk = coords_k - coords_j
-        norms_ji = np.linalg.norm(vectors_ji, axis=1)
-        norms_jk = np.linalg.norm(vectors_jk, axis=1)
+    def _accumulate_frame(self, coordinates: np.ndarray, pair_indices: np.ndarray, acc: dict) -> None:
+        """Detect this frame's connectivity, build its i-j-k angles, and fold each
+        value into a per-triplet Welford accumulator keyed by ``(i, j, k)`` (i<k)."""
+        adjacency = self._bonded_adjacency(coordinates, pair_indices)
+        tri_i: List[int] = []
+        tri_j: List[int] = []
+        tri_k: List[int] = []
+        for atom_j, neighbours in adjacency.items():
+            for atom_i, atom_k in combinations(sorted(neighbours), 2):
+                tri_i.append(atom_i)
+                tri_j.append(atom_j)
+                tri_k.append(atom_k)
+        if not tri_j:
+            return
+        angles = self._calculate_angles(coordinates, np.array([tri_i, tri_j, tri_k]).T)
+        for atom_i, atom_j, atom_k, angle in zip(tri_i, tri_j, tri_k, angles):
+            if np.isnan(angle):
+                continue
+            key = (atom_i, atom_j, atom_k)
+            entry = acc.get(key)
+            if entry is None:
+                acc[key] = [1, float(angle), 0.0, float(angle)]  # count, mean, M2, first
+            else:
+                entry[0] += 1
+                delta = angle - entry[1]
+                entry[1] += delta / entry[0]
+                entry[2] += delta * (angle - entry[1])
 
-        if np.any(norms_ji == 0.0) or np.any(norms_jk == 0.0):
+    def _finalize(self, acc: dict, frame_count: int) -> List[Tuple[float, float, float]]:
+        """Turn the per-triplet accumulators into ``angle_triplets`` + ``statistics``."""
+        if frame_count == 0:
+            raise ValueError("No frames were read from the trajectory file.")
+        if not acc:
             raise ValueError(
-                "Cannot calculate angle because two atoms occupy the same coordinates."
+                "No connected angle triplets were identified in any frame "
+                "(no i-j-k with both bonds within the maximum connection distance)."
             )
+        self.num_frames = frame_count
+        self.angle_triplets = []
+        self.statistics = []
+        for (atom_i, atom_j, atom_k) in sorted(acc):
+            count, mean, m2, first_angle = acc[(atom_i, atom_j, atom_k)]
+            variance = m2 / count
+            self.angle_triplets.append(
+                AngleTriplet(
+                    atom_i=atom_i, atom_j=atom_j, atom_k=atom_k,
+                    element_i=self.elements[atom_i],
+                    element_j=self.elements[atom_j],
+                    element_k=self.elements[atom_k],
+                    first_present_angle=float(first_angle),
+                    frames_present=int(count),
+                )
+            )
+            self.statistics.append((float(mean), float(variance), float(np.sqrt(variance))))
+        return self.statistics
 
-        cosines = np.sum(vectors_ji * vectors_jk, axis=1) / (norms_ji * norms_jk)
-        cosines = np.clip(cosines, -1.0, 1.0)
-        return np.degrees(np.arccos(cosines))
-
-    async def compute_angle_statistics_async(
-        self,
-        ui_update_interval: int = 500,
+    def compute_angle_statistics(
+        self, progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Tuple[float, float, float]]:
-        """Compute average, population variance, and standard deviation for each angle."""
-        if not self.angle_triplets:
-            raise ValueError("No angle triplets were identified.")
-
-        triplet_indices = np.array(
-            [
-                (triplet.atom_i, triplet.atom_j, triplet.atom_k)
-                for triplet in self.angle_triplets
-            ],
-            dtype=int,
-        )
-        num_triplets = len(triplet_indices)
-        means = np.zeros(num_triplets, dtype=float)
-        m2 = np.zeros(num_triplets, dtype=float)
+        """Per-frame connectivity + per-triplet angle mean/variance/std over present frames."""
+        pair_indices = self._prepare_run()
+        acc: dict = {}
         frame_count = 0
-
         for elements, coordinates in self._read_frames():
             if len(elements) != self.num_atoms:
                 raise ValueError("A frame has a different number of atoms than the first frame.")
-
             frame_count += 1
-            angles = self._calculate_angles_for_frame(coordinates, triplet_indices)
+            self._accumulate_frame(coordinates, pair_indices, acc)
+            if progress_callback:
+                progress_callback(frame_count, 0)
+        return self._finalize(acc, frame_count)
 
-            delta = angles - means
-            means += delta / frame_count
-            delta_after_update = angles - means
-            m2 += delta * delta_after_update
-
-            if frame_count % ui_update_interval == 0:
+    async def compute_angle_statistics_async(
+        self,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        ui_update_interval: int = 500,
+    ) -> List[Tuple[float, float, float]]:
+        """Async-friendly variant that periodically lets the Toga UI repaint."""
+        pair_indices = self._prepare_run()
+        acc: dict = {}
+        frame_count = 0
+        for elements, coordinates in self._read_frames():
+            if len(elements) != self.num_atoms:
+                raise ValueError("A frame has a different number of atoms than the first frame.")
+            frame_count += 1
+            self._accumulate_frame(coordinates, pair_indices, acc)
+            if progress_callback and frame_count % ui_update_interval == 0:
+                progress_callback(frame_count, 0)
                 await asyncio.sleep(0)
+        stats = self._finalize(acc, frame_count)
+        if progress_callback:
+            progress_callback(frame_count, frame_count)
+            await asyncio.sleep(0)
+        return stats
 
-        if frame_count == 0:
-            raise ValueError("No frames were read from the trajectory file.")
-
-        await asyncio.sleep(0)
-
-        variances = m2 / frame_count
-        std_devs = np.sqrt(variances)
-        self.num_frames = frame_count
-        self.statistics = [
-            (float(mean), float(variance), float(std_dev))
-            for mean, variance, std_dev in zip(means, variances, std_devs)
-        ]
-        return self.statistics
-
-    async def analyze_async(self, ui_update_interval: int = 500) -> List[Tuple[float, float, float]]:
+    def analyze(
+        self, progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> List[Tuple[float, float, float]]:
         """Run the full all-angle analysis."""
-        _, first_coordinates = self.read_first_frame()
-        self.identify_connected_atom_pairs(first_coordinates)
-        self.identify_angle_triplets(first_coordinates)
-        return await self.compute_angle_statistics_async(ui_update_interval=ui_update_interval)
+        self.read_first_frame()
+        return self.compute_angle_statistics(progress_callback=progress_callback)
 
-    def write_results(self, output_file: str, mapping_file: Optional[str] = None) -> Tuple[str, str]:
-        """Write angle statistics and row-to-triplet mapping files."""
+    async def analyze_async(
+        self,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        ui_update_interval: int = 500,
+    ) -> List[Tuple[float, float, float]]:
+        """Run the full all-angle analysis while keeping the Toga UI responsive."""
+        self.read_first_frame()
+        return await self.compute_angle_statistics_async(
+            progress_callback=progress_callback, ui_update_interval=ui_update_interval
+        )
+
+    def write_results(self, output_file: str) -> str:
+        """Write a single self-describing angle-analysis file (metadata header +
+        one row per triplet: identity, first-present angle, stats, occurrence)."""
         if not self.statistics:
             raise ValueError("No statistics are available to write.")
 
         output_file = os.path.abspath(output_file)
-        output_dir = os.path.dirname(output_file) or os.getcwd()
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(output_file) or os.getcwd(), exist_ok=True)
 
-        if mapping_file is None:
-            base, _ = os.path.splitext(output_file)
-            mapping_file = f"{base}_triplets.txt"
-        mapping_file = os.path.abspath(mapping_file)
-
-        with open(output_file, "w") as stats_file:
-            stats_file.write(
-                "# average_angle_degrees variance_degrees2 standard_deviation_degrees\n"
-            )
-            for average, variance, std_dev in self.statistics:
-                stats_file.write(f"{average:>16.8f} {variance:>16.8f} {std_dev:>16.8f}\n")
-
-        with open(mapping_file, "w") as triplet_file:
-            triplet_file.write(f"# frames_used {self.num_frames}\n")
+        with open(output_file, "w") as out:
+            out.write("# gQTEA All Bond Angle Analysis\n")
+            out.write(f"# frames_used {self.num_frames}\n")
+            out.write(f"# max_connection_distance {self.max_connection_distance:g}\n")
             if self.solute_atom_indices is None:
-                triplet_file.write("# atom_scope all_atoms\n")
+                out.write("# atom_scope all_atoms\n")
             else:
-                solute_labels = " ".join(str(index + 1) for index in self.solute_atom_indices)
-                triplet_file.write("# atom_scope solute_atoms\n")
-                triplet_file.write(f"# solute_atom_indices {solute_labels}\n")
-            triplet_file.write(
-                "# row atom_i atom_j atom_k element_i element_j element_k first_frame_angle_degrees\n"
+                solute_labels = " ".join(str(index + 1) for index in sorted(self.solute_atom_indices))
+                out.write("# atom_scope solute_atoms\n")
+                out.write(f"# solute_atom_indices {solute_labels}\n")
+            if self.cell_lengths is None:
+                out.write("# periodic_boundary none\n")
+            else:
+                a, b, c = self.cell_lengths
+                out.write(f"# cell_lengths {a:g} {b:g} {c:g}\n")
+            out.write(
+                "# row atom_i atom_j atom_k element_i element_j element_k "
+                "first_present_angle_degrees average_angle_degrees variance_degrees2 "
+                "standard_deviation_degrees occurrence_fraction frames_present\n"
             )
-            for row_index, triplet in enumerate(self.angle_triplets, start=1):
-                triplet_file.write(
+            for row_index, (triplet, (average, variance, std_dev)) in enumerate(
+                zip(self.angle_triplets, self.statistics), start=1
+            ):
+                occurrence = triplet.frames_present / self.num_frames
+                out.write(
                     f"{row_index:>6d} "
                     f"{triplet.atom_i + 1:>8d} {triplet.atom_j + 1:>8d} {triplet.atom_k + 1:>8d} "
                     f"{triplet.element_i:>8s} {triplet.element_j:>8s} {triplet.element_k:>8s} "
-                    f"{triplet.first_frame_angle:>16.8f}\n"
+                    f"{triplet.first_present_angle:>16.8f} "
+                    f"{average:>16.8f} {variance:>16.8f} {std_dev:>16.8f} "
+                    f"{occurrence:>16.8f} {triplet.frames_present:>10d}\n"
                 )
 
-        return output_file, mapping_file
+        return output_file
 
 
 class allAnglesAnalysisUI:
@@ -380,18 +414,27 @@ class allAnglesAnalysisUI:
         distance_row = toga.Box(style=row_style)
         distance_label = toga.Label("Maximum connection distance (A):", style=label_style)
         self.textInput_max_distance = toga.TextInput(
-            value=str(AllAnglesAnalysis.DEFAULT_CONNECTION_DISTANCE),
-            placeholder="Default: 1.5",
+            placeholder="Default: 1.7 (leave blank to use it)",
             style=input_style,
         )
         distance_row.add(distance_label)
         distance_row.add(self.textInput_max_distance)
         main_box.add(distance_row)
 
+        cell_row = toga.Box(style=row_style)
+        cell_label = toga.Label("Cell lattices a b c (A):", style=label_style)
+        self.textInput_cell = toga.TextInput(
+            placeholder="Example: 12.5 12.5 12.5; leave blank for no PBC",
+            style=input_style,
+        )
+        cell_row.add(cell_label)
+        cell_row.add(self.textInput_cell)
+        main_box.add(cell_row)
+
         solute_row = toga.Box(style=row_style)
         solute_label = toga.Label("Solute atom indices:", style=label_style)
         self.textInput_solute_indices = toga.TextInput(
-            placeholder="Example: 1 2 3 4; leave blank to use all atoms",
+            placeholder="Example: 1-5 14-16 18 20; leave blank to use all atoms",
             style=input_style,
         )
         solute_row.add(solute_label)
@@ -401,8 +444,8 @@ class allAnglesAnalysisUI:
         output_row = toga.Box(style=row_style)
         output_label = toga.Label("Output txt filename:", style=label_style)
         self.textInput_output = toga.TextInput(
-            value="all_angles_analysis.txt",
-            placeholder="all_angles_analysis.txt",
+            value="all_angle_analysis_combined.txt",
+            placeholder="all_angle_analysis_combined.txt",
             style=input_style,
         )
         output_row.add(output_label)
@@ -413,10 +456,12 @@ class allAnglesAnalysisUI:
             style=Pack(flex=1, margin=(10, 0), font_size=12)
         )
         self.multi_line_text.value = (
-            "This module infers connected atom pairs from the first frame of an XYZ "
-            "trajectory, builds every connected i-j-k bond angle, and computes the "
-            "average angle, population variance, and standard deviation in degrees. "
-            "Provide solute atom indices to exclude solvent atoms from the calculation."
+            "This module re-evaluates connectivity every frame of an XYZ trajectory, builds "
+            "every connected i-j-k bond angle, and computes the average angle, population "
+            "variance, standard deviation (degrees), and occurrence (fraction of frames the "
+            "triplet is connected) for each. Enter cell lattices a b c to apply the minimum-"
+            "image convention (PBC); leave blank for an isolated system. Solute atom indices "
+            "accept ranges (e.g. 1-5 14-16 18 20) to exclude solvent atoms."
         )
         main_box.add(self.multi_line_text)
 
@@ -465,13 +510,18 @@ class allAnglesAnalysisUI:
             await self.warning_function("Error", "No trajectory file selected.")
             return False
 
-        try:
-            self.max_connection_distance = float(self.textInput_max_distance.value.strip())
-        except ValueError:
-            await self.warning_function(
-                "Error", "Maximum connection distance must be a valid number."
-            )
-            return False
+        # Maximum connection distance: a blank field falls back to the 1.7 A default.
+        distance_text = self.textInput_max_distance.value.strip()
+        if not distance_text:
+            self.max_connection_distance = AllAnglesAnalysis.DEFAULT_CONNECTION_DISTANCE
+        else:
+            try:
+                self.max_connection_distance = float(distance_text)
+            except ValueError:
+                await self.warning_function(
+                    "Error", "Maximum connection distance must be a valid number."
+                )
+                return False
 
         if self.max_connection_distance <= 0:
             await self.warning_function(
@@ -479,23 +529,33 @@ class allAnglesAnalysisUI:
             )
             return False
 
+        # Cell lattices for PBC: optional. Blank = no periodic boundaries.
+        cell_text = self.textInput_cell.value.strip()
+        self.cell_lengths = None
+        if cell_text:
+            try:
+                lengths = [float(value) for value in cell_text.split()]
+            except ValueError:
+                await self.warning_function(
+                    "Error", "Cell lattices must be three numbers separated by spaces: a b c."
+                )
+                return False
+            if len(lengths) != 3 or any(length <= 0 for length in lengths):
+                await self.warning_function(
+                    "Error", "Enter exactly three positive cell lattices: a b c."
+                )
+                return False
+            self.cell_lengths = lengths
+
+        # Solute atom indices: optional, range syntax allowed (e.g. 1-5 14-16 18 20).
         solute_index_text = self.textInput_solute_indices.value.strip()
         self.solute_atom_indices = None
         if solute_index_text:
             try:
-                solute_indices = [int(value) for value in solute_index_text.split()]
-            except ValueError:
-                await self.warning_function(
-                    "Error", "Solute atom indices must be positive integers separated by spaces."
-                )
+                solute_indices = parse_solute_index_ranges(solute_index_text)
+            except ValueError as exc:
+                await self.warning_function("Error", str(exc))
                 return False
-
-            if any(index <= 0 for index in solute_indices):
-                await self.warning_function(
-                    "Error", "Solute atom indices must be positive integers starting at 1."
-                )
-                return False
-
             self.solute_atom_indices = [index - 1 for index in solute_indices]
 
         output_name = self.textInput_output.value.strip()
@@ -519,6 +579,7 @@ class allAnglesAnalysisUI:
                 trajectory_file=self.trajec,
                 max_connection_distance=self.max_connection_distance,
                 solute_atom_indices=self.solute_atom_indices,
+                cell_lengths=self.cell_lengths,
             )
 
             self.multi_line_text.value = (
@@ -527,30 +588,13 @@ class allAnglesAnalysisUI:
             )
             await asyncio.sleep(0)
 
-            _, first_coordinates = analyzer.read_first_frame()
+            analyzer.read_first_frame()
 
             self.multi_line_text.value = (
-                "First frame loaded.\n"
-                "Identifying connected atom pairs using the maximum connection distance.\n"
-                "Only solute-solute connectivity is considered when solute atom indices are provided."
-            )
-            await asyncio.sleep(0)
-
-            analyzer.identify_connected_atom_pairs(first_coordinates)
-
-            self.multi_line_text.value = (
-                f"Connected pairs identified: {len(analyzer.connected_atom_pairs)}\n"
-                "Building all connected i-j-k angle triplets around each central atom."
-            )
-            await asyncio.sleep(0)
-
-            analyzer.identify_angle_triplets(first_coordinates)
-
-            self.multi_line_text.value = (
-                f"Angle triplets identified: {len(analyzer.angle_triplets)}\n"
-                "Computing angle values across all trajectory frames.\n"
-                "Calculating the average angle, population variance, and standard deviation "
-                "for each selected triplet. Please wait until the final summary appears."
+                f"First frame loaded ({analyzer.num_atoms} atoms).\n"
+                "Re-evaluating connectivity every frame, building all connected i-j-k angles, "
+                "and computing the average angle, population variance, standard deviation, and "
+                "occurrence for each triplet.\nPlease wait until the final summary appears."
             )
             await asyncio.sleep(0)
 
@@ -558,22 +602,24 @@ class allAnglesAnalysisUI:
 
             self.multi_line_text.value = (
                 "Angle statistics completed.\n"
-                "Writing the statistics file and the atom-triplet mapping file."
+                "Writing the combined angle-analysis file."
             )
             await asyncio.sleep(0)
 
-            output_file, mapping_file = analyzer.write_results(self.output_file)
+            output_file = analyzer.write_results(self.output_file)
         except Exception as exc:
             await self.warning_function("Error", f"All angle analysis failed: {exc}")
             return
 
         preview_triplets = []
         for row_index, triplet in enumerate(analyzer.angle_triplets[:10], start=1):
+            occurrence = triplet.frames_present / analyzer.num_frames
             preview_triplets.append(
                 f"{row_index:>3d}: {triplet.element_i}{triplet.atom_i + 1}-"
                 f"{triplet.element_j}{triplet.atom_j + 1}-"
                 f"{triplet.element_k}{triplet.atom_k + 1} "
-                f"first-frame angle = {triplet.first_frame_angle:.6f} deg"
+                f"first-present angle = {triplet.first_present_angle:.6f} deg, "
+                f"occurrence = {occurrence:.1%}"
             )
         triplet_preview = "\n".join(preview_triplets)
         if len(analyzer.angle_triplets) > 10:
@@ -582,8 +628,14 @@ class allAnglesAnalysisUI:
         if analyzer.solute_atom_indices is None:
             atom_scope = "All atoms"
         else:
-            solute_labels = " ".join(str(index + 1) for index in analyzer.solute_atom_indices)
+            solute_labels = " ".join(str(index + 1) for index in sorted(analyzer.solute_atom_indices))
             atom_scope = f"Solute atoms only: {solute_labels}"
+
+        if analyzer.cell_lengths is None:
+            pbc_state = "off (isolated system)"
+        else:
+            a, b, c = analyzer.cell_lengths
+            pbc_state = f"on, minimum-image cell = {a:g} {b:g} {c:g} A"
 
         self.multi_line_text.value = (
             f"Analysis completed.\n"
@@ -591,11 +643,10 @@ class allAnglesAnalysisUI:
             f"Frames processed: {analyzer.num_frames}\n"
             f"Atoms per frame: {analyzer.num_atoms}\n"
             f"Atom scope: {atom_scope}\n"
-            f"Connected pairs: {len(analyzer.connected_atom_pairs)}\n"
-            f"Angle triplets: {len(analyzer.angle_triplets)}\n"
+            f"Periodic boundaries: {pbc_state}\n"
+            f"Angle triplets (present in >=1 frame): {len(analyzer.angle_triplets)}\n"
             f"Maximum connection distance: {self.max_connection_distance:.6f} A\n\n"
-            f"Statistics file:\n{output_file}\n\n"
-            f"Triplet mapping file:\n{mapping_file}\n\n"
+            f"Output file:\n{output_file}\n\n"
             f"First mapped triplets:\n{triplet_preview}"
         )
 

@@ -9,31 +9,74 @@ from toga.constants import LEFT
 from toga.style import Pack
 
 
+def parse_solute_index_ranges(text: str) -> List[int]:
+    """Expand compact solute-index syntax into an explicit 1-based list.
+
+    Accepts whitespace- and/or comma-separated tokens, where each token is
+    either a single positive integer (``18``) or an inclusive range
+    (``14-16``). Returns a sorted, de-duplicated list of 1-based indices; an
+    empty/blank string returns ``[]``. Raises ``ValueError`` on non-positive
+    values, descending ranges, or malformed tokens.
+    """
+    indices = set()
+    for token in text.replace(",", " ").split():
+        if "-" in token:
+            parts = token.split("-")
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                raise ValueError(f"Invalid index range: '{token}'.")
+            try:
+                low, high = int(parts[0]), int(parts[1])
+            except ValueError as exc:
+                raise ValueError(f"Invalid index range: '{token}'.") from exc
+            if low <= 0 or high <= 0:
+                raise ValueError("Solute atom indices must be positive integers starting at 1.")
+            if high < low:
+                raise ValueError(f"Range bounds must be ascending: '{token}'.")
+            indices.update(range(low, high + 1))
+        else:
+            try:
+                value = int(token)
+            except ValueError as exc:
+                raise ValueError(f"Invalid solute atom index: '{token}'.") from exc
+            if value <= 0:
+                raise ValueError("Solute atom indices must be positive integers starting at 1.")
+            indices.add(value)
+    return sorted(indices)
+
+
 @dataclass
 class BondPair:
-    """A connected atom pair detected from the first frame."""
+    """An atom pair that is within the connection cutoff in at least one frame.
+
+    ``first_bonded_distance`` is the separation in the first frame where the
+    pair became bonded; ``frames_bonded`` is how many frames it stayed within
+    the cutoff (its occurrence count).
+    """
 
     atom_i: int
     atom_j: int
     element_i: str
     element_j: str
-    first_frame_distance: float
+    first_bonded_distance: float
+    frames_bonded: int
 
 
 class AllBondAnalysis:
     """Calculate statistics for all connected interatomic distances in an XYZ trajectory."""
 
-    DEFAULT_CONNECTION_DISTANCE = 1.5
+    DEFAULT_CONNECTION_DISTANCE = 1.7
 
     def __init__(
         self,
         trajectory_file: Optional[str] = None,
         max_connection_distance: float = DEFAULT_CONNECTION_DISTANCE,
         solute_atom_indices: Optional[List[int]] = None,
+        cell_lengths: Optional[Iterable[float]] = None,
     ) -> None:
         self.trajectory_file = trajectory_file
         self.max_connection_distance = float(max_connection_distance)
         self.solute_atom_indices = solute_atom_indices
+        self.cell_lengths = None if cell_lengths is None else np.asarray(cell_lengths, dtype=float)
         self.num_atoms = 0
         self.num_frames = 0
         self.elements: List[str] = []
@@ -139,141 +182,154 @@ class AllBondAnalysis:
 
         self.solute_atom_indices = normalized_indices
 
-    def identify_connected_atom_pairs(self, coordinates: np.ndarray) -> List[BondPair]:
-        """Infer connected solute atom pairs from first-frame distances."""
+    def _candidate_pairs(self) -> np.ndarray:
+        """All in-scope ``i<j`` atom-index pairs (solute subset, or every atom).
+
+        Returned as an ``(P, 2)`` int array with ``atom_i < atom_j`` in every
+        row; connectivity itself is decided per frame in the streaming pass.
+        """
+        if self.solute_atom_indices is not None:
+            scope = np.array(sorted(self.solute_atom_indices), dtype=int)
+        else:
+            scope = np.arange(self.num_atoms, dtype=int)
+        upper_i, upper_j = np.triu_indices(len(scope), k=1)
+        return np.column_stack((scope[upper_i], scope[upper_j]))
+
+    def _prepare_run(self) -> np.ndarray:
+        """Validate the cutoff / cell and return the candidate pair index array."""
         if self.max_connection_distance <= 0:
             raise ValueError("Maximum connection distance must be greater than zero.")
 
-        cutoff_sq = self.max_connection_distance * self.max_connection_distance
-        pairs: List[BondPair] = []
-        candidate_indices = (
-            self.solute_atom_indices
-            if self.solute_atom_indices is not None
-            else list(range(self.num_atoms))
-        )
+        if self.cell_lengths is not None:
+            if self.cell_lengths.shape != (3,):
+                raise ValueError("Cell lengths must be exactly three values: a b c.")
+            if np.any(self.cell_lengths <= 0):
+                raise ValueError("Cell lengths must be positive.")
+            half_box = float(np.min(self.cell_lengths)) / 2.0
+            if self.max_connection_distance > half_box:
+                raise ValueError(
+                    f"Maximum connection distance ({self.max_connection_distance}) must not "
+                    f"exceed half the smallest cell length ({half_box:.4f} Angstrom) for the "
+                    f"minimum-image convention to be valid."
+                )
 
-        for index_i, atom_i in enumerate(candidate_indices):
-            for atom_j in candidate_indices[index_i + 1:]:
-                diff = coordinates[atom_i] - coordinates[atom_j]
-                distance_sq = float(np.dot(diff, diff))
-                if distance_sq <= cutoff_sq:
-                    pairs.append(
-                        BondPair(
-                            atom_i=atom_i,
-                            atom_j=atom_j,
-                            element_i=self.elements[atom_i],
-                            element_j=self.elements[atom_j],
-                            first_frame_distance=float(np.sqrt(distance_sq)),
-                        )
-                    )
+        pair_indices = self._candidate_pairs()
+        if len(pair_indices) == 0:
+            raise ValueError("At least two in-scope atoms are required to form a pair.")
+        return pair_indices
 
-        self.connected_atom_pairs = pairs
-        return pairs
+    def _pair_distances(self, coordinates: np.ndarray, pair_indices: np.ndarray) -> np.ndarray:
+        """Vectorized distances for every candidate pair, applying PBC if a cell is set."""
+        deltas = coordinates[pair_indices[:, 0]] - coordinates[pair_indices[:, 1]]
+        if self.cell_lengths is not None:
+            deltas -= self.cell_lengths * np.round(deltas / self.cell_lengths)
+        return np.sqrt(np.sum(deltas * deltas, axis=1))
 
-    def compute_distance_statistics(
+    def _finalize(self, pair_indices, counts, means, m2, first_dist, frame_count):
+        """Turn the per-pair accumulators into ``connected_atom_pairs`` + ``statistics``."""
+        if frame_count == 0:
+            raise ValueError("No frames were read from the trajectory file.")
+
+        bonded_ever = counts > 0
+        if not np.any(bonded_ever):
+            raise ValueError(
+                "No connected atom pairs were identified in any frame "
+                "(no pair came within the maximum connection distance)."
+            )
+
+        self.num_frames = frame_count
+        self.connected_atom_pairs = []
+        self.statistics = []
+        for row in np.flatnonzero(bonded_ever):
+            atom_i, atom_j = int(pair_indices[row, 0]), int(pair_indices[row, 1])
+            count = int(counts[row])
+            variance = float(m2[row] / count)
+            self.connected_atom_pairs.append(
+                BondPair(
+                    atom_i=atom_i,
+                    atom_j=atom_j,
+                    element_i=self.elements[atom_i],
+                    element_j=self.elements[atom_j],
+                    first_bonded_distance=float(first_dist[row]),
+                    frames_bonded=count,
+                )
+            )
+            self.statistics.append((float(means[row]), variance, float(np.sqrt(variance))))
+        return self.statistics
+
+    @staticmethod
+    def _accumulate(distances, bonded, counts, means, m2, first_dist):
+        """One masked Welford update for the pairs bonded in the current frame."""
+        counts[bonded] += 1
+        newly = bonded & (counts == 1)
+        first_dist[newly] = distances[newly]
+        delta = distances[bonded] - means[bonded]
+        means[bonded] += delta / counts[bonded]
+        m2[bonded] += delta * (distances[bonded] - means[bonded])
+
+    def compute_bond_statistics(
         self,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Tuple[float, float, float]]:
-        """Compute average, population variance, and standard deviation for each pair."""
-        if not self.connected_atom_pairs:
-            raise ValueError("No connected atom pairs were identified.")
-
-        pair_indices = np.array(
-            [(pair.atom_i, pair.atom_j) for pair in self.connected_atom_pairs],
-            dtype=int,
-        )
+        """Per-frame connectivity + per-pair mean/variance/std over its bonded frames."""
+        pair_indices = self._prepare_run()
         num_pairs = len(pair_indices)
+        counts = np.zeros(num_pairs, dtype=int)
         means = np.zeros(num_pairs, dtype=float)
         m2 = np.zeros(num_pairs, dtype=float)
+        first_dist = np.full(num_pairs, np.nan, dtype=float)
         frame_count = 0
 
         for elements, coordinates in self._read_frames():
             if len(elements) != self.num_atoms:
                 raise ValueError("A frame has a different number of atoms than the first frame.")
-
             frame_count += 1
-            vector_diffs = coordinates[pair_indices[:, 0]] - coordinates[pair_indices[:, 1]]
-            distances = np.sqrt(np.sum(vector_diffs * vector_diffs, axis=1))
-
-            delta = distances - means
-            means += delta / frame_count
-            delta_after_update = distances - means
-            m2 += delta * delta_after_update
-
+            distances = self._pair_distances(coordinates, pair_indices)
+            bonded = distances <= self.max_connection_distance
+            self._accumulate(distances, bonded, counts, means, m2, first_dist)
             if progress_callback:
                 progress_callback(frame_count, 0)
 
-        if frame_count == 0:
-            raise ValueError("No frames were read from the trajectory file.")
+        return self._finalize(pair_indices, counts, means, m2, first_dist, frame_count)
 
-        variances = m2 / frame_count
-        std_devs = np.sqrt(variances)
-        self.num_frames = frame_count
-        self.statistics = [
-            (float(mean), float(variance), float(std_dev))
-            for mean, variance, std_dev in zip(means, variances, std_devs)
-        ]
-        return self.statistics
-
-    async def compute_distance_statistics_async(
+    async def compute_bond_statistics_async(
         self,
         progress_callback: Optional[Callable[[int, int], None]] = None,
         ui_update_interval: int = 500,
     ) -> List[Tuple[float, float, float]]:
-        """Async-friendly statistics calculation that periodically lets the UI repaint."""
-        if not self.connected_atom_pairs:
-            raise ValueError("No connected atom pairs were identified.")
-
-        pair_indices = np.array(
-            [(pair.atom_i, pair.atom_j) for pair in self.connected_atom_pairs],
-            dtype=int,
-        )
+        """Async-friendly variant that periodically lets the Toga UI repaint."""
+        pair_indices = self._prepare_run()
         num_pairs = len(pair_indices)
+        counts = np.zeros(num_pairs, dtype=int)
         means = np.zeros(num_pairs, dtype=float)
         m2 = np.zeros(num_pairs, dtype=float)
+        first_dist = np.full(num_pairs, np.nan, dtype=float)
         frame_count = 0
 
         for elements, coordinates in self._read_frames():
             if len(elements) != self.num_atoms:
                 raise ValueError("A frame has a different number of atoms than the first frame.")
-
             frame_count += 1
-            vector_diffs = coordinates[pair_indices[:, 0]] - coordinates[pair_indices[:, 1]]
-            distances = np.sqrt(np.sum(vector_diffs * vector_diffs, axis=1))
-
-            delta = distances - means
-            means += delta / frame_count
-            delta_after_update = distances - means
-            m2 += delta * delta_after_update
-
+            distances = self._pair_distances(coordinates, pair_indices)
+            bonded = distances <= self.max_connection_distance
+            self._accumulate(distances, bonded, counts, means, m2, first_dist)
             if progress_callback and frame_count % ui_update_interval == 0:
                 progress_callback(frame_count, 0)
                 await asyncio.sleep(0)
 
-        if frame_count == 0:
-            raise ValueError("No frames were read from the trajectory file.")
-
+        stats = self._finalize(pair_indices, counts, means, m2, first_dist, frame_count)
         if progress_callback:
             progress_callback(frame_count, frame_count)
             await asyncio.sleep(0)
-
-        variances = m2 / frame_count
-        std_devs = np.sqrt(variances)
-        self.num_frames = frame_count
-        self.statistics = [
-            (float(mean), float(variance), float(std_dev))
-            for mean, variance, std_dev in zip(means, variances, std_devs)
-        ]
-        return self.statistics
+        return stats
 
     def analyze(
         self,
         progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> List[Tuple[float, float, float]]:
         """Run the full all-bond distance analysis."""
-        _, first_coordinates = self.read_first_frame()
-        self.identify_connected_atom_pairs(first_coordinates)
-        return self.compute_distance_statistics(progress_callback=progress_callback)
+        self.read_first_frame()
+        return self.compute_bond_statistics(progress_callback=progress_callback)
 
     async def analyze_async(
         self,
@@ -281,52 +337,59 @@ class AllBondAnalysis:
         ui_update_interval: int = 500,
     ) -> List[Tuple[float, float, float]]:
         """Run the full analysis while keeping the Toga UI responsive."""
-        _, first_coordinates = self.read_first_frame()
-        self.identify_connected_atom_pairs(first_coordinates)
-        return await self.compute_distance_statistics_async(
+        self.read_first_frame()
+        return await self.compute_bond_statistics_async(
             progress_callback=progress_callback,
             ui_update_interval=ui_update_interval,
         )
 
-    def write_results(self, output_file: str, mapping_file: Optional[str] = None) -> Tuple[str, str]:
-        """Write statistics and row-to-pair mapping files."""
+    def write_results(self, output_file: str) -> str:
+        """Write a single self-describing bond-analysis file.
+
+        Combines what used to be two files: a commented metadata header
+        (frames used, cutoff, atom scope, periodic-boundary state) followed by
+        one row per connected pair carrying its identity, first-bonded
+        distance, distance statistics, and occurrence. Returns the file path.
+        """
         if not self.statistics:
             raise ValueError("No statistics are available to write.")
 
         output_file = os.path.abspath(output_file)
-        output_dir = os.path.dirname(output_file) or os.getcwd()
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(output_file) or os.getcwd(), exist_ok=True)
 
-        if mapping_file is None:
-            base, _ = os.path.splitext(output_file)
-            mapping_file = f"{base}_pairs.txt"
-        mapping_file = os.path.abspath(mapping_file)
-
-        with open(output_file, "w") as stats_file:
-            stats_file.write("# average variance standard_deviation\n")
-            for average, variance, std_dev in self.statistics:
-                stats_file.write(f"{average:>16.8f} {variance:>16.8f} {std_dev:>16.8f}\n")
-
-        with open(mapping_file, "w") as pair_file:
-            pair_file.write(f"# frames_used {self.num_frames}\n")
+        with open(output_file, "w") as out:
+            out.write("# gQTEA All Bond Distance Analysis\n")
+            out.write(f"# frames_used {self.num_frames}\n")
+            out.write(f"# max_connection_distance {self.max_connection_distance:g}\n")
             if self.solute_atom_indices is None:
-                pair_file.write("# atom_scope all_atoms\n")
+                out.write("# atom_scope all_atoms\n")
             else:
-                solute_labels = " ".join(str(index + 1) for index in self.solute_atom_indices)
-                pair_file.write("# atom_scope solute_atoms\n")
-                pair_file.write(f"# solute_atom_indices {solute_labels}\n")
-            pair_file.write(
-                "# row atom_i atom_j element_i element_j first_frame_distance\n"
+                solute_labels = " ".join(str(index + 1) for index in sorted(self.solute_atom_indices))
+                out.write("# atom_scope solute_atoms\n")
+                out.write(f"# solute_atom_indices {solute_labels}\n")
+            if self.cell_lengths is None:
+                out.write("# periodic_boundary none\n")
+            else:
+                a, b, c = self.cell_lengths
+                out.write(f"# cell_lengths {a:g} {b:g} {c:g}\n")
+            out.write(
+                "# row atom_i atom_j element_i element_j first_bonded_distance "
+                "average variance standard_deviation occurrence_fraction frames_bonded\n"
             )
-            for row_index, pair in enumerate(self.connected_atom_pairs, start=1):
-                pair_file.write(
+            for row_index, (pair, (average, variance, std_dev)) in enumerate(
+                zip(self.connected_atom_pairs, self.statistics), start=1
+            ):
+                occurrence = pair.frames_bonded / self.num_frames
+                out.write(
                     f"{row_index:>6d} "
                     f"{pair.atom_i + 1:>8d} {pair.atom_j + 1:>8d} "
                     f"{pair.element_i:>8s} {pair.element_j:>8s} "
-                    f"{pair.first_frame_distance:>16.8f}\n"
+                    f"{pair.first_bonded_distance:>16.8f} "
+                    f"{average:>16.8f} {variance:>16.8f} {std_dev:>16.8f} "
+                    f"{occurrence:>16.8f} {pair.frames_bonded:>10d}\n"
                 )
 
-        return output_file, mapping_file
+        return output_file
 
 
 class allBondAnalysisUI:
@@ -376,18 +439,27 @@ class allBondAnalysisUI:
         distance_row = toga.Box(style=row_style)
         distance_label = toga.Label("Maximum connection distance (A):", style=label_style)
         self.textInput_max_distance = toga.TextInput(
-            value=str(AllBondAnalysis.DEFAULT_CONNECTION_DISTANCE),
-            placeholder="Default: 1.5",
+            placeholder="Default: 1.7 (leave blank to use it)",
             style=input_style,
         )
         distance_row.add(distance_label)
         distance_row.add(self.textInput_max_distance)
         main_box.add(distance_row)
 
+        cell_row = toga.Box(style=row_style)
+        cell_label = toga.Label("Cell lattices a b c (A):", style=label_style)
+        self.textInput_cell = toga.TextInput(
+            placeholder="Example: 12.5 12.5 12.5; leave blank for no PBC",
+            style=input_style,
+        )
+        cell_row.add(cell_label)
+        cell_row.add(self.textInput_cell)
+        main_box.add(cell_row)
+
         solute_row = toga.Box(style=row_style)
         solute_label = toga.Label("Solute atom indices:", style=label_style)
         self.textInput_solute_indices = toga.TextInput(
-            placeholder="Example: 1 2 3 4; leave blank to use all atoms",
+            placeholder="Example: 1-5 14-16 18 20; leave blank to use all atoms",
             style=input_style,
         )
         solute_row.add(solute_label)
@@ -397,8 +469,8 @@ class allBondAnalysisUI:
         output_row = toga.Box(style=row_style)
         output_label = toga.Label("Output txt filename:", style=label_style)
         self.textInput_output = toga.TextInput(
-            value="all_bond_analysis.txt",
-            placeholder="all_bond_analysis.txt",
+            value="all_bond_analysis_combined.txt",
+            placeholder="all_bond_analysis_combined.txt",
             style=input_style,
         )
         output_row.add(output_label)
@@ -409,10 +481,12 @@ class allBondAnalysisUI:
             style=Pack(flex=1, margin=(10, 0), font_size=12)
         )
         self.multi_line_text.value = (
-            "This module infers connected atom pairs from the first frame of an XYZ "
-            "trajectory using the maximum connection distance, then computes the "
-            "average distance, population variance, and standard deviation for each pair. "
-            "Provide solute atom indices to exclude solvent atoms from the calculation."
+            "This module re-evaluates connectivity every frame of an XYZ trajectory using "
+            "the maximum connection distance, then computes the average distance, population "
+            "variance, standard deviation, and occurrence (fraction of frames bonded) for each "
+            "pair. Enter cell lattices a b c to apply the minimum-image convention (PBC); leave "
+            "them blank for an isolated system. Provide solute atom indices (ranges allowed, "
+            "e.g. 1-5 14-16 18 20) to exclude solvent atoms from the calculation."
         )
         main_box.add(self.multi_line_text)
 
@@ -461,13 +535,18 @@ class allBondAnalysisUI:
             await self.warning_function("Error", "No trajectory file selected.")
             return False
 
-        try:
-            self.max_connection_distance = float(self.textInput_max_distance.value.strip())
-        except ValueError:
-            await self.warning_function(
-                "Error", "Maximum connection distance must be a valid number."
-            )
-            return False
+        # Maximum connection distance: a blank field falls back to the 1.7 A default.
+        distance_text = self.textInput_max_distance.value.strip()
+        if not distance_text:
+            self.max_connection_distance = AllBondAnalysis.DEFAULT_CONNECTION_DISTANCE
+        else:
+            try:
+                self.max_connection_distance = float(distance_text)
+            except ValueError:
+                await self.warning_function(
+                    "Error", "Maximum connection distance must be a valid number."
+                )
+                return False
 
         if self.max_connection_distance <= 0:
             await self.warning_function(
@@ -475,23 +554,33 @@ class allBondAnalysisUI:
             )
             return False
 
+        # Cell lattices for PBC: optional. Blank = no periodic boundaries.
+        cell_text = self.textInput_cell.value.strip()
+        self.cell_lengths = None
+        if cell_text:
+            try:
+                lengths = [float(value) for value in cell_text.split()]
+            except ValueError:
+                await self.warning_function(
+                    "Error", "Cell lattices must be three numbers separated by spaces: a b c."
+                )
+                return False
+            if len(lengths) != 3 or any(length <= 0 for length in lengths):
+                await self.warning_function(
+                    "Error", "Enter exactly three positive cell lattices: a b c."
+                )
+                return False
+            self.cell_lengths = lengths
+
+        # Solute atom indices: optional, range syntax allowed (e.g. 1-5 14-16 18 20).
         solute_index_text = self.textInput_solute_indices.value.strip()
         self.solute_atom_indices = None
         if solute_index_text:
             try:
-                solute_indices = [int(value) for value in solute_index_text.split()]
-            except ValueError:
-                await self.warning_function(
-                    "Error", "Solute atom indices must be positive integers separated by spaces."
-                )
+                solute_indices = parse_solute_index_ranges(solute_index_text)
+            except ValueError as exc:
+                await self.warning_function("Error", str(exc))
                 return False
-
-            if any(index <= 0 for index in solute_indices):
-                await self.warning_function(
-                    "Error", "Solute atom indices must be positive integers starting at 1."
-                )
-                return False
-
             self.solute_atom_indices = [index - 1 for index in solute_indices]
 
         output_name = self.textInput_output.value.strip()
@@ -515,6 +604,7 @@ class allBondAnalysisUI:
                 trajectory_file=self.trajec,
                 max_connection_distance=self.max_connection_distance,
                 solute_atom_indices=self.solute_atom_indices,
+                cell_lengths=self.cell_lengths,
             )
 
             self.multi_line_text.value = (
@@ -523,47 +613,40 @@ class allBondAnalysisUI:
             )
             await asyncio.sleep(0)
 
-            _, first_coordinates = analyzer.read_first_frame()
+            analyzer.read_first_frame()
 
             self.multi_line_text.value = (
-                "First frame loaded.\n"
-                "Identifying connected atom pairs using the maximum connection distance.\n"
-                "Only solute-solute pairs will be considered when solute atom indices are provided."
+                f"First frame loaded ({analyzer.num_atoms} atoms).\n"
+                "Re-evaluating connectivity every frame and computing the average distance, "
+                "population variance, standard deviation, and occurrence for each pair.\n"
+                "Please wait until the final summary appears."
             )
             await asyncio.sleep(0)
 
-            analyzer.identify_connected_atom_pairs(first_coordinates)
-
-            self.multi_line_text.value = (
-                f"Connected pairs identified: {len(analyzer.connected_atom_pairs)}\n"
-                "Computing bond distances across all trajectory frames.\n"
-                "Calculating the average distance, population variance, and standard deviation "
-                "for each selected pair. Please wait until the final summary appears."
-            )
-            await asyncio.sleep(0)
-
-            await analyzer.compute_distance_statistics_async(
+            await analyzer.compute_bond_statistics_async(
                 progress_callback=None,
                 ui_update_interval=500,
             )
 
             self.multi_line_text.value = (
-                "Distance statistics completed.\n"
-                "Writing the statistics file and the atom-pair mapping file."
+                "Bond statistics completed.\n"
+                "Writing the combined bond-analysis file."
             )
             await asyncio.sleep(0)
 
-            output_file, mapping_file = analyzer.write_results(self.output_file)
+            output_file = analyzer.write_results(self.output_file)
         except Exception as exc:
             await self.warning_function("Error", f"All bond analysis failed: {exc}")
             return
 
         preview_pairs = []
         for row_index, pair in enumerate(analyzer.connected_atom_pairs[:10], start=1):
+            occurrence = pair.frames_bonded / analyzer.num_frames
             preview_pairs.append(
                 f"{row_index:>3d}: {pair.element_i}{pair.atom_i + 1}-"
                 f"{pair.element_j}{pair.atom_j + 1} "
-                f"first-frame distance = {pair.first_frame_distance:.6f} A"
+                f"first-bonded distance = {pair.first_bonded_distance:.6f} A, "
+                f"occurrence = {occurrence:.1%}"
             )
         pair_preview = "\n".join(preview_pairs)
         if len(analyzer.connected_atom_pairs) > 10:
@@ -572,8 +655,14 @@ class allBondAnalysisUI:
         if analyzer.solute_atom_indices is None:
             atom_scope = "All atoms"
         else:
-            solute_labels = " ".join(str(index + 1) for index in analyzer.solute_atom_indices)
+            solute_labels = " ".join(str(index + 1) for index in sorted(analyzer.solute_atom_indices))
             atom_scope = f"Solute atoms only: {solute_labels}"
+
+        if analyzer.cell_lengths is None:
+            pbc_state = "off (isolated system)"
+        else:
+            a, b, c = analyzer.cell_lengths
+            pbc_state = f"on, minimum-image cell = {a:g} {b:g} {c:g} A"
 
         self.multi_line_text.value = (
             f"Analysis completed.\n"
@@ -581,10 +670,10 @@ class allBondAnalysisUI:
             f"Frames processed: {analyzer.num_frames}\n"
             f"Atoms per frame: {analyzer.num_atoms}\n"
             f"Atom scope: {atom_scope}\n"
-            f"Connected pairs: {len(analyzer.connected_atom_pairs)}\n"
+            f"Periodic boundaries: {pbc_state}\n"
+            f"Connected pairs (bonded in >=1 frame): {len(analyzer.connected_atom_pairs)}\n"
             f"Maximum connection distance: {self.max_connection_distance:.6f} A\n\n"
-            f"Statistics file:\n{output_file}\n\n"
-            f"Pair mapping file:\n{mapping_file}\n\n"
+            f"Output file:\n{output_file}\n\n"
             f"First mapped pairs:\n{pair_preview}"
         )
 

@@ -73,7 +73,7 @@ def simple_cubic(spacing=3.0, reps=3):
 
 def make_analyser(out_dir, traj, num_atoms, n_frames, *, box="10 10 10",
                   radius="4", bin_width="0.2", symbol="O", shell_center="1",
-                  atom_list="0", axis="4 5"):
+                  atom_list="0", xlim="4", ylim="5"):
     a = RadialAnalyser()
     a.main_window = FakeWindow()
     a.multi_line_text = FakeInput()
@@ -85,7 +85,8 @@ def make_analyser(out_dir, traj, num_atoms, n_frames, *, box="10 10 10",
     a.textInput_shell_center = FakeInput(shell_center)
     a.textInput_atom_symbol = FakeInput(symbol)
     a.textInput_cell_lattices = FakeInput(box)
-    a.textInput_axis = FakeInput(axis)
+    a.textInput_xlim = FakeInput(xlim)
+    a.textInput_ylim = FakeInput(ylim)
     a.trajec = str(traj)
     a.num_atoms = num_atoms
     a.total_frame_number = n_frames
@@ -186,15 +187,44 @@ def test_r_is_bin_centers(tmp_path):
     ({"box": "10 10"}, False),             # not exactly three lattices
     ({"box": "10 0 10"}, False),           # non-positive lattice
     ({"radius": "6"}, False),              # > min(a,b,c)/2 == 5
-    ({"axis": "4"}, False),                # need two values
-    ({"axis": "0 5"}, False),              # non-positive limit
+    ({"xlim": "abc"}, False),              # non-numeric x-limit
+    ({"ylim": "abc"}, False),              # non-numeric y-limit
+    ({"xlim": "0"}, False),                # non-positive x-limit
+    ({"ylim": "-5"}, False),               # non-positive y-limit
+    ({"xlim": "", "ylim": ""}, True),      # both blank -> defaults applied
     ({"symbol": "Xx"}, False),             # target symbol absent -> rho == 0
 ])
 def test_read_params_validation(tmp_path, tiny_traj, overrides, expected):
-    params = dict(box="10 10 10", radius="4", bin_width="0.2", axis="4 5")
+    params = dict(box="10 10 10", radius="4", bin_width="0.2", xlim="4", ylim="5")
     params.update(overrides)
     a = make_analyser(tmp_path, tiny_traj, 4, 2, **params)
     assert asyncio.run(a.read_params(None)) is expected
+
+
+@pytest.mark.parametrize("xlim,ylim,expected_x,expected_y", [
+    ("", "", 5.0, 10.0),      # both blank -> x = lattice a / 2 (10/2), y = 10
+    ("", "7", 5.0, 7.0),      # x blank -> default; y honoured
+    ("3", "", 3.0, 10.0),     # x honoured; y blank -> default
+    ("3", "7", 3.0, 7.0),     # both honoured, no defaults
+])
+def test_axis_limit_defaults(tmp_path, tiny_traj, xlim, ylim, expected_x, expected_y):
+    """Blank X/Y axis fields fall back to lattice a / 2 and 10 respectively."""
+    a = make_analyser(tmp_path, tiny_traj, 4, 2, box="10 10 10", xlim=xlim, ylim=ylim)
+    assert asyncio.run(a.read_params(None)) is True
+    assert a.axis == [expected_x, expected_y]
+
+
+@pytest.mark.parametrize("box,expected_radius", [
+    ("10 10 10", 5.0),    # min(a,b,c)/2
+    ("8 10 12", 4.0),     # smallest lattice is a=8 -> 4.0
+    ("14 6 10", 3.0),     # smallest lattice is b=6 -> 3.0
+])
+def test_radius_default_is_max_allowed(tmp_path, tiny_traj, box, expected_radius):
+    """A blank radius field defaults to half the smallest cell lattice."""
+    a = make_analyser(tmp_path, tiny_traj, 4, 2, box=box, radius="",
+                      bin_width="0.2")
+    assert asyncio.run(a.read_params(None)) is True
+    assert a.radius == expected_radius
 
 
 def test_read_params_requires_loaded_file(tmp_path, tiny_traj):

@@ -38,6 +38,20 @@ class RadialAnalyser(FramesCounter, DisplayPlots):
                 )
                 return None
 
+        async def read_optional_float(text_input, field_name, default):
+            """Like ``read_input`` for a single float, but a blank field falls
+            back to ``default`` instead of being treated as an error."""
+            value = text_input.value.strip()
+            if not value:
+                return default
+            try:
+                return float(value)
+            except ValueError as e:
+                await self.main_window.dialog(
+                    toga.InfoDialog("Error", f"Invalid format for {field_name}: {e}")
+                )
+                return None
+
         async def fail(message):
             await self.main_window.dialog(toga.InfoDialog("Error", message))
             return False
@@ -54,14 +68,39 @@ class RadialAnalyser(FramesCounter, DisplayPlots):
                 "before reading parameters."
             )
 
-        # Read and validate inputs
-        self.radius = await read_input(
-            self.textInput_radius, "radius for radial distribution function calculation", float
+        # Read and validate inputs. The cell lattices are read first because the
+        # minimum-image scheme caps the usable radius at half the smallest box
+        # length -- which is also the default applied when the radius is blank.
+        self.cell_lattices = await read_input(
+            self.textInput_cell_lattices, "cell lattices a, b, and c", "float_list"
+        )
+        if self.cell_lattices is None:
+            return False
+        if len(self.cell_lattices) != 3:
+            return await fail("Enter exactly three cell lattices: a b c.")
+        if any(length <= 0 for length in self.cell_lattices):
+            return await fail("Cell lattices must be positive.")
+
+        # The periodic-image scheme is only valid up to half the smallest box length.
+        min_half = min(self.cell_lattices) / 2.0
+
+        # Maximum radius for the RDF. A blank field defaults to the maximum
+        # possible value, min(a, b, c) / 2, imposed by the minimum-image scheme.
+        self.radius = await read_optional_float(
+            self.textInput_radius,
+            "radius for radial distribution function calculation",
+            min_half,
         )
         if self.radius is None:
             return False
         if self.radius <= 0:
             return await fail("Maximum radius must be greater than zero.")
+        if self.radius > min_half:
+            return await fail(
+                f"Maximum radius ({self.radius}) must not exceed half the smallest "
+                f"cell lattice ({min_half:.4f} Angstrom) for the periodic-image "
+                f"method to be valid."
+            )
 
         self.bin_width = await read_input(
             self.textInput_bin_width, "bin width for histogram distribution function", float
@@ -106,33 +145,22 @@ class RadialAnalyser(FramesCounter, DisplayPlots):
         if self.rdf_atom_symbol is None:
             return False
 
-        self.cell_lattices = await read_input(
-            self.textInput_cell_lattices, "cell lattices a, b, and c", "float_list"
+        # X/Y limits for the coordination-number plot. Both fields are optional:
+        # a blank field falls back to its default (x = lattice a / 2, y = 10) so
+        # the plot always has sensible bounds.
+        x_limit = await read_optional_float(
+            self.textInput_xlim, "x-axis range limit", self.cell_lattices[0] / 2.0
         )
-        if self.cell_lattices is None:
+        if x_limit is None:
             return False
-        if len(self.cell_lattices) != 3:
-            return await fail("Enter exactly three cell lattices: a b c.")
-        if any(length <= 0 for length in self.cell_lattices):
-            return await fail("Cell lattices must be positive.")
-
-        # The periodic-image scheme is only valid up to half the smallest box length.
-        min_half = min(self.cell_lattices) / 2.0
-        if self.radius > min_half:
-            return await fail(
-                f"Maximum radius ({self.radius}) must not exceed half the smallest "
-                f"cell lattice ({min_half:.4f} Angstrom) for the periodic-image "
-                f"method to be valid."
-            )
-
-        self.axis = await read_input(
-            self.textInput_axis, "x-axis for coordination number", "float_list")
-        if self.axis is None:
+        y_limit = await read_optional_float(
+            self.textInput_ylim, "y-axis range limit", 10.0
+        )
+        if y_limit is None:
             return False
-        if len(self.axis) < 2:
-            return await fail("Enter at least two values: the x-limit and y-limit.")
-        if self.axis[0] <= 0 or self.axis[1] <= 0:
+        if x_limit <= 0 or y_limit <= 0:
             return await fail("Coordination-number plot limits must be positive.")
+        self.axis = [x_limit, y_limit]
 
         # Display parameters summary
         update_text = (
@@ -434,13 +462,14 @@ class RadialFunctionUI(RadialAnalyser):
 
         # Input fields: (label, placeholder, attribute, default value)
         input_fields = [
-            ("Maximum radius for RDF:", "Enter the maximum radius for radial distribution function:", "textInput_radius", "6.0"),
+            ("Maximum radius for RDF:", "Maximum radius for RDF (leave blank for default: half the smallest cell lattice)", "textInput_radius", ""),
             ("Bin width for histogram:", "Enter bin width for histogram distribution", "textInput_bin_width", "0.01"),
             ("Atom labels to be excluded:", "Enter labels to exclude (0 for none)", "textInput_atom_list", ""),
             ("Shell center atom label:", "Enter atom label at shell center", "textInput_shell_center", ""),
             ("Atomic symbol for g(r):", "Enter atomic symbol for g(r) calculation", "textInput_atom_symbol", ""),
             ("Cell lattices (a b c):", "Enter cell lattices a, b, c in Å", "textInput_cell_lattices", ""),
-            ("Coordination plot limits (x y):", "Enter the x-max and y-max for the coordination number plot", "textInput_axis", "6 10"),
+            ("X-axis range limit for RDF plot:", "Enter the x-max for the g(r) plot (leave blank for default: lattice_a / 2)", "textInput_xlim", ""),
+            ("Y-axis range limit for RDF plot:", "Enter the y-max for the g(r) plot (leave blank for default: 10)", "textInput_ylim", ""),
         ]
         for label_text, placeholder, attr, default in input_fields:
             box = toga.Box(style=box_style)

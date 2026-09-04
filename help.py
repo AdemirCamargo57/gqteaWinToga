@@ -302,12 +302,29 @@ This python module calculates:
  - average bond length (angstroms); 
  - bond length distribution function;
  - free energy (kcal/mol) using the probability distribution function.
- - The free energy is calculated using the formula G = -R*T*ln(P(r)), where P(r) is 
-   the probability distribution function of the bond lengths, i.e., P(r) is calculated 
-   as the number of frames per bin divided by the total number of frames. 
-   R is the Boltzmann constant, and T is the simulation temperature in kelvin. 
+ - The free energy is calculated using the formula G = -R*T*ln(P(r)), where P(r) is
+   the probability distribution function of the bond lengths, i.e., P(r) is calculated
+   as the number of frames per bin divided by the total number of frames.
+   R is the Boltzmann constant, and T is the simulation temperature in kelvin.
+ - With the 'Jacobian r2 correction (PMF)' switch enabled, the potential of mean
+   force W(r) = -R*T*ln(P(r)/r^2) is reported instead. The r^2 factor removes the
+   4*pi*r^2 volume-element bias of sampling a separation in three dimensions.
+   Both forms are defined only up to an additive constant.
+ - The 'Smooth free energy' switch applies a small moving average to the
+   probabilities before the logarithm, which tames noise at fine bin widths.
+   It is off by default here; leave it off for the raw -R*T*ln(P) curve.
 
 The analysis is based on the TRAJEC.xyz file from a cpmd run.
+
+PERIODIC BOUNDARIES (optional)
+Leave 'Cell Lengths a b c' blank for an isolated or already-wrapped system. When
+filled, the bond vector uses the orthorhombic minimum-image convention, so a pair
+split across a periodic boundary in an unwrapped trajectory still gives the correct
+short distance. Minimum image is exact only up to half the smallest box length, so
+the maximum r must not exceed min(a,b,c)/2.
+
+Bond lengths at or beyond the maximum r are excluded from the histogram and from the
+free energy; the tool reports how many frames that affected.
 
 PURPOSE AND SIGNIFICANCE
 The bond length analysis is used to study the behavior of atoms or molecules in 
@@ -321,7 +338,8 @@ STEPS TO FOLLOW:
    3.1 Select two atoms to calculate the bond length.
    3.2 Enter the simulation temperature in kelvin.
    3.3 Specify the number of bins for the bond length distribution function.
-   3.4 Click the 'Exec' button to carry out the atomic bond analysis for the 
+   3.4 Optionally enter the cell lengths a b c for periodic boundaries.
+   3.5 Click the 'Analyze' button to carry out the atomic bond analysis for the
        two selected atoms
 
  References:
@@ -347,12 +365,32 @@ STEPS TO FOLLOW:
 4. Click the 'Exec' button to carry out the atomic bond analysis 
    for the two selected atoms.
 
-The bond angle free energy is calculated using the formula 
-G = -R*T*ln(P(r)), where P(r) is the probability distribution 
-function of the bond lengths p(r). The P(r) is calculated 
-as the number of frames per bin divided by the total number of 
-frames. R is the Boltzmann constant, and T is the simulation 
-temperature in kelvin.
+The bond angle free energy is calculated using the formula
+G = -R*T*ln(P(theta)), where P(theta) is the probability distribution
+function of the bond angles, calculated as the number of frames per bin
+divided by the total number of frames. R is the Boltzmann constant, and
+T is the simulation temperature in kelvin.
+
+With the 'Use sin(theta) Jacobian' switch enabled, the potential of mean
+force W(theta) = -R*T*ln(P(theta)/sin(theta)) is reported instead. The
+sin(theta) factor removes the volume-element bias of sampling an angle in
+three dimensions. Both forms are defined only up to an additive constant.
+
+The 'Smooth free energy' switch applies a small moving average to the
+probabilities before the logarithm, which tames noise at fine bin widths.
+Turn it off to see the raw -R*T*ln(P) curve.
+
+PERIODIC BOUNDARIES (optional)
+Leave 'Cell Lengths a b c' blank for an isolated or already-wrapped system.
+When filled, both arms of the angle use the orthorhombic minimum-image
+convention, so a triplet split across a periodic boundary in an unwrapped
+trajectory still gives the correct geometry. Minimum image is exact only for
+arms shorter than half the smallest box length; the tool warns if an arm
+exceeds that.
+
+Angles at or beyond the maximum angle are excluded from the histogram and the
+free energy (they are not clamped into the last bin); the tool reports how
+many frames that affected.
 
  References:
 
@@ -410,10 +448,32 @@ This python module calculates:
     
 STEPS TO FOLLOW:
 1. Load the TRAJEC.xyz file from the cpmd run by pressing open file button.
-2. Choose the destination folder for your gqteaWin analysis files by clicking the 
+2. Choose the destination folder for your gqteaWin analysis files by clicking the
    'Save Dir' button.
 3. Fill in all the entry boxes on the control panel.
 4. Click the 'Exec' button to carry out the atomic bond analysis for the two selected atoms.
+
+ANGLE RANGE
+'Wrap dihedral to [-180, 180]' selects the range the angles are reported in.
+With it OFF the angles are mapped to [0, 360) and the histogram spans
+[0, maximum angle]. With it ON the angles keep their sign and the histogram
+spans [-180, 180], so negative angles are binned rather than discarded.
+
+FREE ENERGY
+G = -R*T*ln(P(phi)), where P(phi) is the fraction of frames in each bin.
+Unlike a bond length (4*pi*r^2) or a bond angle (sin(theta)), a dihedral has a
+uniform volume element, so there is no Jacobian factor to divide out and no
+switch for one: -R*T*ln(P(phi)) is already the potential of mean force. It is
+defined only up to an additive constant.
+
+The 'Smooth free energy' switch applies a small moving average to the
+probabilities before the logarithm; turn it off for the raw curve.
+
+PERIODIC BOUNDARIES (optional)
+Leave 'Cell Lengths a b c' blank for an isolated or already-wrapped system.
+When filled, all three connecting vectors use the orthorhombic minimum-image
+convention. Minimum image is exact only for bonds shorter than half the
+smallest box length; the tool warns if one exceeds that.
 
 The computation of the dihedral angles in degrees was carried out using the the following algorithm:
     a = np.array(coords1)
