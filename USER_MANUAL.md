@@ -984,35 +984,57 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-Controls include:
+**Window layout.** The controls are arranged as a fixed header, four tabs, and a status line:
 
-- Browse for an XYZ file.
-- Set upper bond-length limit.
-- Visualization style.
-- Atom display style.
-- Atom scale.
-- Bond thickness.
-- Rotate the molecular system around the X, Y, and Z axes.
-- Bond mode.
-- Show atom numbers.
-- Show atomic symbols.
-- Click an atom to display its index on the canvas.
-- Measure distance, angle, or dihedral by entering atom labels.
-- Set periodic box dimensions.
-- Choose how the displayed periodic box is centered.
-- Show or hide the box.
-- Step through trajectory frames.
-- Play/pause trajectory animation.
-- Set frame step and playback speed.
-- Save the current frame as XYZ.
+- **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
+- **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels.
+- **Frames** tab: frame navigation and trajectory playback.
+- **Measure** tab: distances, angles, dihedrals, and atom coordinates.
+- **Box & Performance** tab: periodic box settings and playback performance options.
+- **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
+
+A typical session is: **Browse** for the file, adjust anything you need on the **Display** tab, then click **Display Molecule/Trajectory**. The 3D window opens alongside the control window, so you can keep changing settings while it is open.
+
+**Numeric fields are applied by pressing Enter.** Type a value into a field — maximum bond length, atom or bond scale, box edge lengths, playback delay, frame step, frame number, or a rotation angle — and press Enter to apply it. There are no separate "Set" buttons.
+
+##### Display tab
+
+- **Projection**: `Orthographic` or `Perspective`.
+- **Atom style**: `Line style`, `CPK style`, or `vdW style`.
+- **Atom scale** and **Bond scale**: relative size of the drawn atoms and bonds.
+- **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded.
+- **Rotation**: rotate the displayed system about X, Y, and Z (described below).
+- **Atom numbers** and **Atomic symbols**: label every atom in the 3D view.
+- **Clear clicked labels**: remove the labels you added by clicking individual atoms.
+
+##### Frames tab
+
+- `|<`, `<<`, `>>`, `>|` and the slider move through the trajectory. The field to the left of the slider jumps to a specific frame when you press Enter; the counter to the right shows `current / last`.
+- **Play** / **Pause** animates the trajectory.
+- **Loop mode**: `Loop` restarts at the beginning, `Once` stops at the end, `Rock` reverses direction at each end.
+- **Frame step**: how many frames each step or playback advance skips. Use `<` and `>`, or type a value and press Enter.
+- **Delay (s)**: seconds between frames during playback. Larger values play more slowly.
+- **Auto-zoom to fit each frame**: rescales the view for every frame. Turn it off for a steadier view during playback.
+
+##### Measure tab
+
+- Choose **Bond length**, **Bond angle**, **Dihedral angle**, or **Atom coordinates**, enter the atom labels, and click **Measure**. Atom indices are 1-based. The value appears in the **Result** field and on the 3D canvas.
+
+##### Box & Performance tab
+
+- **Box a, b, c**: orthorhombic periodic box edge lengths in Å. Fill in all three, then press Enter.
+- **Box center**: where the displayed box is placed (described below).
+- **Show simulation box**: draw or hide the box.
+- **Reduce overlays during playback**: skips some overlay drawing to keep long trajectories smooth.
+- **Bond mode**: how connectivity is updated during playback (described below).
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
 
-You can identify individual atoms directly in the 3D view by clicking on them. Left-click an atom (a click without dragging — dragging still rotates the view) and its 1-based index appears next to the atom on the canvas. This is useful for picking out only the solute atoms in a solvated `TRAJEC.xyz` without labeling every solvent atom. Left-click the same atom again to remove its label. The labels stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Click **Clear labels** (next to the atom-number and atomic-symbol switches) to remove all clicked labels at once.
+You can identify individual atoms directly in the 3D view by clicking on them. Left-click an atom (a click without dragging — dragging still rotates the view) and its 1-based index appears next to the atom on the canvas. This is useful for picking out only the solute atoms in a solvated `TRAJEC.xyz` without labeling every solvent atom. Left-click the same atom again to remove its label. The labels stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Click **Clear clicked labels** on the **Display** tab (next to the atom-number and atomic-symbol switches) to remove all clicked labels at once.
 
-The rotation controls let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees and click **Apply** to add those increments to the current molecular orientation. Click **Reset** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
+The rotation controls on the **Display** tab let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees, then either press Enter in one of the angle fields or click **Apply angles** to add those increments to the current molecular orientation. Click **Reset rotation** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
 
-When the periodic box is shown, it rotates with the molecular system. The **Box center** selector controls where the displayed orthorhombic box is placed:
+When the periodic box is shown, it rotates with the molecular system. The **Box center** selector on the **Box & Performance** tab controls where the displayed orthorhombic box is placed:
 
 - **Geometric center**: centers the box on the molecular system's geometric center.
 - **Bottom at z=0**: centers the box in the a-b plane while placing the bottom face of the box at `z = 0`.
@@ -1023,7 +1045,7 @@ Bond mode controls how the viewer updates connectivity while stepping through or
 - **Dynamic cached**: recalculates bonds for each frame and stores the result for faster revisiting of frames. This is useful for trajectories where bonds may form or break and you still want smooth playback.
 - **Dynamic live**: recalculates bonds every time the current frame is rendered, without using cached bond lists. This is useful when you are actively changing bond-length settings or want the freshest possible connectivity during inspection.
 
-To use this feature, open **Tools > 3D Molecular Viewer**, load an XYZ trajectory, then choose the desired option from the **Bond mode** selector in the playback/performance controls. The viewer updates the displayed bonds using the selected mode.
+To use this feature, open **Tools > 3D Molecular Viewer**, load an XYZ trajectory, then choose the desired option from the **Bond mode** selector on the **Box & Performance** tab. The viewer updates the displayed bonds using the selected mode.
 
 Example: if a trajectory shows two atoms separating during a dissociation event, choose **Dynamic cached** or **Dynamic live**. As you step through the frames, the bond disappears when the atom distance exceeds the current upper bond-length limit. If you choose **Static first frame**, that bond remains visible throughout playback because the viewer keeps the first-frame connectivity.
 

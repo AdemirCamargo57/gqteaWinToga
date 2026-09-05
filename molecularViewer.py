@@ -1465,477 +1465,474 @@ class MolecularViewerUI(MolecularViewer):
 
         self.layout_main_window()
 
+    # ------------------------------------------------------------------
+    # Layout helpers
+    #
+    # A handful of shared metrics keep every form row aligned; before this
+    # the label widths ranged over 16/34/38/42/58/70/72/80/110 px and the
+    # margins over 2/3/4/5/8 px with no system behind either.
+    # ------------------------------------------------------------------
+    LABEL_WIDTH = 118
+    FIELD_WIDTH = 92
+    ROW_MARGIN = (0, 0, 6, 0)
+    HINT_COLOR = "#666666"
+
+    def _form_label(self, text: str, width: Optional[int] = None) -> toga.Label:
+        return toga.Label(
+            text,
+            style=Pack(
+                width=self.LABEL_WIDTH if width is None else width,
+                text_align=LEFT,
+                margin=(0, 8, 0, 0),
+            ),
+        )
+
+    def _form_row(self, *widgets) -> toga.Box:
+        row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=self.ROW_MARGIN))
+        for widget in widgets:
+            row.add(widget)
+        return row
+
+    def _section_heading(self, text: str) -> toga.Label:
+        return toga.Label(
+            text,
+            style=Pack(font_size=11, font_weight="bold", margin=(8, 0, 6, 0)),
+        )
+
+    def _hint(self, text: str) -> toga.Label:
+        return toga.Label(
+            text,
+            style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 8, 0)),
+        )
+
+    @staticmethod
+    def _tab_page(content_box: toga.Box) -> toga.ScrollContainer:
+        return toga.ScrollContainer(
+            content=content_box,
+            horizontal=False,
+            style=Pack(flex=1),
+        )
+
     def layout_main_window(self):
         self.main_window = toga.Window(
             title="Molecular Viewer",
-            size=(560, 540),
+            size=(760, 620),
         )
 
-        main_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
-        title_label = toga.Label(
-            "3D Molecular Viewer",
-            style=Pack(font_size=16, font_weight="bold", text_align=LEFT, margin=(0, 0, 6, 0)),
+        # The status line is created first so that the on_change handlers
+        # fired while the tabs below are being populated have somewhere to
+        # report to.
+        self.loading_label = toga.Label(
+            " ",
+            style=Pack(margin=(6, 2, 2, 2), text_align=LEFT),
         )
 
-        file_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        file_label = toga.Label(
-            "Select XYZ file:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
+        main_box = toga.Box(style=Pack(direction=COLUMN, margin=12, flex=1))
+        main_box.add(self._build_header())
+        main_box.add(toga.Divider(style=Pack(margin=(8, 0, 8, 0))))
+
+        tabs = toga.OptionContainer(
+            content=[
+                ("Display", self._tab_page(self._build_display_tab())),
+                ("Frames", self._tab_page(self._build_frames_tab())),
+                ("Measure", self._tab_page(self._build_measure_tab())),
+                ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
+            ],
+            style=Pack(flex=1),
         )
+        main_box.add(tabs)
+
+        main_box.add(toga.Divider(style=Pack(margin=(8, 0, 0, 0))))
+        main_box.add(self.loading_label)
+
+        self.main_window.content = main_box
+        self.main_window.show()
+
+    def _build_header(self) -> toga.Box:
+        """File selection and the two primary actions, always visible."""
+        header_box = toga.Box(style=Pack(direction=COLUMN))
+
         self.textInput_file = toga.TextInput(
-            placeholder="Click Browse to select XYZ file",
-            style=Pack(flex=1, margin=(5, 5)),
+            placeholder="Click Browse to select an XYZ file",
+            style=Pack(flex=1, margin=(0, 8, 0, 0)),
         )
         browse_button = toga.Button(
             "Browse",
             on_press=self.browse_file,
-            style=Pack(margin=5, width=72),
+            style=Pack(width=80),
         )
-        file_box.add(file_label)
-        file_box.add(self.textInput_file)
-        file_box.add(browse_button)
+        header_box.add(
+            self._form_row(self._form_label("XYZ file:", width=70), self.textInput_file, browse_button)
+        )
 
-        length_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        length_label = toga.Label(
-            "Set max bond length:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
+        self.display_button = toga.Button(
+            "Display Molecule/Trajectory",
+            on_press=self.open_opengl_window,
+            style=Pack(flex=1, margin=(0, 8, 0, 0)),
         )
-        self.textInput_length = toga.TextInput(
-            placeholder="Upper limit for bond length",
-            style=Pack(flex=1, margin=(5, 5)),
+        save_frame_button = toga.Button(
+            "Save Current Frame XYZ",
+            on_press=self.save_current_frame_xyz,
+            style=Pack(flex=1),
         )
-        set_length_button = toga.Button(
-            "Set bond length",
-            on_press=self.set_connection_distance,
-            style=Pack(margin=5, width=90),
-        )
-        length_box.add(length_label)
-        length_box.add(self.textInput_length)
-        length_box.add(set_length_button)
+        header_box.add(self._form_row(self.display_button, save_frame_button))
 
-        style_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        style_label = toga.Label(
-            "Visualization style:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
-        )
+        return header_box
+
+    def _build_display_tab(self) -> toga.Box:
+        tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
+        tab_box.add(self._hint("Type a value and press Enter to apply it."))
+
         self.visualization_selection = toga.Selection(
             items=["Orthographic", "Perspective"],
-            style=Pack(flex=1, margin=(5, 5)),
+            style=Pack(width=180),
             on_change=self.set_visualization_style,
         )
         self.visualization_selection.value = "Orthographic"
-        style_box.add(style_label)
-        style_box.add(self.visualization_selection)
+        tab_box.add(self._form_row(self._form_label("Projection:"), self.visualization_selection))
 
-        atom_style_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
-        atom_style_label = toga.Label(
-            "Atom display style:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
-        )
         self.atom_display_style_selection = toga.Selection(
             items=["Line style", "CPK style", "vdW style"],
-            style=Pack(width=120, margin=(5, 5)),
+            style=Pack(width=180),
             on_change=self.set_atom_display_style,
         )
         self.atom_display_style_selection.value = self.atom_display_style
-        atom_style_box.add(atom_style_label)
-        atom_style_box.add(self.atom_display_style_selection)
+        tab_box.add(
+            self._form_row(self._form_label("Atom style:"), self.atom_display_style_selection)
+        )
 
-        scale_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
-        atom_scale_label = toga.Label(
-            "Atom size scale:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
-        )
         self.atom_scale_input = toga.TextInput(
+            value="1.0",
             placeholder="e.g. 1.0",
-            style=Pack(width=72, margin=(5, 5)),
-        )
-        self.atom_scale_input.value = "1.0"
-        set_atom_scale_button = toga.Button(
-            "Set atom scale",
-            on_press=self.set_atom_scale_factor,
-            style=Pack(margin=5, width=90),
-        )
-        bond_thickness_label = toga.Label(
-            "Bond thickness:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
+            style=Pack(width=self.FIELD_WIDTH),
+            on_confirm=self.set_atom_scale_factor,
         )
         self.bond_thickness_input = toga.TextInput(
+            value="1.0",
             placeholder="e.g. 1.0",
-            style=Pack(width=72, margin=(5, 5)),
+            style=Pack(width=self.FIELD_WIDTH),
+            on_confirm=self.set_bond_thickness_scale_factor,
         )
-        self.bond_thickness_input.value = "1.0"
-        set_bond_thickness_button = toga.Button(
-            "Set bond scale",
-            on_press=self.set_bond_thickness_scale_factor,
-            style=Pack(margin=5, width=90),
+        tab_box.add(
+            self._form_row(
+                self._form_label("Atom scale:"),
+                self.atom_scale_input,
+                self._form_label("Bond scale:", width=90),
+                self.bond_thickness_input,
+            )
         )
-        scale_box.add(atom_scale_label)
-        scale_box.add(self.atom_scale_input)
-        scale_box.add(set_atom_scale_button)
-        scale_box.add(bond_thickness_label)
-        scale_box.add(self.bond_thickness_input)
-        scale_box.add(set_bond_thickness_button)
 
-        rotation_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
-        rotation_label = toga.Label(
-            "Rotate:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=58),
+        self.textInput_length = toga.TextInput(
+            placeholder="e.g. 1.7",
+            style=Pack(width=self.FIELD_WIDTH),
+            on_confirm=self.set_connection_distance,
         )
-        rotation_x_label = toga.Label(
-            "X:",
-            style=Pack(margin=(0, 0, 5, 2), text_align=LEFT, width=16),
+        tab_box.add(
+            self._form_row(
+                self._form_label("Max bond length:"),
+                self.textInput_length,
+                self._form_label("Å", width=20),
+            )
         )
+
+        tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
+        tab_box.add(self._section_heading("Rotation"))
+        tab_box.add(
+            self._hint("< and > start or stop continuous rotation about that axis.")
+        )
+
         self.rotation_x_input = toga.TextInput(
             value="0.0",
             placeholder="deg",
-            style=Pack(width=46, margin=(2, 2)),
-        )
-        rotate_x_negative_button = toga.Button(
-            "<",
-            on_press=lambda widget: self.toggle_continuous_molecule_rotation("x", -1),
-            style=Pack(margin=2, width=26),
-        )
-        rotate_x_positive_button = toga.Button(
-            ">",
-            on_press=lambda widget: self.toggle_continuous_molecule_rotation("x", 1),
-            style=Pack(margin=2, width=26),
-        )
-        rotation_y_label = toga.Label(
-            "Y:",
-            style=Pack(margin=(0, 0, 5, 8), text_align=LEFT, width=16),
+            style=Pack(width=56),
+            on_confirm=self.apply_molecule_rotation,
         )
         self.rotation_y_input = toga.TextInput(
             value="0.0",
             placeholder="deg",
-            style=Pack(width=46, margin=(2, 2)),
-        )
-        rotate_y_negative_button = toga.Button(
-            "<",
-            on_press=lambda widget: self.toggle_continuous_molecule_rotation("y", -1),
-            style=Pack(margin=2, width=26),
-        )
-        rotate_y_positive_button = toga.Button(
-            ">",
-            on_press=lambda widget: self.toggle_continuous_molecule_rotation("y", 1),
-            style=Pack(margin=2, width=26),
-        )
-        rotation_z_label = toga.Label(
-            "Z:",
-            style=Pack(margin=(0, 0, 5, 8), text_align=LEFT, width=16),
+            style=Pack(width=56),
+            on_confirm=self.apply_molecule_rotation,
         )
         self.rotation_z_input = toga.TextInput(
             value="0.0",
             placeholder="deg",
-            style=Pack(width=46, margin=(2, 2)),
+            style=Pack(width=56),
+            on_confirm=self.apply_molecule_rotation,
         )
-        rotate_z_negative_button = toga.Button(
-            "<",
-            on_press=lambda widget: self.toggle_continuous_molecule_rotation("z", -1),
-            style=Pack(margin=2, width=26),
+
+        def spin_buttons(axis: str):
+            return (
+                toga.Button(
+                    "<",
+                    on_press=lambda widget, a=axis: self.toggle_continuous_molecule_rotation(a, -1),
+                    style=Pack(width=30, margin=(0, 2, 0, 2)),
+                ),
+                toga.Button(
+                    ">",
+                    on_press=lambda widget, a=axis: self.toggle_continuous_molecule_rotation(a, 1),
+                    style=Pack(width=30, margin=(0, 12, 0, 0)),
+                ),
+            )
+
+        x_minus, x_plus = spin_buttons("x")
+        y_minus, y_plus = spin_buttons("y")
+        z_minus, z_plus = spin_buttons("z")
+        tab_box.add(
+            self._form_row(
+                self._form_label("X:", width=20),
+                self.rotation_x_input,
+                x_minus,
+                x_plus,
+                self._form_label("Y:", width=20),
+                self.rotation_y_input,
+                y_minus,
+                y_plus,
+                self._form_label("Z:", width=20),
+                self.rotation_z_input,
+                z_minus,
+                z_plus,
+            )
         )
-        rotate_z_positive_button = toga.Button(
-            ">",
-            on_press=lambda widget: self.toggle_continuous_molecule_rotation("z", 1),
-            style=Pack(margin=2, width=26),
-        )
+
         apply_rotation_button = toga.Button(
-            "Apply",
+            "Apply angles",
             on_press=self.apply_molecule_rotation,
-            style=Pack(margin=(2, 2, 2, 8), width=52),
+            style=Pack(width=110, margin=(0, 8, 0, 0)),
         )
         reset_rotation_button = toga.Button(
-            "Reset",
+            "Reset rotation",
             on_press=self.reset_molecule_rotation,
-            style=Pack(margin=2, width=52),
+            style=Pack(width=110),
         )
-        rotation_box.add(rotation_label)
-        rotation_box.add(rotation_x_label)
-        rotation_box.add(self.rotation_x_input)
-        rotation_box.add(rotate_x_negative_button)
-        rotation_box.add(rotate_x_positive_button)
-        rotation_box.add(rotation_y_label)
-        rotation_box.add(self.rotation_y_input)
-        rotation_box.add(rotate_y_negative_button)
-        rotation_box.add(rotate_y_positive_button)
-        rotation_box.add(rotation_z_label)
-        rotation_box.add(self.rotation_z_input)
-        rotation_box.add(rotate_z_negative_button)
-        rotation_box.add(rotate_z_positive_button)
-        rotation_box.add(apply_rotation_button)
-        rotation_box.add(reset_rotation_button)
+        tab_box.add(self._form_row(apply_rotation_button, reset_rotation_button))
 
-        labels_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
-        self.atom_numbers_switch = toga.Switch("Atom numbers", on_change=self.toggle_atom_numbers)
+        tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
+        tab_box.add(self._section_heading("Atom labels"))
+
+        self.atom_numbers_switch = toga.Switch(
+            "Atom numbers",
+            on_change=self.toggle_atom_numbers,
+            style=Pack(margin=(0, 16, 0, 0)),
+        )
         self.atom_numbers_switch.value = False
-        self.atom_symbols_switch = toga.Switch("Atomic symbols", on_change=self.toggle_atom_symbols)
+        self.atom_symbols_switch = toga.Switch(
+            "Atomic symbols",
+            on_change=self.toggle_atom_symbols,
+            style=Pack(margin=(0, 16, 0, 0)),
+        )
         self.atom_symbols_switch.value = False
         clear_labels_button = toga.Button(
-            "Clear labels",
+            "Clear clicked labels",
             on_press=self.clear_atom_labels,
-            style=Pack(margin=(4, 4, 4, 12), width=96),
+            style=Pack(width=150),
         )
-        labels_box.add(self.atom_numbers_switch)
-        labels_box.add(self.atom_symbols_switch)
-        labels_box.add(clear_labels_button)
-
-        measure_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
-        measure_label = toga.Label(
-            "Measure:",
-            style=Pack(margin=(0, 0, 4, 4), text_align=LEFT, width=70),
-        )
-        self.measure_type_selection = toga.Selection(
-            items=["Bond length", "Bond angle", "Dihedral angle", "Atom coordinates"],
-            style=Pack(width=150, margin=(4, 4)),
-            on_change=self.update_measurement_input_hint,
-        )
-        self.measure_type_selection.value = "Bond length"
-        self.measure_indices_input = toga.TextInput(
-            placeholder="1,2 or 1,2,3 or 1,2,3,4",
-            style=Pack(flex=1, margin=(4, 4)),
-        )
-        measure_button = toga.Button(
-            "Measure",
-            on_press=self.run_measurement,
-            style=Pack(margin=4, width=78),
-        )
-        measure_box.add(measure_label)
-        measure_box.add(self.measure_type_selection)
-        measure_box.add(self.measure_indices_input)
-        measure_box.add(measure_button)
-
-        self.measurement_label = toga.TextInput(
-            value="Measurement: ",
-            readonly=True,
-            style=Pack(margin=(2, 0, 6, 0), font_size=10),
+        tab_box.add(
+            self._form_row(
+                self.atom_numbers_switch, self.atom_symbols_switch, clear_labels_button
+            )
         )
 
-        box_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        box_a_label = toga.Label(
-            "Box size a:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=72),
-        )
-        self.box_a_input = toga.TextInput(placeholder="a", style=Pack(flex=1, margin=(5, 5)))
-        box_b_label = toga.Label(
-            "Box size b:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=72),
-        )
-        self.box_b_input = toga.TextInput(placeholder="b", style=Pack(flex=1, margin=(5, 5)))
-        box_c_label = toga.Label(
-            "Box size c:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=72),
-        )
-        self.box_c_input = toga.TextInput(placeholder="c", style=Pack(flex=1, margin=(5, 5)))
-        set_box_button = toga.Button(
-            "Set Box Sizes",
-            on_press=self.set_box_sizes,
-            style=Pack(margin=5, width=90),
-        )
-        box_box.add(box_a_label)
-        box_box.add(self.box_a_input)
-        box_box.add(box_b_label)
-        box_box.add(self.box_b_input)
-        box_box.add(box_c_label)
-        box_box.add(self.box_c_input)
-        box_box.add(set_box_button)
+        return tab_box
 
-        box_centering_box = toga.Box(
-            style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0))
-        )
-        box_centering_label = toga.Label(
-            "Box center:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
-        )
-        self.box_centering_selection = toga.Selection(
-            items=["Geometric center", "Bottom at z=0"],
-            style=Pack(flex=1, margin=(5, 5)),
-            on_change=self.set_box_centering_mode,
-        )
-        self.box_centering_selection.value = self.box_centering_mode
-        box_centering_box.add(box_centering_label)
-        box_centering_box.add(self.box_centering_selection)
+    def _build_frames_tab(self) -> toga.Box:
+        tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
+        tab_box.add(self._hint("Type a frame number, step or delay and press Enter to apply it."))
 
-        box_visibility_box = toga.Box(
-            style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0))
+        first_button = toga.Button("|<", on_press=self.go_to_first_frame, style=Pack(width=36))
+        prev_button = toga.Button("<<", on_press=self.step_backward, style=Pack(width=36, margin=(0, 8, 0, 4)))
+        self.frame_input = toga.TextInput(
+            value="0",
+            style=Pack(width=70),
+            on_confirm=self.go_to_frame_from_input,
         )
-        box_visibility_label = toga.Label(
-            "Show Box:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
-        )
-        self.box_visibility_switch = toga.Switch("Show Box", on_change=self.set_box_visibility)
-        self.box_visibility_switch.value = False
-        box_visibility_box.add(box_visibility_label)
-        box_visibility_box.add(self.box_visibility_switch)
-
-        nav_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        first_button = toga.Button("|<", on_press=self.go_to_first_frame, style=Pack(margin=3, width=34))
-        prev_button = toga.Button("<<", on_press=self.step_backward, style=Pack(margin=3, width=34))
-        self.frame_input = toga.TextInput(value="0", style=Pack(width=64, margin=(3, 5)))
-        go_button = toga.Button("Go", on_press=self.go_to_frame_from_input, style=Pack(margin=3, width=34))
         self.frame_slider = toga.Slider(
             min=0,
             max=1,
             value=0,
-            style=Pack(flex=1, margin=5),
+            style=Pack(flex=1, margin=(0, 8, 0, 8)),
             on_change=self.set_current_frame,
         )
-        next_button = toga.Button(">>", on_press=self.step_forward, style=Pack(margin=3, width=34))
-        last_button = toga.Button(">|", on_press=self.go_to_last_frame, style=Pack(margin=3, width=34))
+        next_button = toga.Button(">>", on_press=self.step_forward, style=Pack(width=36, margin=(0, 4, 0, 0)))
+        last_button = toga.Button(">|", on_press=self.go_to_last_frame, style=Pack(width=36))
         self.frame_count_label = toga.Label(
             "0 / 0",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=72),
+            style=Pack(width=80, text_align=LEFT, margin=(0, 0, 0, 10)),
         )
-        nav_box.add(first_button)
-        nav_box.add(prev_button)
-        nav_box.add(self.frame_input)
-        nav_box.add(go_button)
-        nav_box.add(self.frame_slider)
-        nav_box.add(next_button)
-        nav_box.add(last_button)
-        nav_box.add(self.frame_count_label)
+        tab_box.add(
+            self._form_row(
+                first_button,
+                prev_button,
+                self.frame_input,
+                self.frame_slider,
+                next_button,
+                last_button,
+                self.frame_count_label,
+            )
+        )
 
-        playback_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        loop_label = toga.Label(
-            "Loop:",
-            style=Pack(margin=(0, 0, 5, 4), text_align=LEFT, width=42),
-        )
-        self.loop_mode_selection = toga.Selection(
-            items=["Loop", "Once", "Rock"],
-            style=Pack(width=88, margin=(0, 6, 0, 0)),
-            on_change=self.set_loop_mode,
-        )
-        self.loop_mode_selection.value = self.loop_mode
-        zoom_label = toga.Label(
-            "zoom",
-            style=Pack(margin=(0, 0, 5, 12), text_align=LEFT, width=38),
-        )
-        self.zoom_playback_switch = toga.Switch("", on_change=self.toggle_auto_frame_zoom)
-        self.zoom_playback_switch.value = self.auto_frame_zoom
+        tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
+        tab_box.add(self._section_heading("Playback"))
+
         self.play_pause_button = toga.Button(
             "Play",
             on_press=self.toggle_play_pause,
-            style=Pack(margin=4, width=54),
+            style=Pack(width=80, margin=(0, 16, 0, 0)),
         )
-        step_label = toga.Label(
-            "step",
-            style=Pack(margin=(0, 0, 5, 10), text_align=LEFT, width=34),
+        self.loop_mode_selection = toga.Selection(
+            items=["Loop", "Once", "Rock"],
+            style=Pack(width=100),
+            on_change=self.set_loop_mode,
         )
-        step_back_button = toga.Button("<", on_press=self.decrease_frame_step, style=Pack(margin=3, width=28))
+        self.loop_mode_selection.value = self.loop_mode
+        tab_box.add(
+            self._form_row(
+                self.play_pause_button,
+                self._form_label("Loop mode:", width=90),
+                self.loop_mode_selection,
+            )
+        )
+
+        # A single home for the frame step: the field used to be added to
+        # two boxes, which silently reparented it and left the < / > buttons
+        # with nothing between them.
+        step_back_button = toga.Button(
+            "<", on_press=self.decrease_frame_step, style=Pack(width=30, margin=(0, 4, 0, 0))
+        )
         self.frame_skip_input = toga.TextInput(
             value=str(self.frame_skip),
-            placeholder="Step",
-            style=Pack(width=50, margin=(3, 5)),
+            placeholder="1",
+            style=Pack(width=60),
+            on_confirm=self.set_frame_skip,
         )
-        step_forward_button = toga.Button(">", on_press=self.increase_frame_step, style=Pack(margin=3, width=28))
-        playback_speed_label = toga.Label(
-            "Delay (s):",
-            style=Pack(margin=(0, 0, 5, 10), text_align=LEFT, width=62),
+        step_forward_button = toga.Button(
+            ">", on_press=self.increase_frame_step, style=Pack(width=30, margin=(0, 16, 0, 4))
         )
         self.playback_speed_input = toga.TextInput(
             value=f"{self.update_delay:.2f}",
-            placeholder="Seconds between frames",
-            style=Pack(width=70, margin=(5, 5)),
+            placeholder="seconds",
+            style=Pack(width=self.FIELD_WIDTH),
+            on_confirm=self.set_playback_delay,
         )
-        set_speed_button = toga.Button(
-            "Set Speed",
-            on_press=self.set_playback_delay,
-            style=Pack(margin=5, width=78),
+        tab_box.add(
+            self._form_row(
+                self._form_label("Frame step:"),
+                step_back_button,
+                self.frame_skip_input,
+                step_forward_button,
+                self._form_label("Delay (s):", width=80),
+                self.playback_speed_input,
+            )
         )
-        playback_box.add(loop_label)
-        playback_box.add(self.loop_mode_selection)
-        playback_box.add(zoom_label)
-        playback_box.add(self.zoom_playback_switch)
-        playback_box.add(step_label)
-        playback_box.add(step_back_button)
-        playback_box.add(self.frame_skip_input)
-        playback_box.add(step_forward_button)
-        playback_box.add(playback_speed_label)
-        playback_box.add(self.playback_speed_input)
-        playback_box.add(set_speed_button)
-        playback_box.add(self.play_pause_button)
 
-        skip_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        skip_label = toga.Label(
-            "Frame Step:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=72),
+        self.zoom_playback_switch = toga.Switch(
+            "Auto-zoom to fit each frame",
+            on_change=self.toggle_auto_frame_zoom,
         )
-        set_skip_button = toga.Button(
-            "Set Step",
-            on_press=self.set_frame_skip,
-            style=Pack(margin=5, width=74),
-        )
-        skip_box.add(skip_label)
-        skip_box.add(self.frame_skip_input)
-        skip_box.add(set_skip_button)
+        self.zoom_playback_switch.value = self.auto_frame_zoom
+        tab_box.add(self._form_row(self.zoom_playback_switch))
 
-        performance_box = toga.Box(
-            style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0))
+        return tab_box
+
+    def _build_measure_tab(self) -> toga.Box:
+        tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
+        tab_box.add(
+            self._hint(
+                "Atom indices are 1-based. In the 3D window, click an atom to toggle its index label."
+            )
         )
-        fast_playback_label = toga.Label(
-            "Fast Playback:",
-            style=Pack(margin=(0, 0, 5, 5), text_align=LEFT, width=110),
+
+        self.measure_indices_input = toga.TextInput(
+            placeholder="1,2 or 1,2,3 or 1,2,3,4",
+            style=Pack(flex=1, margin=(0, 8, 0, 0)),
         )
+        self.measure_type_selection = toga.Selection(
+            items=["Bond length", "Bond angle", "Dihedral angle", "Atom coordinates"],
+            style=Pack(width=160, margin=(0, 8, 0, 0)),
+            on_change=self.update_measurement_input_hint,
+        )
+        self.measure_type_selection.value = "Bond length"
+        measure_button = toga.Button(
+            "Measure",
+            on_press=self.run_measurement,
+            style=Pack(width=90),
+        )
+        tab_box.add(
+            self._form_row(
+                self._form_label("Measure:", width=70),
+                self.measure_type_selection,
+                self.measure_indices_input,
+                measure_button,
+            )
+        )
+
+        tab_box.add(self._section_heading("Result"))
+        self.measurement_label = toga.TextInput(
+            value="Measurement: ",
+            readonly=True,
+            style=Pack(flex=1, margin=(0, 0, 6, 0)),
+        )
+        tab_box.add(self.measurement_label)
+
+        return tab_box
+
+    def _build_box_performance_tab(self) -> toga.Box:
+        tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
+        tab_box.add(self._section_heading("Simulation box"))
+        tab_box.add(self._hint("Enter all three edge lengths in Å, then press Enter."))
+
+        self.box_a_input = toga.TextInput(
+            placeholder="a", style=Pack(width=self.FIELD_WIDTH), on_confirm=self.set_box_sizes
+        )
+        self.box_b_input = toga.TextInput(
+            placeholder="b", style=Pack(width=self.FIELD_WIDTH), on_confirm=self.set_box_sizes
+        )
+        self.box_c_input = toga.TextInput(
+            placeholder="c", style=Pack(width=self.FIELD_WIDTH), on_confirm=self.set_box_sizes
+        )
+        tab_box.add(
+            self._form_row(
+                self._form_label("Box a, b, c:"),
+                self.box_a_input,
+                self._form_label("", width=8),
+                self.box_b_input,
+                self._form_label("", width=8),
+                self.box_c_input,
+            )
+        )
+
+        self.box_centering_selection = toga.Selection(
+            items=["Geometric center", "Bottom at z=0"],
+            style=Pack(width=180),
+            on_change=self.set_box_centering_mode,
+        )
+        self.box_centering_selection.value = self.box_centering_mode
+        tab_box.add(self._form_row(self._form_label("Box center:"), self.box_centering_selection))
+
+        self.box_visibility_switch = toga.Switch(
+            "Show simulation box", on_change=self.set_box_visibility
+        )
+        self.box_visibility_switch.value = False
+        tab_box.add(self._form_row(self.box_visibility_switch))
+
+        tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
+        tab_box.add(self._section_heading("Playback performance"))
+
         self.fast_playback_switch = toga.Switch(
             "Reduce overlays during playback",
             on_change=self.toggle_fast_playback_mode,
         )
         self.fast_playback_switch.value = self.fast_playback_mode
-        bond_rendering_label = toga.Label(
-            "Bond mode:",
-            style=Pack(margin=(0, 0, 5, 12), text_align=LEFT, width=80),
-        )
+        tab_box.add(self._form_row(self.fast_playback_switch))
+
         self.bond_rendering_selection = toga.Selection(
             items=["Static first frame", "Dynamic cached", "Dynamic live"],
-            style=Pack(width=135, margin=(5, 5)),
+            style=Pack(width=180),
             on_change=self.set_bond_rendering_mode,
         )
         self.bond_rendering_selection.value = self.bond_rendering_mode
-        performance_box.add(fast_playback_label)
-        performance_box.add(self.fast_playback_switch)
-        performance_box.add(bond_rendering_label)
-        performance_box.add(self.bond_rendering_selection)
+        tab_box.add(self._form_row(self._form_label("Bond mode:"), self.bond_rendering_selection))
 
-        action_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 5, 0)))
-        self.display_button = toga.Button(
-            "Display Molecule/Trajectory",
-            on_press=self.open_opengl_window,
-            style=Pack(margin=8, align_items=CENTER),
-        )
-        save_frame_button = toga.Button(
-            "Save Current Frame XYZ",
-            on_press=self.save_current_frame_xyz,
-            style=Pack(margin=8, align_items=CENTER),
-        )
-        action_box.add(self.display_button)
-        action_box.add(save_frame_button)
-
-        self.loading_label = toga.Label(
-            " ",
-            style=Pack(margin=10, font_size=18, font_weight="bold", text_align=CENTER),
-        )
-
-        main_box.add(title_label)
-        main_box.add(file_box)
-        main_box.add(length_box)
-        main_box.add(style_box)
-        main_box.add(atom_style_box)
-        main_box.add(scale_box)
-        main_box.add(rotation_box)
-        main_box.add(labels_box)
-        main_box.add(measure_box)
-        main_box.add(self.measurement_label)
-        main_box.add(box_box)
-        main_box.add(box_centering_box)
-        main_box.add(box_visibility_box)
-        main_box.add(nav_box)
-        main_box.add(playback_box)
-        main_box.add(skip_box)
-        main_box.add(performance_box)
-        main_box.add(action_box)
-        main_box.add(self.loading_label)
-
-        self.main_window.content = main_box
-        self.main_window.show()
+        return tab_box
 
     async def _show_error(self, title: str, message: str):
         await self.main_window.dialog(toga.ErrorDialog(title, message))
