@@ -679,6 +679,116 @@ residence  time  and  coordination  number in  molecular  dynamics
 simulations.
 """
 
+    help_mrt_advanced = """
+MEAN RESIDENCE TIME (MRT)
+
+Measures how long an atom, or a group of atoms, stays inside a spherical
+shell of a chosen radius around a reference point, across the frames of an
+.xyz trajectory.
+
+WHAT TO ENTER
+
+Setup tab
+  Delta t between saved frames   The time between the frames actually
+                                 written to the file, not the MD time step.
+  Cutoff radius (A)              The shell radius. Take it from the first
+                                 minimum of the corresponding g(r), which the
+                                 Radial Distribution tool will give you.
+  Tolerance frames (t*)          Bridges short excursions: a particle that
+                                 leaves for no more than t* frames and comes
+                                 back is treated as never having left.
+  Cell lengths a b c (A)         Optional. Leave blank for no periodic
+                                 boundary. When given, distances use the
+                                 minimum-image convention and the cutoff must
+                                 not exceed half the shortest edge.
+  Scan t* values                 Optional list, e.g. 0 1 2 5 10. The summary
+                                 then shows one row per value.
+  Output folder                  Optional. Blank writes next to the .xyz file.
+
+Setup tab, Advanced
+  Integration rule               How R(t) becomes a time constant. Truncate at
+                                 first zero crossing is the default. Use the
+                                 exponential fit when R(t) has not decayed to
+                                 zero inside the lag range; the summary tells
+                                 you when that happened, by reporting that all
+                                 available lags were used.
+  Maximum lag (frames)           Blank uses a tenth of the trajectory. Raise it
+                                 if the correlation is still decaying at the
+                                 end of the range.
+  Censor boundary events         On by default. Turn it off only to reproduce a
+                                 number from an older version.
+
+Definitions tab
+  Reference mode / definition    What the shell is centred on: one atom, or
+                                 the geometric centre or centre of mass of a
+                                 group of atoms.
+  Observed mode / definition     What is being watched: one atom, every atom
+                                 in a list tracked separately, or groups
+                                 followed by their centre.
+  The inline hint under each box shows the exact syntax and an example for
+  the mode you have selected. All atom indices are 1-based.
+
+  Atom indices accept RANGES as well as single values. A range is written
+  low-high and is inclusive, so
+
+      3-7,10,15-17
+
+  means exactly the same as
+
+      3,4,5,6,7,10,15,16,17
+
+  Ranges and single indices can be mixed in any order, separated by commas
+  or spaces, and they work inside group definitions too (1-3; 4-6). The
+  order you type is preserved. Ranges must ascend and start at 1: entries
+  like 7-3, 0-5, 3- or 3-5-7 are rejected with an explanatory message.
+
+WHAT THE RESULTS MEAN
+
+  Mean residence time <T>
+      The average duration of one complete residence event, with a
+      block-averaged uncertainty. Events that were already running when the
+      trajectory started, or had not ended when it stopped, are excluded
+      (censored) and counted separately: including them at their truncated
+      length biases <T> downwards, and does so worst for the longest-lived
+      species. If the censored count is a large fraction of your events, the
+      trajectory is probably too short for the process you are measuring.
+
+  IMM survival integral
+      The integral of the survival function averaged over time origins, in
+      the sense of Impey, Madden and McDonald, J. Phys. Chem. 87 (1983) 5071.
+      Mathematically this is the mean residual time <T^2>/(2<T>). It equals
+      <T> only for exponential kinetics and is larger when the duration
+      distribution is broad, which is the usual case. The two numbers are
+      reported separately because they answer different questions; quoting
+      one as if it were the other is a common mistake.
+
+  Intermittent time from R(t)
+      From the rescaled correlation R(t) = (C(t) - <h>)/(1 - <h>), which
+      ignores whether the particle left and came back. It is integrated only
+      over a bounded lag range (a tenth of the trajectory by default,
+      truncated at the first zero crossing) because the longest lags average
+      over very few time origins and are noise. The summary states which rule
+      was used and how many lags it covered.
+
+A WARNING ABOUT t*
+
+The result depends strongly on the tolerance time. Laage and Hynes,
+J. Phys. Chem. B 112 (2008) 7697, showed that the conventional t* = 2 ps can
+seriously overestimate residence times for low-barrier exchange. Use the
+scan field and report the sensitivity rather than a single number.
+
+OUTPUT FILES
+
+  <name>_continuous_survival.dat        time, S(t)
+  <name>_intermittent_correlation.dat   time, C(t), R(t)
+  <name>_mrt_event_durations.dat        one row per residence event
+  <name>_mrt_summary.txt                the full summary shown on the
+                                        Results tab
+
+'Show plots' opens S(t), C(t)/R(t) and the event-duration distribution in the
+interactive viewer. No image files are left next to your data.
+"""
+
     help_vaf = f"""
 TUTORIAL
 
@@ -963,6 +1073,41 @@ By following this manual, you should be able to use the CPMD Energy File
 Plotting Application to visualize data from CPMD energy files and gain
 valuable insights into the energy dynamics of your molecular simulations.
 
+"""
+
+    Json_Plot_Options = """
+JSON PLOT FILE
+
+Re-opens figures that a gQTEA analysis tool has already produced, plotting
+them straight from the JSON file without recomputing anything.
+
+Every analysis tool that shows interactive figures writes this file next to
+your data. Pick one with Browse, check the figure list that appears here,
+then press Plot.
+
+Because the file already describes the figures completely, all the other
+options in this panel (the CPMD plot switches, the time step, the x-axis
+unit and the gqteaMD column selectors) are disabled while this plot type is
+selected.
+
+EXPECTED FORMAT
+
+A JSON array of figures. Each figure is either a single curve
+
+    {"x": [...], "y": [...], "xlabel": "...", "ylabel": "...",
+     "title": "...", "xlim": [lo, hi], "ylim": [lo, hi]}
+
+or several labelled curves drawn together
+
+    {"series": [{"x": [...], "y": [...], "label": "..."}, ...],
+     "xlabel": "...", "ylabel": "...", "title": "..."}
+
+xlabel, ylabel, title, xlim and ylim are optional. Inside one curve, 'x' and
+'y' must be lists of finite numbers of equal length.
+
+If the file cannot be used, the message names the figure at fault - for
+example "Figure 3: 'x' and 'y' must have the same length (5 vs 4)." - so you
+can find the problem without opening the file.
 """
 
     Plotting_Options = """

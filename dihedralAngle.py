@@ -453,12 +453,12 @@ class DihedralUI(DihedralAngleAnalyser):
         box_1.add(toga.Label("Dihedral Angle Analysis", style=heading_style))
 
         input_fields = [
-            ("Maximum angle for Distribution (deg):", "Enter e.g. 360", "textInput_max_angle"),
-            ("Simulation Time Step (a.u.):", "Enter time step", "textInput_time_step"),
-            ("Sampling Interval (frames):", "Enter sampling interval", "textInput_sampling_interval"),
-            ("Simulation Temperature (K):", "Enter temperature", "textInput_temperature"),
-            ("Atom Labels (i j k l):", "Enter four labels, e.g., 1 2 3 4", "textInput_atom_labels"),
-            ("Histogram Bin Width (deg):", "Enter e.g. 1.0", "textInput_bin_width"),
+            ("Maximum angle for Distribution Function (°):", "Enter the maximum angle in (°) (suggestion: 360).", "textInput_max_angle"),
+            ("Simulation Time Step (a.u.):", "Enter the time step used in the simulation in a.u. (e.g., 5).", "textInput_time_step"),
+            ("Sampling Interval (frames):", "Enter sampling interval in a.u. (e.g., 5)", "textInput_sampling_interval"),
+            ("Simulation Temperature (K):", "Enter the temperature used in the simulation in K (e.g., 300)", "textInput_temperature"),
+            ("Atom Labels (i j k l):", "Enter 4 atom labels, separated by a space (e.g., 1 2 3 4)", "textInput_atom_labels"),
+            ("Histogram Bin Width (deg):", "Enter the bin width for the histogram (suggestion 1)", "textInput_bin_width"),
             ("Cell Lengths a b c (Å, optional):",
              "Leave blank for no periodic boundaries (e.g., 12.4 12.4 12.4)",
              "textInput_cell_lengths"),

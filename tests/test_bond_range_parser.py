@@ -45,3 +45,35 @@ def test_empty_string_returns_empty_list():
 def test_invalid_input_raises(text):
     with pytest.raises(ValueError):
         parse_solute_index_ranges(text)
+
+
+# --------------------------------------------------------------------------- #
+# sort_unique=False: order-preserving mode used by meanResidenceTime.py         #
+# --------------------------------------------------------------------------- #
+def test_default_still_sorts_and_deduplicates():
+    """The three all-* tools rely on this; the default must not change."""
+    assert parse_solute_index_ranges("5 1-3 2") == [1, 2, 3, 5]
+
+
+def test_order_preserving_mode_keeps_input_order():
+    assert parse_solute_index_ranges("9,1,5", sort_unique=False) == [9, 1, 5]
+
+
+def test_order_preserving_mode_keeps_duplicates():
+    assert parse_solute_index_ranges("3,3,1", sort_unique=False) == [3, 3, 1]
+
+
+def test_order_preserving_mode_expands_ranges_in_place():
+    assert parse_solute_index_ranges("10,3-5,1", sort_unique=False) == [10, 3, 4, 5, 1]
+
+
+def test_both_modes_agree_on_an_already_sorted_unique_input():
+    text = "3-7,10,15-17"
+    assert (parse_solute_index_ranges(text)
+            == parse_solute_index_ranges(text, sort_unique=False))
+
+
+@pytest.mark.parametrize("text", ["7-3", "0-5", "3-", "-5", "3-5-7", "a-b"])
+def test_validation_is_identical_in_both_modes(text):
+    with pytest.raises(ValueError):
+        parse_solute_index_ranges(text, sort_unique=False)

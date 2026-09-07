@@ -128,7 +128,7 @@ class gqteaWin(toga.App):
 
         general_tools = [
             ("3D Molecular Viewer", MolecularViewerUI),
-            ("Energy plots", PlotterUI),
+            ("Plots", PlotterUI),
             ("Molecular Axis Alignment", MolecularAxisAlignmentUI),
             ("Select Frames", SelectFramesUI),
             ("Frame selection by interatomic distance range", RangeFramesSelectionUI),

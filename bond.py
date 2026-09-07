@@ -391,13 +391,13 @@ class BondUI(BondAnalyser):
         box_1.add(toga.Label("Bond Length Analysis", style=heading_style))
 
         input_fields = [
-            ("Maximum r for Distribution Function:", "Enter maximum r value", "textInput_max_r"),
-            ("Simulation Time Step (a.u.):", "Enter time step", "textInput_time_step"),
-            ("Sampling Interval (frames):", "Enter sampling interval", "textInput_sampling_interval"),
-            ("Simulation Temperature (K):", "Enter temperature", "textInput_temperature"),
+            ("Maximum r for Distribution Function:", "Enter the maximum distance between 2 atoms in Å (e.g., 4).", "textInput_max_r"),
+            ("Simulation Time Step (a.u.):", "Enter the time step used in the simulation in a.u. (e.g., 5).", "textInput_time_step"),
+            ("Sampling Interval (frames):", "Enter sampling interval in a.u. (e.g., 5)", "textInput_sampling_interval"),
+            ("Simulation Temperature (K):", "Enter the temperature used in the simulation in K (e.g., 300)", "textInput_temperature"),
             ("Atom Labels (e.g., 2 3):",
              "Enter two atom labels, separated by a space (e.g., 1 2)", "textInput_atom_labels"),
-            ("Histogram Bin Width (Å):", "Enter bin width", "textInput_bin_width"),
+            ("Histogram Bin Width (Å):", "Enter the bin width for the histogram (suggestion 0.01)", "textInput_bin_width"),
             ("Cell Lengths a b c (Å, optional):",
              "Leave blank for no periodic boundaries (e.g., 12.4 12.4 12.4)",
              "textInput_cell_lengths"),

@@ -5,6 +5,33 @@ matplotlib.use('Agg') # non-interactive backend in the main (Toga) process
 import matplotlib.pyplot as plt
 
 
+def launch_plot_viewer(manifest_path):
+    """Spawn plotViewer.py on an existing manifest file. True if it started.
+
+    From source, sys.executable is a Python interpreter and we hand it
+    plotViewer.py. In a frozen/packaged build there is no separate interpreter:
+    sys.executable is the app's own .exe, so we re-launch it with the
+    --plot-viewer flag, which the entry point (gqteaWinToga.py) dispatches to
+    plotViewer before loading the GUI. Either way the figures are fully
+    interactive.
+
+    This is the single implementation of that dispatch; callers that already
+    hold a manifest on disk (e.g. plotter.py's JSON plot type) use it directly.
+    """
+    try:
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--plot-viewer", manifest_path]
+        else:
+            viewer = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "plotViewer.py"
+            )
+            cmd = [sys.executable, viewer, manifest_path]
+        subprocess.Popen(cmd)
+        return True
+    except Exception:
+        return False
+
+
 class DisplayPlots():
 
     font_style = {'color':  'darkred','weight': 'normal','size': 14}
@@ -97,14 +124,8 @@ class DisplayPlots():
                 )
                 json.dump(self.saved_plot_data, manifest)
                 manifest.close()
-                if getattr(sys, "frozen", False):
-                    cmd = [sys.executable, "--plot-viewer", manifest.name]
-                else:
-                    viewer = os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)), "plotViewer.py"
-                    )
-                    cmd = [sys.executable, viewer, manifest.name]
-                subprocess.Popen(cmd)
+                if not launch_plot_viewer(manifest.name):
+                    raise RuntimeError("viewer process could not be started")
                 self.saved_plot_data = []
                 self.saved_plot_files = []
                 return

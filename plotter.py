@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import tempfile
 from typing import List
@@ -7,11 +8,13 @@ import matplotlib.pyplot as plt
 import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW, LEFT, CENTER
+from displayPlots import launch_plot_viewer
 from help import HelpGqteaWin
 
 class PlotterBase:
     CPMD_PLOT_TYPE = "CPMD energy file"
     GQTEAMD_PLOT_TYPE = "gqteaMD energy file"
+    JSON_PLOT_TYPE = "JSON plot file"
 
     def __init__(self):
         # Initialize x_axis to avoid attribute error
@@ -20,11 +23,154 @@ class PlotterBase:
         self.gqtea_headers = []
         self.gqtea_rows = []
         self.gqtea_y_switches = []
-        
+        self.json_figures = []
+        self.json_file = ""
+
+    # ------------------------------------------------------------------ #
+    # JSON plot manifests                                                  #
+    #                                                                      #
+    # The accepted format is the plot manifest every gQTEA analysis tool    #
+    # already writes for the interactive viewer (displayPlots.save_plots),  #
+    # so any figure produced elsewhere in the suite can be reopened here:   #
+    #                                                                      #
+    #   [{"x": [...], "y": [...], "xlabel": "...", "ylabel": "...",         #
+    #     "title": "...", "xlim": [lo, hi], "ylim": [lo, hi]},              #
+    #    {"series": [{"x": [...], "y": [...], "label": "..."}, ...], ...}]  #
+    #                                                                      #
+    # xlabel/ylabel/title/xlim/ylim are optional.                           #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _check_numeric_sequence(values, where: str) -> int:
+        """Validate one x or y array and return its length."""
+        if not isinstance(values, list):
+            raise ValueError(f"{where} must be a list of numbers.")
+        if not values:
+            raise ValueError(f"{where} contains no data points.")
+        for value in values:
+            # bool is an int subclass, and NaN/inf cannot be plotted meaningfully
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{where} must contain only numbers.")
+            if value != value or value in (float("inf"), float("-inf")):
+                raise ValueError(f"{where} must contain only finite numbers.")
+        return len(values)
+
+    @classmethod
+    def _check_limits(cls, figure: dict, key: str, where: str) -> None:
+        if key not in figure:
+            return
+        limits = figure[key]
+        if (not isinstance(limits, list) or len(limits) != 2
+                or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                       for v in limits)):
+            raise ValueError(f"{where}: '{key}' must be two numbers [low, high].")
+
+    @classmethod
+    def validate_plot_manifest(cls, payload) -> List[dict]:
+        """Check a decoded JSON plot manifest and return its figures.
+
+        Raises ValueError with a message naming the offending figure, so the
+        user is told *which* entry is wrong rather than just that the file is
+        bad.
+        """
+        if not isinstance(payload, list):
+            raise ValueError(
+                "The JSON file must contain a list of figures (a JSON array), "
+                "for example: [{\"x\": [...], \"y\": [...]}]."
+            )
+        if not payload:
+            raise ValueError("The JSON file contains no figures to plot.")
+
+        for index, figure in enumerate(payload, start=1):
+            where = f"Figure {index}"
+            if not isinstance(figure, dict):
+                raise ValueError(f"{where} is not a JSON object.")
+
+            if "series" in figure:
+                series = figure["series"]
+                if not isinstance(series, list) or not series:
+                    raise ValueError(
+                        f"{where}: 'series' must be a non-empty list of curves."
+                    )
+                for s_index, curve in enumerate(series, start=1):
+                    tag = f"{where}, series {s_index}"
+                    if not isinstance(curve, dict):
+                        raise ValueError(f"{tag} is not a JSON object.")
+                    if "x" not in curve or "y" not in curve:
+                        raise ValueError(f"{tag} needs both 'x' and 'y'.")
+                    n_x = cls._check_numeric_sequence(curve["x"], f"{tag}: 'x'")
+                    n_y = cls._check_numeric_sequence(curve["y"], f"{tag}: 'y'")
+                    if n_x != n_y:
+                        raise ValueError(
+                            f"{tag}: 'x' and 'y' must have the same length "
+                            f"({n_x} vs {n_y})."
+                        )
+            elif "x" in figure and "y" in figure:
+                n_x = cls._check_numeric_sequence(figure["x"], f"{where}: 'x'")
+                n_y = cls._check_numeric_sequence(figure["y"], f"{where}: 'y'")
+                if n_x != n_y:
+                    raise ValueError(
+                        f"{where}: 'x' and 'y' must have the same length "
+                        f"({n_x} vs {n_y})."
+                    )
+            else:
+                raise ValueError(
+                    f"{where} must provide either 'x' and 'y', or 'series'."
+                )
+
+            cls._check_limits(figure, "xlim", where)
+            cls._check_limits(figure, "ylim", where)
+
+        return payload
+
+    @classmethod
+    def load_json_plot_file(cls, filepath: str) -> List[dict]:
+        """Read and validate a JSON plot manifest from disk."""
+        if not filepath or not os.path.isfile(filepath):
+            raise ValueError(f"JSON file not found: {filepath}")
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"The file is not valid JSON (line {exc.lineno}, "
+                f"column {exc.colno}): {exc.msg}."
+            ) from exc
+        except OSError as exc:
+            raise ValueError(f"Could not read the JSON file: {exc}") from exc
+
+        return cls.validate_plot_manifest(payload)
+
+    @staticmethod
+    def describe_json_figures(figures: List[dict]) -> str:
+        """One readable line per figure, for the message panel."""
+        lines = [f"Loaded {len(figures)} figure(s) from the JSON file:", ""]
+        for index, figure in enumerate(figures, start=1):
+            title = figure.get("title") or "(untitled)"
+            if "series" in figure:
+                n_points = len(figure["series"][0].get("x", []))
+                detail = f"{len(figure['series'])} curves, {n_points} points each"
+            else:
+                detail = f"{len(figure.get('x', []))} points"
+            xlabel = figure.get("xlabel", "")
+            ylabel = figure.get("ylabel", "")
+            axes = f"  [{xlabel} vs {ylabel}]" if (xlabel or ylabel) else ""
+            lines.append(f"  {index}. {title} - {detail}{axes}")
+        lines.append("")
+        lines.append("Press Plot to open them in the interactive viewer.")
+        return "\n".join(lines)
+
+    def is_json_plot_type(self):
+        return self.plot_type_selection.value == self.JSON_PLOT_TYPE
+
     async def open_file_dialog(self, widget):
         try:
             is_gqtea = self.is_gqtea_plot_type()
-            if is_gqtea:
+            is_json = self.is_json_plot_type()
+            if is_json:
+                dialog_title = "Open JSON plot file"
+                file_types = ["json"]
+            elif is_gqtea:
                 dialog_title = "Open gqteaMD energy file"
                 file_types = ["*.csv", "*.dat", "*.log", "*.txt", "*.*"]
             else:
@@ -47,7 +193,9 @@ class PlotterBase:
             self.text_input_file.value = self.energy_file
             self.output_dir = os.path.dirname(self.energy_file)
             self.data = []
-            if is_gqtea:
+            if is_json:
+                await self.parse_json_plot_file()
+            elif is_gqtea:
                 await self.parse_gqtea_energy_file()
             else:
                 await self.parse_energy_file()
@@ -237,6 +385,77 @@ class PlotterBase:
 
     def is_gqtea_plot_type(self):
         return self.plot_type_selection.value == self.GQTEAMD_PLOT_TYPE
+
+    async def parse_json_plot_file(self):
+        """Load the selected JSON manifest, or report exactly what is wrong."""
+        self.json_figures = []
+        self.json_file = ""
+        try:
+            figures = self.load_json_plot_file(self.energy_file)
+        except ValueError as exc:
+            self.multi_line_text.value = (
+                f"Could not load the JSON plot file.\n\n{exc}"
+            )
+            await self.main_window.dialog(
+                toga.ErrorDialog("Invalid JSON plot file", str(exc))
+            )
+            return
+
+        self.json_figures = figures
+        self.json_file = self.energy_file
+        self.multi_line_text.value = self.describe_json_figures(figures)
+
+    async def json_plot(self):
+        """Show the loaded manifest, preferring the interactive viewer."""
+        if not self.json_figures:
+            await self.main_window.dialog(
+                toga.InfoDialog(
+                    "No data",
+                    "Load a JSON plot file first, using the Browse button.",
+                )
+            )
+            return
+
+        # The manifest on disk is already exactly what plotViewer consumes, so
+        # it can be handed over untouched (zoom/pan/save toolbar, and it works
+        # in frozen builds too).
+        if launch_plot_viewer(self.json_file):
+            return
+
+        # Fallback: render each figure to a PNG and show it in a Toga window,
+        # matching how the other plot types in this module display figures.
+        await self.json_plot_static()
+
+    async def json_plot_static(self):
+        try:
+            for figure in self.json_figures:
+                temp_filename = tempfile.NamedTemporaryFile(
+                    delete=False, suffix=".png", dir=self.output_dir
+                ).name
+                plt.figure(figsize=(8, 6))
+                if "series" in figure:
+                    for curve in figure["series"]:
+                        plt.plot(curve.get("x", []), curve.get("y", []),
+                                 label=curve.get("label", ""), antialiased=True)
+                    plt.legend()
+                else:
+                    plt.plot(figure.get("x", []), figure.get("y", []),
+                             antialiased=True)
+                plt.xlabel(figure.get("xlabel", ""))
+                plt.ylabel(figure.get("ylabel", ""))
+                plt.title(figure.get("title", ""))
+                if "xlim" in figure:
+                    plt.xlim(*figure["xlim"])
+                if "ylim" in figure:
+                    plt.ylim(*figure["ylim"])
+                plt.tight_layout()
+                plt.savefig(temp_filename)
+                plt.close()
+                self.show_plot(temp_filename)
+        except Exception as exc:
+            await self.main_window.dialog(
+                toga.ErrorDialog("Plot Error", f"Could not draw the figures: {exc}")
+            )
 
     def compute_x_axis(self, time_step: float):
         x_values = [float(row[0]) for row in self.data]
@@ -461,7 +680,7 @@ class PlotterUI(PlotterBase):
         main_box = toga.Box(style=Pack(direction=COLUMN, margin=20))
 
         # Title
-        title_label = toga.Label("Plot Energy File", style=heading_style)
+        title_label = toga.Label("Plot", style=heading_style)
         main_box.add(title_label)
 
         # Plot type selection
@@ -474,6 +693,7 @@ class PlotterUI(PlotterBase):
             items=[
                 self.CPMD_PLOT_TYPE,
                 self.GQTEAMD_PLOT_TYPE,
+                self.JSON_PLOT_TYPE,
             ],
             on_change=self.on_plot_type_change,
             style=Pack(flex=1, margin=(0,5,0,5)),
@@ -656,6 +876,11 @@ class PlotterUI(PlotterBase):
         self.main_window.show()
 
     async def workflow(self, widget):
+        # JSON mode carries its own data and none of the switches below apply.
+        if self.is_json_plot_type():
+            await self.json_plot()
+            return
+
         if not self.data:
             await self.main_window.info_dialog("Error", "No data available. Please load a valid ENERGY file.")
             return
@@ -695,22 +920,31 @@ class PlotterUI(PlotterBase):
 
     def on_plot_type_change(self, widget):
         is_gqtea = self.is_gqtea_plot_type()
+        is_json = self.is_json_plot_type()
 
-        self.file_label.text = "Select gqteaMD data file:" if is_gqtea else "Select cpmd ENERGY file:"
-        self.text_input_file.placeholder = (
-            "Click Browse to select gqteaMD energy file"
-            if is_gqtea
-            else "Click Browse to select CPMD ENERGY file"
-        )
+        # In JSON mode the figures are fully described by the file, so every
+        # other plot-specific control is switched off.
+        is_cpmd = not is_gqtea and not is_json
+
+        if is_json:
+            self.file_label.text = "Select JSON plot file:"
+            self.text_input_file.placeholder = "Click Browse to select a JSON plot file"
+        elif is_gqtea:
+            self.file_label.text = "Select gqteaMD data file:"
+            self.text_input_file.placeholder = "Click Browse to select gqteaMD energy file"
+        else:
+            self.file_label.text = "Select cpmd ENERGY file:"
+            self.text_input_file.placeholder = "Click Browse to select CPMD ENERGY file"
 
         for switch in self.get_cpmd_switches():
-            switch.value = False if is_gqtea else switch.value
-            switch.enabled = not is_gqtea
+            if not is_cpmd:
+                switch.value = False
+            switch.enabled = is_cpmd
 
-        self.text_input_time_step.enabled = not is_gqtea
-        self.unit_selection.enabled = not is_gqtea
-        self.time_step_label.enabled = not is_gqtea
-        self.units_label.enabled = not is_gqtea
+        self.text_input_time_step.enabled = is_cpmd
+        self.unit_selection.enabled = is_cpmd
+        self.time_step_label.enabled = is_cpmd
+        self.units_label.enabled = is_cpmd
 
         self.gqtea_x_axis_label.enabled = is_gqtea
         self.gqtea_x_axis_selection.enabled = is_gqtea and bool(self.gqtea_headers)
@@ -720,8 +954,12 @@ class PlotterUI(PlotterBase):
 
         self.data = []
         self.x_axis = []
+        self.json_figures = []
+        self.json_file = ""
         self.text_input_file.value = ""
-        self.multi_line_text.value = HelpGqteaWin.Plotting_Options
+        self.multi_line_text.value = (
+            HelpGqteaWin.Json_Plot_Options if is_json else HelpGqteaWin.Plotting_Options
+        )
 
     def get_cpmd_switches(self):
         return [

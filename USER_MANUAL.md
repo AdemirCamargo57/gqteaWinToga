@@ -68,6 +68,7 @@
   - [Example 7: Analyze All Solute Dihedral Angles](#example-7-analyze-all-solute-dihedral-angles)
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
+- [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
   - ["Please input a valid value for ..."](#please-input-a-valid-value-for-)
@@ -703,17 +704,148 @@ Typical outputs (written next to the trajectory):
 
 Use **Structural > Mean Residence Time** for MRT analysis of an XYZ trajectory.
 
-The newer MRT tool supports:
+The trajectory field, the **Run MRT** / **Export Results** / **Clear Output** buttons, and the status line are always visible. The rest of the controls are grouped into four tabs.
 
-- XYZ trajectory selection.
-- Time step and time-step unit.
-- Cutoff radius.
-- Tolerance frames.
-- Reference definition.
-- Observed atom definition.
-- Run, export, and clear actions.
+##### Setup tab
 
-Outputs commonly include survival/correlation data, event durations, and text summaries.
+- Time step (Δt between saved frames) and its unit.
+- Cutoff radius. Take it from the first minimum of the corresponding g(r) — the [Radial Distribution](#radial-distribution-function) tool will give you that.
+- Tolerance frames (`t*`) — bridges short excursions: a particle that leaves for no more than `t*` frames and returns is treated as never having left.
+- **Cell lengths a b c** — optional orthorhombic periodic box. Leave blank for no periodic boundary; when given, distances use the minimum-image convention and the cutoff must not exceed half the shortest edge.
+- **Scan t\* values** — optional list such as `0 1 2 5 10`. The summary then includes one row per value so you can see how sensitive the result is before quoting a number.
+- **Output folder** — optional; blank writes next to the trajectory.
+
+Under **Advanced** on the same tab:
+
+- **Integration rule** — how `R(t)` is turned into a time constant. *Truncate at first zero crossing* (default) integrates up to the point where the curve first goes negative; *Fit a single exponential* fits `ln R = a − t/τ` and reports τ, which is what you want when `R(t)` has not decayed to zero inside the lag range; *Integrate the whole lag range* uses everything.
+- **Maximum lag (frames)** — blank uses a tenth of the trajectory. Raise it if the correlation is still decaying at the end of the plotted range.
+- **Censor events clipped by the start/end of the run** — on by default. Turn it off only to reproduce a number from an older version; leaving it off biases the mean residence time downwards.
+
+The summary always states which rule was applied and how many lags it covered, so a run is reproducible from its own output. If it reports that all available lags were used, the curve never crossed zero and you should either raise the maximum lag or switch to the exponential fit.
+
+##### Definitions tab
+
+- **Reference mode** — what the shell is centred on: a single atom, or the geometric centre or centre of mass of a group.
+- **Observed mode** — what is watched: a single atom, every atom in a list tracked separately, or groups followed by their centre.
+
+Each definition box carries an inline hint showing the exact syntax and a worked example for the mode currently selected, because the syntax changes with the mode (`295` for one atom, `3-7,10,15-17` for a list, `1-3; 4-6` for groups). All atom indices are 1-based.
+
+**Ranges.** Atom indices accept inclusive ranges as well as single values, so
+
+```text
+3-7,10,15-17
+```
+
+means exactly the same as
+
+```text
+3,4,5,6,7,10,15,16,17
+```
+
+Ranges and single indices can be mixed in any order, separated by commas or spaces, and they work inside group definitions too (`1-3; 4-6`). The order you type is preserved — useful because the tool labels observed objects in input order. This is the same syntax the [All Bond Distance Analysis](#all-bond-distance-analysis) tool uses for its solute selection — one shared, tested parser.
+
+Ranges must ascend and start at 1. Malformed input is rejected with a message naming the offending token:
+
+| Input | Result |
+| --- | --- |
+| `7-3` | `Range bounds must be ascending: '7-3'.` |
+| `0-5` | `Atom indices must be positive integers starting at 1.` |
+| `3-` | `Invalid index range: '3-'.` |
+| `-5` | `Invalid index range: '-5'.` |
+| `3-5-7` | `Invalid index range: '3-5-7'.` |
+| `a-b` | `Invalid index range: 'a-b'.` |
+
+A bad token rejects the whole entry rather than being silently skipped, so `1,2,7-3,9` is refused outright.
+
+##### Results tab
+
+The full summary appears here after a run — parameters, results, the `t*` scan table if you requested one, and notes on the definitions. **Show plots** opens three figures in the interactive viewer: the survival function `S(t)`, the intermittent `C(t)` and `R(t)` overlaid, and the event-duration distribution. No image files are left next to your data.
+
+##### Help tab
+
+The full reference for the tool, including what each reported quantity means.
+
+##### Output files
+
+`<name>_continuous_survival.dat`, `<name>_intermittent_correlation.dat`, `<name>_mrt_event_durations.dat`, and `<name>_mrt_summary.txt`.
+
+##### The two continuous time constants
+
+The summary reports two different quantities, and they are not interchangeable:
+
+- **Mean residence time `<T>`** — the average duration of a complete residence event, with a block-averaged uncertainty. Events that were already in progress when the trajectory started, or had not ended when it stopped, are *censored* (excluded) and counted separately, because including them at their truncated length biases `<T>` downwards, worst for the longest-lived species.
+- **IMM survival integral** — the integral of the survival function averaged over time origins, in the sense of Impey, Madden and McDonald (*J. Phys. Chem.* **87** (1983) 5071). Mathematically this is the mean *residual* time; it equals `<T>` only for exponential kinetics and is larger for broad duration distributions.
+
+The intermittent time constant from `R(t)` is integrated only over a bounded lag range (a tenth of the trajectory by default, truncated at the first zero crossing), because the longest lags average over very few time origins and are noise. The summary states which rule was applied and how many lags were used.
+
+The tolerance time `t*` has a strong effect on the result (Laage and Hynes, *J. Phys. Chem. B* **112** (2008) 7697), which is why the scan field exists — a residence time quoted from a single `t*` should be treated with caution.
+
+##### Equations
+
+Every equation the tool evaluates — with what it represents, where it is used, and its reference — is documented in [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool).
+
+##### A worked example
+
+This example measures how long a water hydrogen stays hydrogen-bonded to a particular solute oxygen, in a periodic box of water.
+
+**The system.** A `TRAJEC.xyz` from CPMD with 430 atoms per frame and 15121 frames: a C₁₄ solute in water, so the composition is C 14, H 280, O 136. The acceptor of interest is atom 295, an oxygen. The simulation cell is 15 × 15 × 22 Å.
+
+**Choosing the cutoff.** Run **Structural > Radial Distribution Function** first, with atom 295 as the shell centre and `H` as the target. Its first peak is the hydrogen bond; the first minimum after that peak is where the first shell ends. For this system:
+
+```text
+first O295-H peak : r = 1.905 A
+first minimum     : r = 2.405 A   <- use this as the cutoff
+```
+
+**What to enter.**
+
+| Tab | Field | Value | Why |
+| --- | --- | --- | --- |
+| header | XYZ trajectory file | `C:\...\TRAJEC.xyz` | |
+| Setup | Δt between saved frames | `1.0` | set your real value; `1.0` reports times in frames |
+| Setup | unit | `fs` | |
+| Setup | Cutoff radius (Å) | `2.405` | the first g(r) minimum above |
+| Setup | Tolerance frames | `0` | start unbridged, then scan |
+| Setup | Cell lengths a b c (Å) | `15 15 22` | enables minimum image |
+| Setup | Scan t* values | `0 2 5 10 20` | reveals the `t*` sensitivity |
+| Setup | Output folder | *(blank)* | writes next to the trajectory |
+| Definitions | Reference mode | Single atom | the shell is centred on one acceptor |
+| Definitions | Reference definition | `295` | 1-based index |
+| Definitions | Observed mode | Each atom in a list, tracked separately | pool statistics over all candidate donors |
+| Definitions | Observed definition | `15,16,17,...,294` | every H in the box |
+
+Then press **Run MRT**, and read the summary on the **Results** tab.
+
+**Reading the result.** For this system the tool reports:
+
+```text
+Average occupancy <h>: 0.00734480
+Complete residence events: 272
+Censored events (clipped by the start or end of the run): 4
+
+Mean residence time <T>: 95.62500000 frames  +/- 64.68269375
+IMM survival integral:   658.81120365 frames
+Intermittent time from R(t): 1187.16839960 frames
+  (integration rule: zero_crossing, 1512 of 1512 lags used)
+
+TOLERANCE (t*) SENSITIVITY
+------------------------------------------------------------------------
+ t* (frames)   events              <T>     IMM integral
+           0      272      95.62500000     658.81120365
+           2      265      87.46415094     696.09164845
+           5      255      91.04705882     696.88557485
+          10      237      98.56962025     727.93365504
+          20      188     116.59574468     724.58083047
+```
+
+Four things to take from it:
+
+- $\langle h\rangle \times 280 \approx 2.06$, so O295 accepts about two hydrogen bonds on average — a sensible number for a carbonyl or ether oxygen, and a good sanity check that the cutoff and the reference atom are right.
+- $\langle T\rangle = 95.6$ frames with an uncertainty of $\pm 64.7$. The uncertainty is 68 % of the value, so this is an order-of-magnitude statement, not a precise one.
+- The `t*` scan moves $\langle T\rangle$ from 95.6 to 116.6 frames. Quote the scan, not a single number.
+- **`1512 of 1512 lags used` is a warning.** By §9 that means $R(t)$ never crossed zero, so 1187 frames is a lower bound that grows if you raise the lag ceiling — not a converged time constant. For this trajectory the intermittent value should not be quoted at all; $\langle T\rangle$ and $\tau_{\text{IMM}}$ are the defensible numbers.
+
+**A common mistake.** If the reference atom is a water oxygen, its own two covalently bonded hydrogens sit at about 0.96 Å and are permanently inside a 2.4 Å shell. They will dominate the statistics and produce enormous residence times. Either choose a reference that has no bonded hydrogens (as atom 295 here does not), or exclude the bonded hydrogens from the observed list.
 
 #### Legacy Mean Residence Time
 
@@ -1069,6 +1201,52 @@ X-axis units:
 - Picoseconds.
 
 For gqteaMD energy files, select the appropriate file type and x-axis option in the tool.
+
+##### JSON plot file
+
+The **Plot type** dropdown offers a third option, **JSON plot file**, which redraws figures a gQTEA analysis tool has already produced — straight from the file, without recomputing anything.
+
+Every analysis tool that shows interactive figures writes such a file next to your data. Select **JSON plot file**, press **Browse**, pick the file, and the message panel lists what it contains:
+
+```text
+Loaded 3 figure(s) from the JSON file:
+
+  1. Continuous survival S(t), origin-averaged - 1512 points  [time (fs) vs S(t)]
+  2. Intermittent correlation C(t) and rescaled R(t) - 2 curves, 1512 points each  [time (fs) vs correlation]
+  3. Residence event duration distribution - 44 points  [event duration (fs) vs count]
+```
+
+Press **Plot** to open them in the interactive viewer (zoom, pan, save).
+
+Because the file describes the figures completely, **all the other plot options are disabled** while this type is selected — the six CPMD plot switches, the simulation time step, the x-axis unit, and the gqteaMD column selectors. Switching back to either energy-file type restores them.
+
+**Expected format.** A JSON array of figures, where each figure is either a single curve
+
+```text
+{"x": [...], "y": [...], "xlabel": "...", "ylabel": "...",
+ "title": "...", "xlim": [lo, hi], "ylim": [lo, hi]}
+```
+
+or several labelled curves drawn together
+
+```text
+{"series": [{"x": [...], "y": [...], "label": "..."}, ...],
+ "xlabel": "...", "ylabel": "...", "title": "..."}
+```
+
+`xlabel`, `ylabel`, `title`, `xlim` and `ylim` are optional. Within one curve, `x` and `y` must be lists of finite numbers of equal length.
+
+**Error handling.** A file that cannot be used is reported with a message identifying the figure at fault, so you can fix it without reading the JSON by hand:
+
+| Problem | Message |
+| --- | --- |
+| File does not exist | `JSON file not found: <path>` |
+| Not JSON, or empty | `The file is not valid JSON (line 1, column 1): Expecting value.` |
+| Top level is an object | `The JSON file must contain a list of figures (a JSON array)...` |
+| Empty array | `The JSON file contains no figures to plot.` |
+| `x` and `y` differ in length | `Figure 1: 'x' and 'y' must have the same length (3 vs 2).` |
+| Neither `x`/`y` nor `series` | `Figure 1 must provide either 'x' and 'y', or 'series'.` |
+| A value is not a number | `Figure 1: 'y' must contain only numbers.` |
 
 #### Molecular Axis Alignment
 
@@ -1948,6 +2126,307 @@ $$
   is shown in the output box and written to `summary_*.txt`. When the Jacobian is
   active the label reads `Lowest PMF` instead of `Lowest free energy`.
 - **References:** as for equations 7–9.
+
+## Formulas and Methods (Mean Residence Time tool)
+
+This section documents every equation implemented in
+[meanResidenceTime.py](meanResidenceTime.py), in the order the tool evaluates
+them. The logic lives in `MeanResidenceTimeCalculator`; the class is pure
+NumPy and is exercised headlessly by
+[tests/test_meanResidenceTime.py](tests/test_meanResidenceTime.py), whose
+expected values are the analytic results quoted below.
+
+> **Note on the two continuous time constants.** Equations 5 and 6 define two
+> *different* quantities — the mean residence time $\langle T\rangle$ and the
+> mean residual time $\tau_\text{IMM}$. They coincide only for exponential
+> kinetics. Reporting one as though it were the other is the most common error
+> in this analysis, so the tool prints both, separately labelled.
+
+**Symbols used throughout.**
+
+| Symbol | Meaning |
+| --- | --- |
+| $N$ | number of frames in the trajectory |
+| $M$ | number of observed objects (atoms or groups) |
+| $\Delta t$ | time between saved frames |
+| $r_\text{cut}$ | cutoff radius defining the shell |
+| $\mathbf{L}=(a,b,c)$ | orthorhombic cell edges (optional) |
+| $\mathbf{R}(t)$ | position of the reference point in frame $t$ |
+| $\mathbf{x}_i(t)$ | position of observed object $i$ in frame $t$ |
+| $h_i(t)$ | shell indicator (equation 3) |
+| $t^{*}$ | tolerance time, in frames |
+| $n_j$ | length, in frames, of residence event $j$ |
+
+### 1. Reference and observed positions
+
+$$
+\mathbf{X}_\text{geom}(t) = \frac{1}{n}\sum_{k=1}^{n}\mathbf{r}_k(t),
+\qquad
+\mathbf{X}_\text{com}(t) =
+  \frac{\sum_{k=1}^{n} m_k\,\mathbf{r}_k(t)}{\sum_{k=1}^{n} m_k}
+$$
+
+- **Represents:** the collapse of a group of $n$ atoms to a single tracked point
+  per frame — either the unweighted centroid or the mass-weighted centre of mass.
+  For the `single_atom` and `atom_list_individual` modes the atom's own
+  coordinates are used directly and neither formula is evaluated.
+- **Where/how used:** `_geometric_center_series` and `_center_of_mass_series`,
+  both vectorized over all frames at once (measured 73× faster than the
+  per-frame loop they replaced, with identical results). Masses come from
+  `AtomicData` in [help.py](help.py) and are looked up **only** for the two
+  centre-of-mass modes, so a purely geometric run never fails on an element
+  missing from the table.
+- **References:** standard definitions; see M. P. Allen and D. J. Tildesley,
+  *Computer Simulation of Liquids*, 2nd ed., Oxford University Press (2017), §2.
+  Atomic masses follow the IUPAC 2021 standard atomic weights as tabulated in
+  `AtomicData`.
+
+### 2. Separation and the minimum-image convention (optional PBC)
+
+$$
+\mathbf{d}_i(t) = \mathbf{x}_i(t) - \mathbf{R}(t),
+\qquad
+\mathbf{d}_i(t) \;\leftarrow\; \mathbf{d}_i(t)
+  - \mathbf{L}\,\operatorname{round}\!\left(\frac{\mathbf{d}_i(t)}{\mathbf{L}}\right)
+$$
+
+$$
+D_i(t) = \lVert \mathbf{d}_i(t) \rVert
+       = \sqrt{d_x^{2} + d_y^{2} + d_z^{2}}
+$$
+
+- **Represents:** the separation between the observed object and the reference
+  point. The second expression is the orthorhombic minimum-image convention,
+  applied component-wise: it replaces each separation by the shortest one among
+  all periodic images. It is applied only when cell lengths are supplied.
+- **Where/how used:** `build_occupancy`. The convention is exact only while
+  $r_\text{cut} \le \tfrac{1}{2}\min(a,b,c)$, and the tool *enforces* that bound,
+  refusing larger cutoffs in both `build_occupancy` and `_collect_inputs`.
+  Coordinates need **not** be wrapped into the box — minimum image tolerates
+  unwrapped trajectories, which is what CPMD normally writes.
+- **References:** M. P. Allen and D. J. Tildesley, *Computer Simulation of
+  Liquids*, 2nd ed., Oxford University Press (2017), §1.6.3.
+
+### 3. Occupancy (the shell indicator)
+
+$$
+h_i(t) =
+\begin{cases}
+1, & D_i(t) \le r_\text{cut} \\[4pt]
+0, & \text{otherwise}
+\end{cases}
+$$
+
+- **Represents:** the binary "object $i$ is inside the shell in frame $t$"
+  function. Every quantity below is computed from this $M \times N$ matrix and
+  nothing else, so the choice of $r_\text{cut}$ propagates into all of them.
+- **Where/how used:** `build_occupancy`, returned alongside the distances.
+  Take $r_\text{cut}$ from the first minimum of the corresponding $g(r)$; the
+  [Radial Distribution Function](#radial-distribution-function) tool supplies it.
+- **References:** R. W. Impey, P. A. Madden and I. R. McDonald, "Hydration and
+  mobility of ions in solution", *J. Phys. Chem.* **87**(25), 5071–5083 (1983).
+
+### 4. Tolerance time $t^{*}$ (recrossing correction)
+
+$$
+\ldots\,1\;1\;
+\underbrace{0\;\cdots\;0}_{g\ \text{frames}}
+\;1\;1\,\ldots
+\;\longrightarrow\;
+\ldots\,1\;1\;
+\underbrace{1\;\cdots\;1}_{g\ \text{frames}}
+\;1\;1\,\ldots
+\qquad \text{if } g \le t^{*}
+$$
+
+- **Represents:** bridging short excursions. A gap of $g$ zero-frames flanked by
+  ones on both sides is overwritten with ones when $g \le t^{*}$, so a molecule
+  that momentarily jitters back and forth across the cutoff is not counted as
+  having left and returned.
+- **Where/how used:** `apply_tolerance_to_occupancy`, applied to the occupancy
+  matrix before any statistic is taken. Gaps at the very **start or end** of the
+  trajectory are deliberately never bridged, because there is no evidence the
+  object was inside before or after the run. Because $t^{*}$ can only merge
+  events, never split them, $\langle T\rangle$ is non-decreasing in $t^{*}$.
+- **References:** Impey, Madden and McDonald (1983), as above, introduced $t^{*}$.
+  D. Laage and J. T. Hynes, "On the residence time for water in a solute
+  hydration shell", *J. Phys. Chem. B* **112**(26), 7697–7701 (2008), showed the
+  result is *extremely* sensitive to $t^{*}$ and that the conventional
+  $t^{*}=2$ ps can seriously overestimate residence times for low-barrier
+  exchange — which is why the tool provides a $t^{*}$ scan rather than a single
+  value.
+
+### 5. Residence events, censoring, and the mean residence time
+
+$$
+T_j = n_j\,\Delta t,
+\qquad
+\langle T\rangle = \frac{1}{N_\text{ev}}\sum_{j=1}^{N_\text{ev}} T_j
+$$
+
+- **Represents:** each maximal run of ones in $h_i(t)$ is one residence event of
+  duration $T_j$; $\langle T\rangle$ is their mean. This is the direct
+  residence-time estimator, free of the assumptions built into the
+  correlation-function routes.
+- **Where/how used:** `_runs`, `extract_event_durations` and
+  `count_boundary_events`. Runs touching frame $0$ or frame $N-1$ are
+  **censored** — excluded from $\{T_j\}$ and reported separately — because they
+  were still in progress at the boundary and their true duration is unknown.
+  Counting them at their truncated length biases $\langle T\rangle$ downwards,
+  and does so worst for the longest-lived species. If the censored count is a
+  large fraction of the events, the trajectory is too short for the process
+  being measured.
+- **References:** H. R. Sánchez, "Residence Times from Molecular Dynamics
+  Simulations", *J. Phys. Chem. B* **126**(20), 3843–3857 (2022).
+
+### 6. Continuous survival function and the IMM time constant
+
+$$
+S(l) = \frac{\sum_{j}\max\!\left(0,\; n_j - l\right)}{\sum_{j} n_j},
+\qquad t = l\,\Delta t
+$$
+
+$$
+\tau_\text{IMM} = \Delta t \sum_{l=0}^{l_\text{max}-1} S(l)
+\;=\; \frac{\langle T^{2}\rangle}{2\,\langle T\rangle}
+$$
+
+- **Represents:** $S(l)$ is the probability that an object found inside the shell
+  at an arbitrary **occupied frame** is still *continuously* inside $l$ frames
+  later. The average runs over time **origins**, not over events, so a long event
+  contributes as many origins as it has frames. This is the $n_\text{ion}(t)$ of
+  Impey, Madden and McDonald. Its integral is mathematically the mean *residual*
+  time $\langle T^{2}\rangle / (2\langle T\rangle)$, which equals
+  $\langle T\rangle$ **only** for exponential kinetics and exceeds it whenever the
+  duration distribution is broad — the usual case for hydration shells.
+- **Where/how used:** `compute_origin_averaged_survival`. The closed form above,
+  summing over run lengths $n_j$, is exactly equivalent to scanning every time
+  origin explicitly (a unit test checks it against a brute-force origin scan) but
+  costs $\mathcal{O}(\text{events})$ per lag instead of $\mathcal{O}(N^{2})$.
+  For a set of uniform runs of $n$ frames the integral is exactly
+  $\tfrac{1}{2}(n+1)\,\Delta t$, which is the analytic value the tests assert.
+- **References:** Impey, Madden and McDonald (1983); A. E. García and L. Stiller,
+  "Computation of the mean residence time of water in the hydration shells of
+  biomolecules", *J. Comput. Chem.* **14**(11), 1396–1406 (1993); B. Halle and
+  F. Persson, "Analysis of Protein Dynamics Simulations by a Stochastic Point
+  Process Approach", *J. Chem. Theory Comput.* **9**(6), 2838–2848 (2013), for
+  computing the survival function from the residence-time sequence rather than by
+  averaging over initial times; S. Mukherjee, S. Mondal and B. Bagchi,
+  *J. Chem. Phys.* **147**, 024901 (2017), for the broad, log-normal duration
+  distributions that make the two time constants diverge.
+
+### 7. Intermittent correlation function
+
+$$
+C(l) = \frac{\sum_{i=1}^{M}\sum_{t_0=0}^{N-l-1} h_i(t_0)\,h_i(t_0+l)}
+            {\sum_{i=1}^{M}\sum_{t_0=0}^{N-l-1} h_i(t_0)},
+\qquad
+\langle h\rangle = \frac{1}{MN}\sum_{i=1}^{M}\sum_{t=0}^{N-1} h_i(t)
+$$
+
+$$
+R(l) = \frac{C(l) - \langle h\rangle}{1 - \langle h\rangle}
+$$
+
+- **Represents:** $C(l)$ is the probability that an object inside the shell at
+  $t_0$ is inside again at $t_0+l$, **whether or not it left in between**. It
+  therefore probes exchange rather than uninterrupted residence, and is the
+  natural partner to equation 6. Since $C(l)\to\langle h\rangle$ at long lag,
+  $R(l)$ is the rescaling running from $R(0)=1$ to $R(\infty)=0$, which is what
+  can be integrated to a time constant.
+- **Where/how used:** `compute_intermittent_functions`. Note the asymmetry:
+  $C(l)$ is normalized over the origins available *at that lag*, while
+  $\langle h\rangle$ is the global mean occupancy over all frames, so the two
+  denominators differ slightly. When $\langle h\rangle = 1$ the object never
+  leaves and $R$ is defined as $1$ for all lags. $C$ is clipped to $[0,1]$ and
+  $R$ to $[-1,1]$ to absorb floating-point overshoot.
+- **References:** Impey, Madden and McDonald (1983). The same
+  intermittent/continuous pairing underlies the hydrogen-bond kinetics of
+  A. Luzar and D. Chandler, "Hydrogen-bond kinetics in liquid water", *Nature*
+  **379**, 55–57 (1996).
+
+### 8. Lag ceiling
+
+$$
+l_\text{max} =
+\max\!\left(1,\;
+  \min\!\left(N,\; \left\lfloor \tfrac{N}{10} \right\rfloor \right)
+\right)
+$$
+
+- **Represents:** the largest lag at which the correlation functions are
+  evaluated, when the **Maximum lag** field is left blank. At lag $l$ only
+  $N-l$ time origins are available, so the longest lags average over a handful
+  of samples and are noise; integrating them into a residence time is
+  meaningless.
+- **Where/how used:** `default_max_lag`, applied to both equation 6 and
+  equation 7. It can be overridden from the **Advanced** group on the Setup tab,
+  which is how you check whether a reported time constant has converged.
+- **References:** Halle and Persson (2013), for the growth of statistical error
+  with lag in this class of correlation function.
+
+### 9. Turning $R(t)$ into a time constant
+
+$$
+\text{zero crossing:}\quad
+\tau = \Delta t \sum_{l=0}^{l_0-1} R(l),
+\qquad l_0 = \min\{\, l : R(l) < 0 \,\}
+$$
+
+$$
+\text{exponential:}\quad
+\ln R(l) = A - \frac{l\,\Delta t}{\tau}
+\quad\text{(least squares over } \{\, l : R(l) > 0 \,\}\text{)},
+\qquad \tau = -\frac{1}{\text{slope}}
+$$
+
+$$
+\text{full:}\quad
+\tau = \Delta t \sum_{l=0}^{l_\text{max}-1} R(l)
+$$
+
+- **Represents:** three ways to reduce the decaying correlation to a single
+  time. Zero crossing integrates up to the point the curve first goes negative;
+  the exponential rule assumes single-exponential decay and reports the fitted
+  $\tau$; full integrates the whole evaluated range.
+- **Where/how used:** `integrate_correlation`, selected by the **Integration
+  rule** control. The exponential fit requires at least three lags with
+  $R(l)>0$ and falls back to the zero-crossing rule if the fitted slope is not
+  negative. The summary always records which rule was applied and how many lags
+  it covered, so a run is reproducible from its own output.
+- **Convergence check:** if the number of lags used **equals** $l_\text{max}$,
+  then $R(t)$ never crossed zero, and $\tau$ is a lower bound that grows with
+  $l_\text{max}$ rather than a converged time constant. Raise the lag ceiling and
+  see whether the value is stable. If it keeps growing, the trajectory is too
+  short to resolve the process and the intermittent time constant should not be
+  quoted at all — report $\langle T\rangle$ and $\tau_\text{IMM}$ instead.
+- **References:** the exponential form is the standard single-relaxation-time
+  reading of the intermittent correlation function used by Impey, Madden and
+  McDonald (1983) and, for hydrogen-bond kinetics, by A. Luzar and D. Chandler,
+  *Nature* **379**, 55–57 (1996). H. R. Sánchez, *J. Phys. Chem. B* **126**,
+  3843 (2022), analyses the assumptions this step introduces relative to the
+  direct estimator of equation 5.
+
+### 10. Uncertainty on the mean residence time
+
+$$
+\sigma\!\left(\langle T\rangle\right)
+= \frac{1}{\sqrt{B}}
+  \sqrt{\frac{1}{B-1}\sum_{b=1}^{B}\left(\bar{T}_b - \overline{\bar{T}}\right)^{2}},
+\qquad B = 5
+$$
+
+- **Represents:** the standard error of $\langle T\rangle$, estimated from the
+  means $\bar{T}_b$ of $B$ contiguous blocks of the event-duration series.
+- **Where/how used:** `block_average_uncertainty`. Block averaging is used rather
+  than a plain standard error because successive residence events are **not**
+  independent samples; a naive $s/\sqrt{n}$ would understate the error. Returns
+  NaN when there is not enough data to form two blocks. Only $\langle T\rangle$
+  carries an uncertainty — $\tau_\text{IMM}$ and the intermittent time constant
+  do not.
+- **References:** H. R. Sánchez et al., "Evaluating the uncertainty in mean
+  residual times: Estimators based on residence times from discrete time
+  processes", *Commun. Nonlinear Sci. Numer. Simul.* (2024).
 
 ## Troubleshooting
 

@@ -416,12 +416,12 @@ class BondAngleUI(BondAngleAnalyser):
         box_1.add(toga.Label("Bond Angle Analysis", style=heading_style))
 
         input_fields = [
-            ("Maximum angle for Distribution Function (deg):", "Enter e.g. 180", "textInput_max_angle"),
-            ("Simulation Time Step (a.u.):", "Enter time step", "textInput_time_step"),
-            ("Sampling Interval (frames):", "Enter sampling interval", "textInput_sampling_interval"),
-            ("Simulation Temperature (K):", "Enter temperature", "textInput_temperature"),
-            ("Atom Labels (i j k):", "Enter three labels, e.g., 1 2 3", "textInput_atom_labels"),
-            ("Histogram Bin Width (deg):", "Enter e.g. 1.0", "textInput_bin_width"),
+            ("Maximum angle for Distribution Function (deg):", "Enter the maximum angle in (°) (suggestion: 180).", "textInput_max_angle"),
+            ("Simulation Time Step (a.u.):", "Enter the time step used in the simulation in a.u. (e.g., 5).", "textInput_time_step"),
+            ("Sampling Interval (frames):", "Enter sampling interval in a.u. (e.g., 5)", "textInput_sampling_interval"),
+            ("Simulation Temperature (K):", "Enter the temperature used in the simulation in K (e.g., 300)", "textInput_temperature"),
+            ("Atom Labels (i j k):", "Enter 3 atom labels, separated by a space (e.g., 1 2 3)", "textInput_atom_labels"),
+            ("Histogram Bin Width (deg):", "Enter the bin width for the histogram (suggestion 1)", "textInput_bin_width"),
             ("Cell Lengths a b c (Å, optional):",
              "Leave blank for no periodic boundaries (e.g., 12.4 12.4 12.4)",
              "textInput_cell_lengths"),
