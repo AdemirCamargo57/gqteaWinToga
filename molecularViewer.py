@@ -21,6 +21,15 @@ Frame = List[Atom]
 class MolecularViewer:
     """3D molecular viewer with trajectory support using GLFW + OpenGL."""
 
+    # How many atoms each measurement consumes. This is the single source of
+    # truth for both the typed field ("1,2,3") and the canvas pick list.
+    MEASUREMENT_ATOM_COUNTS = {
+        "Bond length": 2,
+        "Bond angle": 3,
+        "Dihedral angle": 4,
+        "Atom coordinates": 1,
+    }
+
     def __init__(self):
         # GLFW-related attributes
         self.glfw_initialized = False
@@ -45,16 +54,21 @@ class MolecularViewer:
             ("N", (0.0, -1.0, 0.0)),
         ]
 
-        # Annotation / measurement options
-        self.show_atom_numbers = False
+        # Annotation / measurement options. Atom numbers default ON so the
+        # 1-based indices needed to pick atoms are visible as soon as a
+        # molecule is drawn (fast_playback_mode still suppresses all labels).
+        self.show_atom_numbers = True
         self.show_atom_symbols = False
         self.label_font = getattr(ogl_glut, "GLUT_BITMAP_HELVETICA_18")
         self.measurement_result = ""
         self.active_measurement_type: Optional[str] = None
         self.active_measurement_indices: List[int] = []
 
-        # Click-to-identify picking state
-        self.picked_atoms: set = set()
+        # Click-to-select picking state. The list is ORDERED: click order is
+        # the measurement order, so for a bond angle the second atom clicked
+        # is the vertex, exactly as typing "1,2,3" would mean.
+        self.picked_atoms: List[int] = []
+        self.measurement_pick_capacity = self.MEASUREMENT_ATOM_COUNTS["Bond length"]
         self.pick_label_color = (0.2, 1.0, 1.0)
         self.pick_pixel_threshold = 15.0
         # Snapshot of (modelview, projection, viewport) captured each render so
@@ -556,18 +570,66 @@ class MolecularViewer:
         candidates.sort()
         return candidates[0][1]
 
+    def measurement_atom_count(self, measure_type: Optional[str]) -> Optional[int]:
+        """Atoms consumed by ``measure_type``, or None if it is not a known type."""
+        return self.MEASUREMENT_ATOM_COUNTS.get(measure_type)
+
+    def get_picked_atoms(self) -> List[int]:
+        """Snapshot of the 0-based pick list, in click order."""
+        with self._state_lock:
+            return list(self.picked_atoms)
+
+    def picked_atoms_text(self) -> str:
+        """Pick list as the 1-based, comma-separated string the Measure field uses."""
+        return ",".join(str(i + 1) for i in self.get_picked_atoms())
+
+    def set_measurement_pick_capacity(self, count: int):
+        """Set how many atoms the current measurement wants.
+
+        Shrinking keeps the most recent picks, so switching from a dihedral to
+        a bond length leaves the last two atoms clicked rather than starting
+        the user over.
+        """
+        count = max(1, int(count))
+        with self._state_lock:
+            self.measurement_pick_capacity = count
+            trimmed = len(self.picked_atoms) > count
+            if trimmed:
+                self.picked_atoms = self.picked_atoms[-count:]
+        if trimmed:
+            self._notify_picked_atoms_changed()
+
     def _toggle_picked_atom(self, atom_index: int):
+        """Add, remove, or roll ``atom_index`` through the ordered pick list.
+
+        Clicking a selected atom deselects it; clicking a new one when the list
+        is already full drops the oldest pick, so a selection can be walked
+        along a chain of atoms without clearing it first.
+        """
         with self._state_lock:
             if atom_index in self.picked_atoms:
-                self.picked_atoms.discard(atom_index)
+                self.picked_atoms.remove(atom_index)
             else:
-                self.picked_atoms.add(atom_index)
+                self.picked_atoms.append(atom_index)
+                overflow = len(self.picked_atoms) - self.measurement_pick_capacity
+                if overflow > 0:
+                    self.picked_atoms = self.picked_atoms[overflow:]
+        self._notify_picked_atoms_changed()
 
     def clear_picked_atoms(self):
         with self._state_lock:
             had_labels = bool(self.picked_atoms)
-            self.picked_atoms.clear()
+            self.picked_atoms = []
+        self._notify_picked_atoms_changed()
         return had_labels
+
+    def _notify_picked_atoms_changed(self):
+        """Hook fired (on the render thread) whenever the pick list changes.
+
+        The base viewer has no widgets, so this does nothing; MolecularViewerUI
+        overrides it to marshal the update onto the Toga event loop.
+        """
+        return None
 
     def set_projection(self):
         glMatrixMode(GL_PROJECTION)
@@ -1038,11 +1100,15 @@ class MolecularViewer:
         if any(i < 0 or i >= len(frame_data) for i in indices):
             return None, ""
 
+        # The second return value is the canvas overlay: the bare number only,
+        # with no label, prefix or unit, so it stays readable next to the
+        # atoms. The Result field's fully-labelled text comes from
+        # format_measurement_label instead.
         coords = [np.array(frame_data[i][1], dtype=float) for i in indices]
         try:
             if measure_type == "Bond length" and len(coords) == 2:
                 value = float(np.linalg.norm(coords[1] - coords[0]))
-                return value, f"d({indices[0]+1},{indices[1]+1}) = {value:.4f} A"
+                return value, f"{value:.4f}"
             if measure_type == "Bond angle" and len(coords) == 3:
                 v1 = coords[0] - coords[1]
                 v2 = coords[2] - coords[1]
@@ -1052,7 +1118,7 @@ class MolecularViewer:
                     return None, ""
                 cosang = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
                 value = float(np.degrees(np.arccos(cosang)))
-                return value, f"angle = {value:.3f} deg"
+                return value, f"{value:.3f}"
             if measure_type == "Dihedral angle" and len(coords) == 4:
                 b0 = -(coords[1] - coords[0])
                 b1 = coords[2] - coords[1]
@@ -1064,7 +1130,7 @@ class MolecularViewer:
                 v = b0 - np.dot(b0, b1) * b1
                 w = b2 - np.dot(b2, b1) * b1
                 value = float(np.degrees(np.arctan2(np.dot(np.cross(b1, v), w), np.dot(v, w))))
-                return value, f"tau = {value:.3f} deg"
+                return value, f"{value:.3f}"
             if measure_type == "Atom coordinates" and len(coords) == 1:
                 x, y, z = (float(coord) for coord in coords[0])
                 return (x, y, z), ""
@@ -1158,7 +1224,11 @@ class MolecularViewer:
 
     def render_frame(self, frame_data: Frame, bonds: List[Tuple[int, int]]):
         measure_type, measure_indices = self.get_measurement_overlay()
+        picked = [i for i in self.get_picked_atoms() if 0 <= i < len(frame_data)]
+        # Picked atoms highlight like measured ones so a click gives immediate
+        # feedback, before (or without) a measurement being run.
         highlighted_atoms = set(i for i in measure_indices if 0 <= i < len(frame_data))
+        highlighted_atoms.update(picked)
         _, measurement_overlay_text = self.compute_measurement_value(
             measure_type, measure_indices, frame_data
         )
@@ -1227,17 +1297,18 @@ class MolecularViewer:
                 measurement_overlay_text,
             )
 
-        with self._state_lock:
-            picked = [i for i in self.picked_atoms if 0 <= i < len(frame_data)]
-        for atom_index in picked:
+        # Pick-order tags (#1, #2, …) tell the user which atom is the angle
+        # vertex. Offset downwards so they never sit on top of the atom-number
+        # label, which uses the +0.45 corner.
+        for order, atom_index in enumerate(picked, start=1):
             element, position = frame_data[atom_index]
             radius = self.get_atom_radius(element) * self.atom_scale_factor
             label_pos = (
                 position[0] + radius * 0.45,
-                position[1] + radius * 0.45,
+                position[1] - radius * 0.85,
                 position[2] + radius * 0.45,
             )
-            self._draw_text_3d(label_pos, str(atom_index + 1), color=self.pick_label_color)
+            self._draw_text_3d(label_pos, f"#{order}", color=self.pick_label_color)
 
     def main_loop(self):
         try:
@@ -1714,7 +1785,8 @@ class MolecularViewerUI(MolecularViewer):
             on_change=self.toggle_atom_numbers,
             style=Pack(margin=(0, 16, 0, 0)),
         )
-        self.atom_numbers_switch.value = False
+        # On by default: the 1-based indices are what the Measure tab asks for.
+        self.atom_numbers_switch.value = self.show_atom_numbers
         self.atom_symbols_switch = toga.Switch(
             "Atomic symbols",
             on_change=self.toggle_atom_symbols,
@@ -1722,7 +1794,7 @@ class MolecularViewerUI(MolecularViewer):
         )
         self.atom_symbols_switch.value = False
         clear_labels_button = toga.Button(
-            "Clear clicked labels",
+            "Clear selection",
             on_press=self.clear_atom_labels,
             style=Pack(width=150),
         )
@@ -1837,7 +1909,16 @@ class MolecularViewerUI(MolecularViewer):
         tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
         tab_box.add(
             self._hint(
-                "Atom indices are 1-based. In the 3D window, click an atom to toggle its index label."
+                "Atom indices are 1-based. Type them below, or click atoms in the 3D "
+                "window to fill the field — click order is the measurement order, so "
+                "the second atom clicked is the angle vertex."
+            )
+        )
+        tab_box.add(
+            self._hint(
+                "Clicking a selected atom deselects it; clicking past the required "
+                "count drops the oldest pick. The measurement runs as soon as enough "
+                "atoms are selected. Fast playback mode hides all atom labels."
             )
         )
 
@@ -1854,7 +1935,12 @@ class MolecularViewerUI(MolecularViewer):
         measure_button = toga.Button(
             "Measure",
             on_press=self.run_measurement,
-            style=Pack(width=90),
+            style=Pack(width=90, margin=(0, 8, 0, 0)),
+        )
+        clear_selection_button = toga.Button(
+            "Clear",
+            on_press=self.clear_measure_selection,
+            style=Pack(width=70),
         )
         tab_box.add(
             self._form_row(
@@ -1862,6 +1948,7 @@ class MolecularViewerUI(MolecularViewer):
                 self.measure_type_selection,
                 self.measure_indices_input,
                 measure_button,
+                clear_selection_button,
             )
         )
 
@@ -2245,10 +2332,9 @@ class MolecularViewerUI(MolecularViewer):
         )
 
     def clear_atom_labels(self, widget):
-        had_labels = self.clear_picked_atoms()
-        self.set_status_message(
-            "Cleared clicked atom labels." if had_labels else "No clicked atom labels to clear."
-        )
+        # Same action as the Measure tab's Clear: the clicked labels and the
+        # measurement selection are now one and the same thing.
+        self.clear_measure_selection(widget)
 
     def update_measurement_input_hint(self, widget):
         if not getattr(self, "measure_indices_input", None):
@@ -2258,6 +2344,57 @@ class MolecularViewerUI(MolecularViewer):
             self.measure_indices_input.placeholder = "Atom label, e.g. 5 or C-5"
         else:
             self.measure_indices_input.placeholder = "1,2 or 1,2,3 or 1,2,3,4"
+
+        expected = self.measurement_atom_count(measure_type)
+        if expected:
+            self.set_measurement_pick_capacity(expected)
+
+    # ------------------------------------------------------------------
+    # Canvas selection -> Measure field
+    # ------------------------------------------------------------------
+    def _notify_picked_atoms_changed(self):
+        """Marshal a pick change onto the Toga loop.
+
+        Called from the GLFW callback on the render thread, so it must not
+        touch widgets directly.
+        """
+        loop = getattr(self, "loop", None)
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._sync_measure_field_from_picks)
+
+    def _sync_measure_field_from_picks(self):
+        """Write the pick list into the Measure field, measuring when complete."""
+        if not getattr(self, "measure_indices_input", None):
+            return
+
+        picked = self.get_picked_atoms()
+        self.measure_indices_input.value = self.picked_atoms_text()
+
+        if not picked:
+            self.clear_measurement_overlay()
+            self.set_status_message("Atom selection cleared.")
+            return
+
+        expected = self.measurement_pick_capacity
+        if len(picked) >= expected:
+            # Enough atoms: measure straight away. run_measurement re-reads the
+            # field, so typed and clicked selections take the identical path.
+            self.loop.create_task(self.run_measurement(None))
+            return
+
+        remaining = expected - len(picked)
+        atom_word = "atom" if remaining == 1 else "atoms"
+        self.set_status_message(
+            f"Selected {self.picked_atoms_text()} - click {remaining} more {atom_word}."
+        )
+
+    def clear_measure_selection(self, widget):
+        """Clear the canvas selection, the Measure field and the overlay."""
+        self.clear_picked_atoms()
+        self.measure_indices_input.value = ""
+        self.clear_measurement_overlay()
+        self.set_status_message("Atom selection cleared.")
 
     def _parse_measurement_indices(self, expected_count: int) -> List[int]:
         raw = (self.measure_indices_input.value or "").replace(';', ',')

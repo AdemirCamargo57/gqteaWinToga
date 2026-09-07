@@ -1136,8 +1136,8 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Atom scale** and **Bond scale**: relative size of the drawn atoms and bonds.
 - **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded.
 - **Rotation**: rotate the displayed system about X, Y, and Z (described below).
-- **Atom numbers** and **Atomic symbols**: label every atom in the 3D view.
-- **Clear clicked labels**: remove the labels you added by clicking individual atoms.
+- **Atom numbers** and **Atomic symbols**: label every atom in the 3D view. **Atom numbers is on by default**, so the 1-based indices you need for a measurement are visible as soon as the molecule is drawn; turn it off for a cleaner view of a large system.
+- **Clear selection**: deselect every atom you have clicked, and clear the **Measure** tab's field and result.
 
 ##### Frames tab
 
@@ -1150,7 +1150,10 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 
 ##### Measure tab
 
-- Choose **Bond length**, **Bond angle**, **Dihedral angle**, or **Atom coordinates**, enter the atom labels, and click **Measure**. Atom indices are 1-based. The value appears in the **Result** field and on the 3D canvas.
+- Choose **Bond length**, **Bond angle**, **Dihedral angle**, or **Atom coordinates**, then select the atoms **either** by typing their labels into the field **or** by clicking them in the 3D window. Atom indices are 1-based. The value appears in the **Result** field and on the 3D canvas.
+- **Measure** computes the value for whatever is currently in the field — use it after typing. When you select atoms by clicking, the measurement runs on its own as soon as enough atoms are selected.
+- **Clear** empties the field, deselects every clicked atom and removes the measurement from the canvas.
+- The **Result** field gives the fully labelled measurement, for example `Measurement: d(1,2) = 1.5000 Å`. On the 3D canvas only the number is drawn (`1.5000`, `120.307`), so the value stays readable against the structure. Distances are in Å, angles and dihedrals in degrees.
 
 ##### Box & Performance tab
 
@@ -1162,7 +1165,24 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
 
-You can identify individual atoms directly in the 3D view by clicking on them. Left-click an atom (a click without dragging — dragging still rotates the view) and its 1-based index appears next to the atom on the canvas. This is useful for picking out only the solute atoms in a solvated `TRAJEC.xyz` without labeling every solvent atom. Left-click the same atom again to remove its label. The labels stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Click **Clear clicked labels** on the **Display** tab (next to the atom-number and atomic-symbol switches) to remove all clicked labels at once.
+##### Selecting atoms by clicking in the 3D view
+
+You can select atoms directly in the 3D view instead of typing their labels. Left-click an atom (a click without dragging — dragging still rotates the view). The atom turns yellow, gets a cyan `#1`, `#2`, … tag showing the order in which you picked it, and its 1-based index is written into the **Measure** tab's field. Typing and clicking are always both available: whatever ends up in the field is what gets measured.
+
+**Click order is the measurement order.** Selecting atoms 4, 7 and 9 in that order for a **Bond angle** gives the field `4,7,9`, so atom 7 is the vertex — exactly as if you had typed it. The `#1`/`#2`/`#3` tags on the canvas tell you which atom is which.
+
+Once you have selected as many atoms as the measurement needs (two for a bond length, three for an angle, four for a dihedral, one for atom coordinates), the measurement runs automatically and the result appears in the **Result** field and on the canvas.
+
+Selecting further atoms keeps working without any clearing step:
+
+- Left-click a selected atom to deselect it.
+- Left-click a new atom when the selection is already full and the **oldest** pick drops off. For a bond length, this lets you walk a measurement along a chain of atoms one click at a time, getting a new value at every click.
+- Switching the measurement type to one that needs fewer atoms keeps your most recent picks.
+- **Clear** (Measure tab) or **Clear selection** (Display tab) deselects everything.
+
+Because a click always writes into the field, it will overwrite part of an entry you typed by hand. If you are working from typed labels, click **Measure** before clicking anywhere in the 3D window.
+
+Selections stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Note that **Reduce overlays during playback** (Box & Performance tab) hides all atom labels while it is on, including the index and pick-order labels.
 
 The rotation controls on the **Display** tab let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees, then either press Enter in one of the angle fields or click **Apply angles** to add those increments to the current molecular orientation. Click **Reset rotation** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
 
