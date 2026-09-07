@@ -21,9 +21,15 @@ Frame = List[Atom]
 class MolecularViewer:
     """3D molecular viewer with trajectory support using GLFW + OpenGL."""
 
+    # Measurement type that runs no measurement at all: left-clicking an atom
+    # just toggles its number on the canvas. This is the default.
+    NO_MEASUREMENT = "None"
+
     # How many atoms each measurement consumes. This is the single source of
     # truth for both the typed field ("1,2,3") and the canvas pick list.
+    # "None" consumes none, which is what makes it label-only.
     MEASUREMENT_ATOM_COUNTS = {
+        NO_MEASUREMENT: 0,
         "Bond length": 2,
         "Bond angle": 3,
         "Dihedral angle": 4,
@@ -54,10 +60,11 @@ class MolecularViewer:
             ("N", (0.0, -1.0, 0.0)),
         ]
 
-        # Annotation / measurement options. Atom numbers default ON so the
-        # 1-based indices needed to pick atoms are visible as soon as a
-        # molecule is drawn (fast_playback_mode still suppresses all labels).
-        self.show_atom_numbers = True
+        # Annotation / measurement options. Atom numbers default OFF: with the
+        # "None" measurement type, clicking an atom is how you reveal its
+        # number, and a global label on every atom would drown that out
+        # (fast_playback_mode still suppresses all labels either way).
+        self.show_atom_numbers = False
         self.show_atom_symbols = False
         self.label_font = getattr(ogl_glut, "GLUT_BITMAP_HELVETICA_18")
         self.measurement_result = ""
@@ -69,6 +76,14 @@ class MolecularViewer:
         # is the vertex, exactly as typing "1,2,3" would mean.
         self.picked_atoms: List[int] = []
         self.measurement_pick_capacity = self.MEASUREMENT_ATOM_COUNTS["Bond length"]
+
+        # Label-only mode ("None" measurement type, the default): a click
+        # toggles the atom's number on the canvas instead of feeding a
+        # measurement. Unordered and uncapped - unlike picked_atoms, these
+        # marks carry no meaning beyond "show this atom's number".
+        self.label_only_mode = True
+        self.identified_atoms: List[int] = []
+
         self.pick_label_color = (0.2, 1.0, 1.0)
         self.pick_pixel_threshold = 15.0
         # Snapshot of (modelview, projection, viewport) captured each render so
@@ -458,7 +473,7 @@ class MolecularViewer:
                     px, py = self._left_press_pos
                     picked_index = self._pick_atom_at(px, py)
                     if picked_index is not None:
-                        self._toggle_picked_atom(picked_index)
+                        self._handle_atom_click(picked_index)
                 self.last_mouse_pos = None
                 self._left_press_pos = None
                 self._left_dragged = False
@@ -628,6 +643,61 @@ class MolecularViewer:
 
         The base viewer has no widgets, so this does nothing; MolecularViewerUI
         overrides it to marshal the update onto the Toga event loop.
+        """
+        return None
+
+    # ------------------------------------------------------------------
+    # Label-only mode ("None" measurement type)
+    # ------------------------------------------------------------------
+    def _handle_atom_click(self, atom_index: int):
+        """Route a canvas click to the mode the Measure dropdown is in."""
+        if self.label_only_mode:
+            self._toggle_identified_atom(atom_index)
+        else:
+            self._toggle_picked_atom(atom_index)
+
+    def set_label_only_mode(self, enabled: bool):
+        """Switch between labelling clicks and measurement clicks.
+
+        Each mode clears the other's marks, so leaving "None" does not strand
+        cyan numbers on the canvas and entering it does not leave a half-built
+        measurement selection behind.
+        """
+        enabled = bool(enabled)
+        if enabled == self.label_only_mode:
+            return
+        self.label_only_mode = enabled
+        if enabled:
+            self.clear_picked_atoms()
+        else:
+            self.clear_identified_atoms()
+
+    def get_identified_atoms(self) -> List[int]:
+        """Snapshot of the 0-based atoms whose number is shown by click."""
+        with self._state_lock:
+            return list(self.identified_atoms)
+
+    def _toggle_identified_atom(self, atom_index: int):
+        """Show ``atom_index``'s number, or hide it if it is already shown."""
+        with self._state_lock:
+            if atom_index in self.identified_atoms:
+                self.identified_atoms.remove(atom_index)
+            else:
+                self.identified_atoms.append(atom_index)
+        self._notify_identified_atoms_changed()
+
+    def clear_identified_atoms(self):
+        with self._state_lock:
+            had_labels = bool(self.identified_atoms)
+            self.identified_atoms = []
+        self._notify_identified_atoms_changed()
+        return had_labels
+
+    def _notify_identified_atoms_changed(self):
+        """Hook fired (on the render thread) when the label set changes.
+
+        Same contract as _notify_picked_atoms_changed: a no-op here so the base
+        viewer stays headless, overridden by MolecularViewerUI.
         """
         return None
 
@@ -1310,6 +1380,24 @@ class MolecularViewer:
             )
             self._draw_text_3d(label_pos, f"#{order}", color=self.pick_label_color)
 
+        # Label-only mode: the number of each clicked atom, in the same cyan as
+        # the pick tags. Skipped when show_atom_numbers already draws every
+        # number, since the clicked label would only double it up.
+        if not self.fast_playback_mode and not self.show_atom_numbers:
+            for atom_index in self.get_identified_atoms():
+                if not 0 <= atom_index < len(frame_data):
+                    continue
+                element, position = frame_data[atom_index]
+                radius = self.get_atom_radius(element) * self.atom_scale_factor
+                label_pos = (
+                    position[0] + radius * 0.45,
+                    position[1] + radius * 0.45,
+                    position[2] + radius * 0.45,
+                )
+                self._draw_text_3d(
+                    label_pos, str(atom_index + 1), color=self.pick_label_color
+                )
+
     def main_loop(self):
         try:
             self.init_glfw()
@@ -1921,17 +2009,30 @@ class MolecularViewerUI(MolecularViewer):
                 "atoms are selected. Fast playback mode hides all atom labels."
             )
         )
+        tab_box.add(
+            self._hint(
+                "With type None (the default) nothing is measured: clicking an atom "
+                "shows its number on the canvas, and clicking it again hides it. "
+                "Clear removes every displayed number."
+            )
+        )
 
         self.measure_indices_input = toga.TextInput(
             placeholder="1,2 or 1,2,3 or 1,2,3,4",
             style=Pack(flex=1, margin=(0, 8, 0, 0)),
         )
         self.measure_type_selection = toga.Selection(
-            items=["Bond length", "Bond angle", "Dihedral angle", "Atom coordinates"],
+            items=[
+                self.NO_MEASUREMENT,
+                "Bond length",
+                "Bond angle",
+                "Dihedral angle",
+                "Atom coordinates",
+            ],
             style=Pack(width=160, margin=(0, 8, 0, 0)),
             on_change=self.update_measurement_input_hint,
         )
-        self.measure_type_selection.value = "Bond length"
+        self.measure_type_selection.value = self.NO_MEASUREMENT
         measure_button = toga.Button(
             "Measure",
             on_press=self.run_measurement,
@@ -1965,7 +2066,12 @@ class MolecularViewerUI(MolecularViewer):
     def _build_box_performance_tab(self) -> toga.Box:
         tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
         tab_box.add(self._section_heading("Simulation box"))
-        tab_box.add(self._hint("Enter all three edge lengths in Å, then press Enter."))
+        tab_box.add(
+            self._hint(
+                "Enter all three edge lengths in Å, then press Enter "
+                "(or just tick Show simulation box)."
+            )
+        )
 
         self.box_a_input = toga.TextInput(
             placeholder="a", style=Pack(width=self.FIELD_WIDTH), on_confirm=self.set_box_sizes
@@ -1995,10 +2101,11 @@ class MolecularViewerUI(MolecularViewer):
         self.box_centering_selection.value = self.box_centering_mode
         tab_box.add(self._form_row(self._form_label("Box center:"), self.box_centering_selection))
 
+        # value is passed to the constructor (not assigned afterwards) so the
+        # initial state does not fire the async on_change handler.
         self.box_visibility_switch = toga.Switch(
-            "Show simulation box", on_change=self.set_box_visibility
+            "Show simulation box", value=False, on_change=self.set_box_visibility
         )
-        self.box_visibility_switch.value = False
         tab_box.add(self._form_row(self.box_visibility_switch))
 
         tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
@@ -2286,21 +2393,53 @@ class MolecularViewerUI(MolecularViewer):
         }
         self.set_status_message(messages.get(self.bond_rendering_mode, "Bond rendering mode updated."))
 
-    async def set_box_sizes(self, widget):
-        try:
-            a = float(self.box_a_input.value.strip())
-            b = float(self.box_b_input.value.strip())
-            c = float(self.box_c_input.value.strip())
-            if a <= 0 or b <= 0 or c <= 0:
-                raise ValueError
+    def _parse_box_size_inputs(self):
+        """Read the a/b/c entry fields as typed, without waiting for Enter.
 
-            self.box_sizes = (a, b, c)
-            self.invalidate_scene_cache()
-            self.set_status_message(f"Box sizes set to a={a:.3f}, b={b:.3f}, c={c:.3f} Å.")
+        Returns the ``(a, b, c)`` tuple, or ``None`` when all three fields are
+        blank. Raises ``ValueError`` for anything that is not three positive
+        numbers.
+        """
+        raw = [
+            (getattr(widget, "value", "") or "").strip()
+            for widget in (self.box_a_input, self.box_b_input, self.box_c_input)
+        ]
+        if not any(raw):
+            return None
+
+        a, b, c = (float(text) for text in raw)
+        if a <= 0 or b <= 0 or c <= 0:
+            raise ValueError("Box edge lengths must be positive.")
+        return (a, b, c)
+
+    async def _apply_box_size_inputs(self, require_values: bool) -> bool:
+        """Apply the current a/b/c field values to ``self.box_sizes``.
+
+        With ``require_values`` false, all-blank fields keep the sizes already
+        in use instead of raising an error dialog.
+        """
+        try:
+            sizes = self._parse_box_size_inputs()
         except (TypeError, ValueError, AttributeError):
+            sizes = False
+
+        if sizes is False or (sizes is None and require_values):
             await self._show_error(
                 "Invalid Input", "Please enter valid positive numbers for the box sizes."
             )
+            return False
+
+        if sizes is not None and sizes != self.box_sizes:
+            self.box_sizes = sizes
+            self.invalidate_scene_cache()
+        return True
+
+    async def set_box_sizes(self, widget):
+        if not await self._apply_box_size_inputs(require_values=True):
+            return
+
+        a, b, c = self.box_sizes
+        self.set_status_message(f"Box sizes set to a={a:.3f}, b={b:.3f}, c={c:.3f} Å.")
 
     def set_box_centering_mode(self, widget):
         selected_mode = getattr(self.box_centering_selection, "value", None)
@@ -2314,10 +2453,21 @@ class MolecularViewerUI(MolecularViewer):
         else:
             self.set_status_message("Box centered on the molecular geometric center.")
 
-    def set_box_visibility(self, widget):
-        self.show_box = bool(self.box_visibility_switch.value)
+    async def set_box_visibility(self, widget):
+        show_box = bool(self.box_visibility_switch.value)
+        if show_box:
+            # Pick up whatever is currently typed in a/b/c, even without Enter.
+            await self._apply_box_size_inputs(require_values=False)
+
+        self.show_box = show_box
         self.invalidate_scene_cache()
-        self.set_status_message("Box display enabled." if self.show_box else "Box display disabled.")
+        if self.show_box:
+            a, b, c = self.box_sizes
+            self.set_status_message(
+                f"Box display enabled with a={a:.3f}, b={b:.3f}, c={c:.3f} Å."
+            )
+        else:
+            self.set_status_message("Box display disabled.")
 
     def toggle_atom_numbers(self, widget):
         self.show_atom_numbers = bool(self.atom_numbers_switch.value)
@@ -2340,10 +2490,16 @@ class MolecularViewerUI(MolecularViewer):
         if not getattr(self, "measure_indices_input", None):
             return
         measure_type = self.measure_type_selection.value
-        if measure_type == "Atom coordinates":
+        if measure_type == self.NO_MEASUREMENT:
+            self.measure_indices_input.placeholder = "Click atoms to show their numbers"
+        elif measure_type == "Atom coordinates":
             self.measure_indices_input.placeholder = "Atom label, e.g. 5 or C-5"
         else:
             self.measure_indices_input.placeholder = "1,2 or 1,2,3 or 1,2,3,4"
+
+        # Entering None clears any half-built measurement pick; leaving it
+        # clears the clicked number labels. set_label_only_mode does both.
+        self.set_label_only_mode(measure_type == self.NO_MEASUREMENT)
 
         expected = self.measurement_atom_count(measure_type)
         if expected:
@@ -2362,6 +2518,22 @@ class MolecularViewerUI(MolecularViewer):
         if loop is None or loop.is_closed():
             return
         loop.call_soon_threadsafe(self._sync_measure_field_from_picks)
+
+    def _notify_identified_atoms_changed(self):
+        """Marshal a label change onto the Toga loop (render thread -> UI)."""
+        loop = getattr(self, "loop", None)
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._report_identified_atoms)
+
+    def _report_identified_atoms(self):
+        """Say which atom numbers are currently shown on the canvas."""
+        labelled = self.get_identified_atoms()
+        if not labelled:
+            self.set_status_message("No atom numbers shown.")
+            return
+        shown = ",".join(str(i + 1) for i in sorted(labelled))
+        self.set_status_message(f"Showing atom numbers: {shown}.")
 
     def _sync_measure_field_from_picks(self):
         """Write the pick list into the Measure field, measuring when complete."""
@@ -2390,8 +2562,9 @@ class MolecularViewerUI(MolecularViewer):
         )
 
     def clear_measure_selection(self, widget):
-        """Clear the canvas selection, the Measure field and the overlay."""
+        """Clear the canvas selection, clicked labels, Measure field and overlay."""
         self.clear_picked_atoms()
+        self.clear_identified_atoms()
         self.measure_indices_input.value = ""
         self.clear_measurement_overlay()
         self.set_status_message("Atom selection cleared.")
@@ -2463,6 +2636,11 @@ class MolecularViewerUI(MolecularViewer):
     async def run_measurement(self, widget):
         try:
             measure_type = self.measure_type_selection.value
+            if measure_type == self.NO_MEASUREMENT:
+                raise ValueError(
+                    "Measurement type is None - pick a measurement type first, "
+                    "or click atoms to show their numbers."
+                )
             if measure_type == "Bond length":
                 i, j = self._parse_measurement_indices(2)
                 value = self.measure_bond_length(i, j)

@@ -226,6 +226,7 @@ def test_pick_changes_notify_the_ui_hook():
 class _StubInput:
     def __init__(self):
         self.value = ""
+        self.placeholder = ""
 
 
 class _StubLoop:
@@ -252,8 +253,11 @@ def _headless_ui(measure_type="Bond length", atoms=6):
     ui.loading_label = None
     ui.measure_indices_input = _StubInput()
     ui.measurement_label = _StubInput()
+    ui.measure_type_selection = _StubInput()
+    ui.measure_type_selection.value = measure_type
     ui.frames = []
     ui.molecule_data = [("C", (float(i), 0.0, 0.0)) for i in range(atoms)]
+    ui.set_label_only_mode(measure_type == MolecularViewer.NO_MEASUREMENT)
     ui.set_measurement_pick_capacity(ui.measurement_atom_count(measure_type))
     return ui
 
@@ -300,6 +304,126 @@ def test_clearing_the_selection_empties_the_field():
 
     assert ui.measure_indices_input.value == ""
     assert ui.get_picked_atoms() == []
+
+
+# ----------------------------------------------------------------------
+# Label-only mode: the "None" measurement type
+# ----------------------------------------------------------------------
+def test_none_is_a_known_measurement_type_consuming_no_atoms():
+    viewer = MolecularViewer()
+
+    assert viewer.NO_MEASUREMENT == "None"
+    assert viewer.measurement_atom_count(viewer.NO_MEASUREMENT) == 0
+
+
+def test_label_only_mode_is_the_default():
+    viewer = MolecularViewer()
+
+    assert viewer.label_only_mode is True
+    assert viewer.get_identified_atoms() == []
+    assert viewer.show_atom_numbers is False
+
+
+def test_clicking_toggles_an_atom_number_on_and_off():
+    viewer = _viewer_with_atoms()
+
+    viewer._handle_atom_click(3)
+    assert viewer.get_identified_atoms() == [3]
+
+    viewer._handle_atom_click(3)
+    assert viewer.get_identified_atoms() == []
+
+
+def test_label_only_mode_has_no_capacity_limit():
+    viewer = _viewer_with_atoms()
+    viewer.set_measurement_pick_capacity(2)
+
+    for index in range(5):
+        viewer._handle_atom_click(index)
+
+    assert viewer.get_identified_atoms() == [0, 1, 2, 3, 4]
+    assert viewer.get_picked_atoms() == []
+
+
+def test_clicks_go_to_the_pick_list_once_a_measurement_is_selected():
+    viewer = _viewer_with_atoms()
+    viewer.set_label_only_mode(False)
+    viewer.set_measurement_pick_capacity(2)
+
+    viewer._handle_atom_click(1)
+
+    assert viewer.get_picked_atoms() == [1]
+    assert viewer.get_identified_atoms() == []
+
+
+def test_switching_modes_clears_the_other_modes_marks():
+    viewer = _viewer_with_atoms()
+    viewer._handle_atom_click(0)
+    viewer._handle_atom_click(2)
+
+    viewer.set_label_only_mode(False)
+    assert viewer.get_identified_atoms() == []
+
+    viewer.set_measurement_pick_capacity(2)
+    viewer._handle_atom_click(1)
+    viewer.set_label_only_mode(True)
+    assert viewer.get_picked_atoms() == []
+
+
+def test_clear_identified_atoms_reports_whether_anything_was_cleared():
+    viewer = _viewer_with_atoms()
+
+    assert viewer.clear_identified_atoms() is False
+
+    viewer._handle_atom_click(1)
+    assert viewer.clear_identified_atoms() is True
+    assert viewer.get_identified_atoms() == []
+
+
+def test_clear_button_removes_displayed_atom_numbers():
+    ui = _headless_ui(MolecularViewerUI.NO_MEASUREMENT)
+    ui._handle_atom_click(0)
+    ui._handle_atom_click(4)
+    assert ui.get_identified_atoms() == [0, 4]
+
+    ui.clear_measure_selection(None)
+
+    assert ui.get_identified_atoms() == []
+    assert ui.measure_indices_input.value == ""
+
+
+def test_label_clicks_never_run_a_measurement():
+    ui = _headless_ui(MolecularViewerUI.NO_MEASUREMENT)
+
+    ui._handle_atom_click(0)
+    ui._handle_atom_click(1)
+
+    assert ui.loop.measurements == 0
+    assert ui.measure_indices_input.value == ""
+
+
+def test_choosing_a_measurement_type_leaves_label_only_mode():
+    ui = _headless_ui(MolecularViewerUI.NO_MEASUREMENT)
+    ui._handle_atom_click(2)
+
+    ui.measure_type_selection.value = "Bond angle"
+    ui.update_measurement_input_hint(None)
+
+    assert ui.label_only_mode is False
+    assert ui.get_identified_atoms() == []
+    assert ui.measurement_pick_capacity == 3
+
+
+def test_choosing_none_returns_to_label_only_mode():
+    ui = _headless_ui("Bond length")
+    ui._toggle_picked_atom(0)
+
+    ui.measure_type_selection.value = MolecularViewerUI.NO_MEASUREMENT
+    ui.update_measurement_input_hint(None)
+
+    assert ui.label_only_mode is True
+    assert ui.get_picked_atoms() == []
+    assert ui.measure_indices_input.placeholder == "Click atoms to show their numbers"
 
 
 # ----------------------------------------------------------------------

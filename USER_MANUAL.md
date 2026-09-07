@@ -1136,8 +1136,8 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Atom scale** and **Bond scale**: relative size of the drawn atoms and bonds.
 - **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded.
 - **Rotation**: rotate the displayed system about X, Y, and Z (described below).
-- **Atom numbers** and **Atomic symbols**: label every atom in the 3D view. **Atom numbers is on by default**, so the 1-based indices you need for a measurement are visible as soon as the molecule is drawn; turn it off for a cleaner view of a large system.
-- **Clear selection**: deselect every atom you have clicked, and clear the **Measure** tab's field and result.
+- **Atom numbers** and **Atomic symbols**: label every atom in the 3D view. Both are **off by default**, so the view starts uncluttered — click individual atoms to read their numbers (see the **Measure** tab's **None** type), or turn **Atom numbers** on to label the whole structure at once.
+- **Clear selection**: deselect every atom you have clicked, remove any atom numbers you revealed by clicking, and clear the **Measure** tab's field and result.
 
 ##### Frames tab
 
@@ -1150,9 +1150,11 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 
 ##### Measure tab
 
+- The measurement type starts on **None**, which measures nothing: left-clicking an atom simply shows its number on the canvas, and clicking it again hides the number. Use it to find the indices you want before switching to a real measurement.
 - Choose **Bond length**, **Bond angle**, **Dihedral angle**, or **Atom coordinates**, then select the atoms **either** by typing their labels into the field **or** by clicking them in the 3D window. Atom indices are 1-based. The value appears in the **Result** field and on the 3D canvas.
-- **Measure** computes the value for whatever is currently in the field — use it after typing. When you select atoms by clicking, the measurement runs on its own as soon as enough atoms are selected.
-- **Clear** empties the field, deselects every clicked atom and removes the measurement from the canvas.
+- **Measure** computes the value for whatever is currently in the field — use it after typing. When you select atoms by clicking, the measurement runs on its own as soon as enough atoms are selected. Pressing it while the type is **None** asks you to pick a measurement type first.
+- **Clear** empties the field, deselects every clicked atom, removes any atom numbers you revealed by clicking, and removes the measurement from the canvas.
+- Switching the type clears the marks from the previous mode, so numbers revealed under **None** disappear when you start a measurement, and a half-finished selection disappears when you go back to **None**.
 - The **Result** field gives the fully labelled measurement, for example `Measurement: d(1,2) = 1.5000 Å`. On the 3D canvas only the number is drawn (`1.5000`, `120.307`), so the value stays readable against the structure. Distances are in Å, angles and dihedrals in degrees.
 
 ##### Box & Performance tab
@@ -1167,7 +1169,11 @@ The saved current frame includes the atoms from the displayed frame and a commen
 
 ##### Selecting atoms by clicking in the 3D view
 
-You can select atoms directly in the 3D view instead of typing their labels. Left-click an atom (a click without dragging — dragging still rotates the view). The atom turns yellow, gets a cyan `#1`, `#2`, … tag showing the order in which you picked it, and its 1-based index is written into the **Measure** tab's field. Typing and clicking are always both available: whatever ends up in the field is what gets measured.
+What a left-click does depends on the **Measure** tab's type. A click always means a click *without* dragging — dragging still rotates the view.
+
+With the type on **None** (the default), clicking an atom shows its 1-based number next to it in cyan, and clicking the same atom again removes it. Nothing is measured and the **Measure** field stays empty. Click as many atoms as you like; **Clear** removes all the numbers at once.
+
+With any real measurement type selected, you can select atoms directly in the 3D view instead of typing their labels. The atom turns yellow, gets a cyan `#1`, `#2`, … tag showing the order in which you picked it, and its 1-based index is written into the **Measure** tab's field. Typing and clicking are always both available: whatever ends up in the field is what gets measured.
 
 **Click order is the measurement order.** Selecting atoms 4, 7 and 9 in that order for a **Bond angle** gives the field `4,7,9`, so atom 7 is the vertex — exactly as if you had typed it. The `#1`/`#2`/`#3` tags on the canvas tell you which atom is which.
 
