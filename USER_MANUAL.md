@@ -587,9 +587,31 @@ The header also carries the formula actually used, the denominator floor, the co
 
 `mae_<unit>` / `rmsd_<unit>` are the mean absolute error and root-mean-square deviation over every matched parameter, in its own unit (ångströms or degrees); the `mae_percent_*` / `rmsd_percent_*` pair is added per selected switch, over the absolute value of that percentage, skipping undefined rows. With both switches off, none of the `formula_*`, `percent_*`, `global_metric_*`, `mae_*` or `rmsd_*` lines are written and the two extra columns are absent — the file is exactly what it always was.
 
+##### What the message panel reports
+
+After a successful comparison the panel summarises both files, the molecule size, the counts of matched and unmatched parameters, and the global metrics, then lists the parameters that shifted most. Each switch that is on adds its percentage to every row of that list:
+
+```
+Global metrics over 6 matched bond distances:
+  MAE  0.01008 A     RMSD  0.01454 A
+  MAE  0.8198 %     RMSD  1.1746 %   (percent_difference)
+  MAE  0.8267 %     RMSD  1.1861 %   (percent_error)
+
+Largest shifts (solvated - isolated):
+  C2-O3                   1.41220 ->    1.44090     +0.02870 A    +2.01 %    +2.03 %
+  O3-H4                   0.97120 ->    0.99060     +0.01940 A    +1.98 %    +2.00 %
+  C1-C2                   1.52830 ->    1.53610     +0.00780 A    +0.51 %    +0.51 %
+```
+
+The percent columns appear in the same order as in the output file — symmetric difference first, then percent error — and a parameter whose percentage is undefined shows `nan` there without disturbing the rest of the row. With both switches off the list carries no percent columns at all.
+
 ##### The comparison figure
 
 With **Open the comparison figure after comparing** on, a grouped bar chart shows both files' averages for the **Parameters to plot** parameters that shifted most (ranked by the size of the shift), each bar carrying a ±1 standard deviation error bar taken from its source file. If a percentage switch is on, that percentage is drawn as a line on a right-hand axis; with both switches on, the line always draws the symmetric percent difference, and the legend says so. The figure opens in the same interactive viewer (zoom/pan/save) as every other tool's plots, and no `.png` file is left next to the parameter files.
+
+##### Reopening the figure later
+
+The viewer writes a small `.json` figure manifest into the output folder when it opens. To see the chart again without re-running the comparison, open **Tools > Plots**, set **Plot type** to `JSON plot file`, and select that file — the Plotter understands the bar-chart manifest and reopens the figure exactly as it was, error bars, percentage line and all.
 
 ### Input Builders
 
