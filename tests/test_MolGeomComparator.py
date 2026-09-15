@@ -678,6 +678,66 @@ def test_largest_shifts_ranks_by_absolute_difference(tmp_path):
     assert [match.local_atoms for match in calculator.largest_shifts(2)] == [(2, 3), (3, 4)]
 
 
+def test_matched_parameters_carry_both_percentages(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+    )
+
+    calculator.run()
+
+    match = calculator.matched[0]
+    assert match.percent_difference == pytest.approx(100 * 0.1 / 1.5)
+    assert match.percent_error == pytest.approx(100 * 0.1 / 1.45)
+
+
+def test_percentages_are_computed_even_when_no_mode_is_selected(tmp_path):
+    """The switches gate the output columns, not the arithmetic."""
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+        percent_modes=(),
+    )
+
+    calculator.run()
+
+    assert calculator.matched[0].percent_difference == pytest.approx(100 * 0.1 / 1.5)
+
+
+def test_a_near_zero_dihedral_gets_an_undefined_percentage(tmp_path):
+    import math
+    calculator = make_calculator(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80)],
+        writer=write_dihedral_file,
+    )
+
+    calculator.run()
+
+    match = calculator.matched[0]
+    assert math.isnan(match.percent_difference)
+    assert match.difference == pytest.approx(0.40)  # the absolute shift survives
+
+
+def test_the_calculator_counts_undefined_percentages(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 120.0)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 122.0)],
+        writer=write_dihedral_file,
+        percent_modes=PERCENT_MODES,
+    )
+
+    calculator.run()
+
+    assert calculator.percent_undefined == 1
+
+
 # --------------------------------------------------------------------------- #
 # Comparison: the occurrence filter                                             #
 # --------------------------------------------------------------------------- #

@@ -21,6 +21,7 @@ The three input formats differ only in how many atoms each parameter names and
 what its value column is called, so one table-driven reader serves all of them,
 locating columns **by name** from the file's own ``# row`` header line.
 """
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -550,6 +551,10 @@ class MatchedParameter:
     occurrence_2: float
     source_row_2: int
     difference: float
+    # Both relative measures are computed for every match; the selected modes
+    # decide only which of them reach the output file and the plot.
+    percent_difference: float
+    percent_error: float
 
     @property
     def atom_label(self) -> str:
@@ -576,12 +581,21 @@ class MolGeomCalculator:
         label_1: str = "isolated",
         label_2: str = "solvated",
         min_occurrence: float = 0.0,
+        # Default to none: the back-compatible output. tests/test_MolGeomComparator.py:863
+        # asserts the exact matched-column list, and the UI always passes its
+        # switch selection explicitly, so nothing relies on a different default.
+        percent_modes: Sequence[str] = (),
     ) -> None:
         self.file_1 = file_1
         self.file_2 = file_2
         self.label_1 = sanitize_label(label_1, fallback="file_1")
         self.label_2 = sanitize_label(label_2, fallback="file_2")
         self.min_occurrence = min_occurrence
+        # Kept in the canonical order, so column order never depends on the
+        # order the user ticked the switches in.
+        self.percent_modes = tuple(
+            mode for mode in PERCENT_MODES if mode in set(percent_modes)
+        )
 
         self.parsed_1: Optional[GeometryParameterFile] = None
         self.parsed_2: Optional[GeometryParameterFile] = None
@@ -590,6 +604,7 @@ class MolGeomCalculator:
         self.only_in_file_2: List[ParameterRow] = []
         self.filtered_out_1 = 0
         self.filtered_out_2 = 0
+        self.percent_undefined = 0
 
     # -- public API -------------------------------------------------------- #
     @property
@@ -679,6 +694,13 @@ class MolGeomCalculator:
             indexed.setdefault(canonical_identity(kind, row.local_atoms), row)
         return indexed
 
+    @staticmethod
+    def percent_of(match: MatchedParameter, mode: str) -> float:
+        """The percentage a mode names, so writer, plot and counter agree."""
+        if mode == PERCENT_DIFFERENCE_MODE:
+            return match.percent_difference
+        return match.percent_error
+
     def _compare(self) -> None:
         kind = self.parsed_1.kind
 
@@ -713,6 +735,8 @@ class MolGeomCalculator:
                     occurrence_2=row_2.occurrence,
                     source_row_2=row_2.source_row,
                     difference=difference,
+                    percent_difference=percent_difference(kind, row_1.average, row_2.average),
+                    percent_error=percent_error(kind, row_1.average, row_2.average),
                 )
             )
 
@@ -722,6 +746,14 @@ class MolGeomCalculator:
         self.only_in_file_2 = [
             indexed_2[identity] for identity in sorted(set(indexed_2) - set(indexed_1))
         ]
+
+        # A row is "undefined" when a percentage the user asked for could not be
+        # formed; with no mode selected nothing was asked for, so nothing counts.
+        self.percent_undefined = sum(
+            1
+            for match in self.matched
+            if any(not math.isfinite(self.percent_of(match, mode)) for mode in self.percent_modes)
+        )
 
         if not self.matched:
             raise ValueError(
