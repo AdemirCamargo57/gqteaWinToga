@@ -739,6 +739,111 @@ def test_the_calculator_counts_undefined_percentages(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Global error metrics                                                          #
+# --------------------------------------------------------------------------- #
+def test_mae_and_rmsd_are_computed_in_the_parameters_own_unit(tmp_path):
+    """Differences of +0.10 and -0.20 A: MAE 0.15, RMSD sqrt((0.01+0.04)/2)."""
+    import math
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40), bond_row(2, 3, "C", "O", 1.50)],
+        [bond_row(1, 2, "C", "C", 1.50), bond_row(2, 3, "C", "O", 1.30)],
+    )
+
+    calculator.run()
+    metrics = calculator.global_metrics()
+
+    assert metrics["mae_angstrom"] == pytest.approx(0.15)
+    assert metrics["rmsd_angstrom"] == pytest.approx(math.sqrt((0.01 + 0.04) / 2))
+
+
+def test_angle_metrics_are_reported_in_degrees(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [angle_row(1, 2, 3, "H", "C", "H", 109.0)],
+        [angle_row(1, 2, 3, "H", "C", "H", 111.0)],
+        writer=write_angle_file,
+    )
+
+    calculator.run()
+    metrics = calculator.global_metrics()
+
+    assert metrics["mae_degrees"] == pytest.approx(2.0)
+    assert "mae_angstrom" not in metrics
+
+
+def test_percent_aggregates_appear_only_for_the_selected_modes(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+        percent_modes=(PERCENT_ERROR_MODE,),
+    )
+
+    calculator.run()
+    metrics = calculator.global_metrics()
+
+    assert "mae_percent_error" in metrics
+    assert "mae_percent_difference" not in metrics
+
+
+def test_percent_aggregates_use_absolute_values(tmp_path):
+    """+2 % and -2 % must give an MAE of 2 %, not 0 %."""
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.00), bond_row(2, 3, "C", "O", 1.00)],
+        [bond_row(1, 2, "C", "C", 1.02), bond_row(2, 3, "C", "O", 0.98)],
+        percent_modes=(PERCENT_ERROR_MODE,),
+    )
+
+    calculator.run()
+
+    assert calculator.global_metrics()["mae_percent_error"] == pytest.approx(2.0)
+
+
+def test_percent_aggregates_skip_undefined_rows(tmp_path):
+    """A nan must not poison the aggregate of the rows that are well defined."""
+    import math
+    calculator = make_calculator(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 100.0)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 102.0)],
+        writer=write_dihedral_file,
+        percent_modes=(PERCENT_ERROR_MODE,),
+    )
+
+    calculator.run()
+    metrics = calculator.global_metrics()
+
+    assert math.isfinite(metrics["mae_percent_error"])
+    assert metrics["mae_percent_error"] == pytest.approx(2.0)
+    # The undefined row still counts towards the native-unit metric.
+    assert metrics["mae_degrees"] == pytest.approx((0.40 + 2.0) / 2)
+
+
+def test_metrics_keys_follow_the_canonical_mode_order(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+        percent_modes=(PERCENT_ERROR_MODE, PERCENT_DIFFERENCE_MODE),
+    )
+
+    calculator.run()
+
+    assert list(calculator.global_metrics()) == [
+        "mae_angstrom",
+        "rmsd_angstrom",
+        "mae_percent_difference",
+        "rmsd_percent_difference",
+        "mae_percent_error",
+        "rmsd_percent_error",
+    ]
+
+
+# --------------------------------------------------------------------------- #
 # Comparison: the occurrence filter                                             #
 # --------------------------------------------------------------------------- #
 def test_occurrence_filter_drops_rows_below_the_threshold(tmp_path):

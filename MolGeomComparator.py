@@ -629,6 +629,39 @@ class MolGeomCalculator:
         """The parameters the second environment changed most."""
         return sorted(self.matched, key=lambda match: -abs(match.difference))[:count]
 
+    def global_metrics(self) -> Dict[str, float]:
+        """MAE and RMSD over the whole matched set, keyed by output header name.
+
+        The native-unit pair is always present and covers every matched
+        parameter. A percent pair is added for each selected mode, over the
+        absolute percentages, skipping the rows whose percentage is undefined --
+        a single nan would otherwise poison the aggregate of every well-defined
+        row.
+        """
+        metrics: Dict[str, float] = {}
+        unit = self.parsed_1.kind.unit
+
+        differences = [abs(match.difference) for match in self.matched]
+        metrics[f"mae_{unit}"] = sum(differences) / len(differences)
+        metrics[f"rmsd_{unit}"] = math.sqrt(
+            sum(value * value for value in differences) / len(differences)
+        )
+
+        for mode in self.percent_modes:
+            values = [
+                abs(self.percent_of(match, mode))
+                for match in self.matched
+                if math.isfinite(self.percent_of(match, mode))
+            ]
+            if not values:
+                continue
+            metrics[f"mae_{mode}"] = sum(values) / len(values)
+            metrics[f"rmsd_{mode}"] = math.sqrt(
+                sum(value * value for value in values) / len(values)
+            )
+
+        return metrics
+
     # -- validation -------------------------------------------------------- #
     def _validate_threshold(self) -> None:
         if self.min_occurrence < 0.0 or self.min_occurrence > 1.0:
