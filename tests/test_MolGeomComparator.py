@@ -24,13 +24,19 @@ from MolGeomComparator import (
     BOND_KIND,
     ANGLE_KIND,
     DIHEDRAL_KIND,
+    PERCENT_DIFFERENCE_MODE,
+    PERCENT_ERROR_MODE,
+    PERCENT_MODES,
     MolGeomCalculator,
     MolGeomComparatorUI,
     angular_difference,
     canonical_identity,
+    circular_mean,
     default_output_name,
     detect_parameter_kind,
     parse_optional_fraction,
+    percent_difference,
+    percent_error,
     read_parameter_file,
     resolve_output_dir,
     sanitize_label,
@@ -451,6 +457,69 @@ def test_angular_difference_is_plain_subtraction_away_from_the_seam():
 
 def test_angular_difference_reports_a_half_turn_as_positive_180():
     assert angular_difference(0.0, 180.0) == pytest.approx(180.0)
+
+
+# --------------------------------------------------------------------------- #
+# Relative-difference formulas                                                  #
+# --------------------------------------------------------------------------- #
+def test_percent_difference_is_signed_and_relative_to_the_mean():
+    # mean 1.5, difference +0.1 -> 100 * 0.1 / 1.5
+    assert percent_difference(BOND_KIND, 1.45, 1.55) == pytest.approx(100 * 0.1 / 1.5)
+    assert percent_difference(BOND_KIND, 1.55, 1.45) == pytest.approx(-100 * 0.1 / 1.5)
+
+
+def test_percent_difference_is_symmetric_in_magnitude():
+    """Swapping the two files must only flip the sign -- that is the point of
+    the symmetric formula: neither simulation is privileged."""
+    forward = percent_difference(BOND_KIND, 1.4321, 1.5987)
+    backward = percent_difference(BOND_KIND, 1.5987, 1.4321)
+    assert forward == pytest.approx(-backward)
+
+
+def test_percent_error_uses_file_1_as_the_reference():
+    # 100 * (1.55 - 1.45) / 1.45
+    assert percent_error(BOND_KIND, 1.45, 1.55) == pytest.approx(100 * 0.1 / 1.45)
+
+
+def test_percent_error_is_not_symmetric():
+    """Unlike the symmetric formula, swapping the files changes the magnitude."""
+    forward = percent_error(BOND_KIND, 1.45, 1.55)
+    backward = percent_error(BOND_KIND, 1.55, 1.45)
+    assert abs(forward) != pytest.approx(abs(backward))
+
+
+def test_dihedral_percentages_use_the_wrapped_numerator():
+    """+179 -> -179 is a +2 deg shift, not -358 deg."""
+    value = percent_difference(DIHEDRAL_KIND, 179.0, -179.0)
+    # numerator +2, circular-mean denominator 180
+    assert value == pytest.approx(100 * 2.0 / 180.0)
+
+
+def test_circular_mean_takes_the_midpoint_on_the_circle():
+    assert circular_mean(179.0, angular_difference(179.0, -179.0)) == pytest.approx(180.0)
+    assert circular_mean(10.0, angular_difference(10.0, 20.0)) == pytest.approx(15.0)
+
+
+def test_percent_is_undefined_when_the_denominator_falls_below_the_floor():
+    import math
+    # A dihedral averaging a few tenths of a degree: floor is 1.0 deg.
+    assert math.isnan(percent_difference(DIHEDRAL_KIND, 0.4, 0.8))
+    assert math.isnan(percent_error(DIHEDRAL_KIND, 0.4, 0.8))
+    # A bond never trips its 1e-6 A floor.
+    assert not math.isnan(percent_difference(BOND_KIND, 1.4, 1.5))
+    # A normal angle does not trip the 1.0 deg floor either.
+    assert not math.isnan(percent_difference(ANGLE_KIND, 109.5, 111.0))
+
+
+def test_each_kind_carries_its_own_percent_floor():
+    assert BOND_KIND.percent_floor == pytest.approx(1e-6)
+    assert ANGLE_KIND.percent_floor == pytest.approx(1.0)
+    assert DIHEDRAL_KIND.percent_floor == pytest.approx(1.0)
+
+
+def test_percent_modes_have_a_fixed_order():
+    """Column order must not depend on which switch the user ticked first."""
+    assert PERCENT_MODES == (PERCENT_DIFFERENCE_MODE, PERCENT_ERROR_MODE)
 
 
 def test_sanitize_label_makes_a_column_safe_token():

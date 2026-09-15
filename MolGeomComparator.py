@@ -54,6 +54,7 @@ class ParameterKind:
     frames_column: str
     unit: str
     periodic: bool
+    percent_floor: float
 
     @property
     def atom_columns(self) -> Tuple[str, ...]:
@@ -90,6 +91,8 @@ BOND_KIND = ParameterKind(
     frames_column="frames_bonded",
     unit="angstrom",
     periodic=False,
+    # A bond length is never near zero, so this is only a division guard.
+    percent_floor=1e-6,
 )
 
 ANGLE_KIND = ParameterKind(
@@ -103,6 +106,8 @@ ANGLE_KIND = ParameterKind(
     frames_column="frames_present",
     unit="degrees",
     periodic=False,
+    # A bond angle near zero is a degenerate geometry, not a measurement.
+    percent_floor=1.0,
 )
 
 DIHEDRAL_KIND = ParameterKind(
@@ -116,6 +121,8 @@ DIHEDRAL_KIND = ParameterKind(
     frames_column="frames_present",
     unit="degrees",
     periodic=True,
+    # Dihedrals genuinely sit near zero, where a percentage is meaningless.
+    percent_floor=1.0,
 )
 
 PARAMETER_KINDS = (BOND_KIND, ANGLE_KIND, DIHEDRAL_KIND)
@@ -452,6 +459,70 @@ def angular_difference(first: float, second: float) -> float:
     if difference <= -180.0:
         difference += 360.0
     return difference
+
+
+# The two relative-difference formulas the comparator can report. The order of
+# PERCENT_MODES is the order the columns are written in, so it does not depend
+# on which switch the user happened to tick first.
+PERCENT_DIFFERENCE_MODE = "percent_difference"
+PERCENT_ERROR_MODE = "percent_error"
+PERCENT_MODES = (PERCENT_DIFFERENCE_MODE, PERCENT_ERROR_MODE)
+
+
+def circular_mean(average_1: float, difference: float) -> float:
+    """The midpoint of two angles on the circle, wrapped into (-180, 180].
+
+    Taken through the already-wrapped ``difference`` rather than the two angles,
+    so no new trigonometry is introduced. The arithmetic mean is wrong at the
+    seam: +179 deg and -179 deg average to 0 deg, which would make two nearly
+    identical dihedrals divide by (almost) zero.
+    """
+    midpoint = (average_1 + difference / 2.0 + 180.0) % 360.0 - 180.0
+    if midpoint <= -180.0:
+        midpoint += 360.0
+    return midpoint
+
+
+def _signed_difference(kind: ParameterKind, average_1: float, average_2: float) -> float:
+    """``average_2 - average_1``, wrapped for a coordinate that lives on a circle."""
+    if kind.periodic:
+        return angular_difference(average_1, average_2)
+    return average_2 - average_1
+
+
+def _as_percent(numerator: float, denominator: float, floor: float) -> float:
+    """``100 * numerator / denominator``, or nan when the denominator is too small.
+
+    A dihedral averaging 0.5 deg would otherwise turn a 0.4 deg shift into 80 %,
+    which reads as a dramatic result and means nothing.
+    """
+    if abs(denominator) < floor:
+        return float("nan")
+    return 100.0 * numerator / denominator
+
+
+def percent_difference(kind: ParameterKind, average_1: float, average_2: float) -> float:
+    """The symmetric percent difference, signed as ``file 2 - file 1``.
+
+    ``100 * (avg_2 - avg_1) / mean(avg_1, avg_2)``. Symmetric because neither
+    simulation is the reference: swapping the two files only flips the sign.
+    """
+    difference = _signed_difference(kind, average_1, average_2)
+    if kind.periodic:
+        denominator = circular_mean(average_1, difference)
+    else:
+        denominator = (average_1 + average_2) / 2.0
+    return _as_percent(difference, denominator, kind.percent_floor)
+
+
+def percent_error(kind: ParameterKind, average_1: float, average_2: float) -> float:
+    """The percent error of file 2 against file 1, signed.
+
+    ``100 * (avg_2 - avg_1) / avg_1``. Asymmetric on purpose: file 1 is the
+    reference, which is what a comparison against experiment needs.
+    """
+    difference = _signed_difference(kind, average_1, average_2)
+    return _as_percent(difference, average_1, kind.percent_floor)
 
 
 def sanitize_label(text: str, fallback: str = "file") -> str:
