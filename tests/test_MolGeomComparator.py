@@ -1243,6 +1243,179 @@ def test_summary_lines_report_the_counts_and_the_output_path(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# Percent columns and metric header lines                                       #
+# --------------------------------------------------------------------------- #
+def run_with_percentages(tmp_path, rows_1, rows_2, **kwargs):
+    """run_and_write with both relative measures selected.
+
+    The calculator defaults to none of them, so that the file it writes without
+    being asked is the one it has always written.
+    """
+    kwargs.setdefault("percent_modes", PERCENT_MODES)
+    return run_and_write(tmp_path, rows_1, rows_2, **kwargs)
+
+
+def test_both_modes_add_both_columns_after_the_difference(tmp_path):
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+    )
+
+    columns = section_columns(text, "matched")
+    difference_at = columns.index("difference_solvated_minus_isolated")
+    assert columns[difference_at + 1] == "percent_difference"
+    assert columns[difference_at + 2] == "percent_error_vs_isolated"
+    assert columns[difference_at + 3] == "source_row_1"
+
+
+def test_one_mode_adds_only_its_own_column(tmp_path):
+    _, _, text = run_and_write(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+        percent_modes=(PERCENT_DIFFERENCE_MODE,),
+    )
+
+    columns = section_columns(text, "matched")
+    assert "percent_difference" in columns
+    assert not any(c.startswith("percent_error") for c in columns)
+
+
+def test_no_mode_reproduces_the_original_column_list(tmp_path):
+    """Back-compatibility: with neither switch on, nothing about the file changes."""
+    _, _, text = run_and_write(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+        percent_modes=(),
+    )
+
+    columns = section_columns(text, "matched")
+    assert columns == [
+        "row", "atom_i", "atom_j", "element_i", "element_j",
+        "average_isolated", "std_dev_isolated", "occurrence_isolated",
+        "average_solvated", "std_dev_solvated", "occurrence_solvated",
+        "difference_solvated_minus_isolated", "source_row_1", "source_row_2",
+    ]
+    header = header_values(text)
+    assert not any(key.startswith(("formula_", "mae_", "rmsd_", "global_metric",
+                                   "percent_")) for key in header)
+
+
+def test_percent_values_land_in_their_columns(tmp_path):
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+    )
+
+    columns = section_columns(text, "matched")
+    row = section_rows(text, "matched")[0]
+    assert float(row[columns.index("percent_difference")]) == pytest.approx(
+        100 * 0.1 / 1.5, abs=1e-6
+    )
+    assert float(row[columns.index("percent_error_vs_isolated")]) == pytest.approx(
+        100 * 0.1 / 1.45, abs=1e-6
+    )
+
+
+def test_an_undefined_percentage_is_written_as_nan(tmp_path):
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80)],
+        writer=write_dihedral_file,
+    )
+
+    columns = section_columns(text, "matched")
+    row = section_rows(text, "matched")[0]
+    assert row[columns.index("percent_difference")] == "nan"
+
+
+def test_the_column_name_follows_a_disambiguated_label(tmp_path):
+    """Two files labelled the same must not produce a duplicate column name."""
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+        label_1="run",
+        label_2="run",
+    )
+
+    columns = section_columns(text, "matched")
+    assert "percent_error_vs_run_1" in columns
+
+
+def test_header_records_the_formula_that_was_applied(tmp_path):
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+    )
+
+    header = header_values(text)
+    assert header["formula_percent_difference"] == "100*(avg_2-avg_1)/((avg_1+avg_2)/2)"
+    assert header["formula_percent_error"] == "100*(avg_2-avg_1)/avg_1"
+
+
+def test_a_dihedral_file_describes_its_wrapped_formula(tmp_path):
+    """The file must never misdescribe its own numbers."""
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 179.0)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", -179.0)],
+        writer=write_dihedral_file,
+    )
+
+    header = header_values(text)
+    assert header["formula_percent_difference"] == (
+        "100*wrap(avg_2-avg_1)/circular_mean(avg_1,avg_2)"
+    )
+
+
+def test_header_records_the_floor_and_the_undefined_row_count(tmp_path):
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 120.0)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 122.0)],
+        writer=write_dihedral_file,
+    )
+
+    header = header_values(text)
+    assert header["percent_denominator_floor"] == "1 degrees"
+    assert header["percent_undefined_rows"] == "1"
+
+
+def test_header_records_the_metric_category_size_and_units(tmp_path):
+    _, _, text = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40), bond_row(2, 3, "C", "O", 1.50)],
+        [bond_row(1, 2, "C", "C", 1.50), bond_row(2, 3, "C", "O", 1.30)],
+    )
+
+    header = header_values(text)
+    assert header["global_metric_category"] == "bond distance"
+    assert header["global_metric_n"] == "2"
+    assert float(header["mae_angstrom"]) == pytest.approx(0.15)
+    assert float(header["rmsd_angstrom"]) == pytest.approx(0.1581138, abs=1e-6)
+
+
+def test_the_output_file_is_pure_ascii(tmp_path):
+    """The writer uses the platform default encoding; a stray unicode label
+    would raise UnicodeEncodeError on Windows."""
+    _, path, _ = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.45)],
+        [bond_row(1, 2, "C", "C", 1.55)],
+    )
+
+    open(path, "rb").read().decode("ascii")  # raises if anything is non-ASCII
+
+
+# --------------------------------------------------------------------------- #
 # UI input helpers                                                              #
 # --------------------------------------------------------------------------- #
 def test_blank_occurrence_field_means_keep_everything():

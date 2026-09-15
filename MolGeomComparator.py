@@ -803,6 +803,29 @@ class MolGeomCalculator:
             return f"{self.label_1}_1", f"{self.label_2}_2"
         return self.label_1, self.label_2
 
+    def percent_column_name(self, mode: str) -> str:
+        """The output column a mode writes into.
+
+        ASCII, single token: the file is written with the platform default
+        encoding, and a '%' in a name breaks numpy's names=True reader. The
+        error column carries the reference label, taken from column_labels so
+        two identically named files stay distinguishable.
+        """
+        if mode == PERCENT_DIFFERENCE_MODE:
+            return "percent_difference"
+        return f"percent_error_vs_{self.column_labels[0]}"
+
+    def percent_formula(self, mode: str) -> str:
+        """The equation actually applied, for the file's own header."""
+        periodic = self.parsed_1.kind.periodic
+        if mode == PERCENT_DIFFERENCE_MODE:
+            if periodic:
+                return "100*wrap(avg_2-avg_1)/circular_mean(avg_1,avg_2)"
+            return "100*(avg_2-avg_1)/((avg_1+avg_2)/2)"
+        if periodic:
+            return "100*wrap(avg_2-avg_1)/avg_1"
+        return "100*(avg_2-avg_1)/avg_1"
+
     def matched_columns(self) -> List[str]:
         kind = self.parsed_1.kind
         first, second = self.column_labels
@@ -812,7 +835,11 @@ class MolGeomCalculator:
             + list(kind.element_columns)
             + [f"average_{first}", f"std_dev_{first}", f"occurrence_{first}"]
             + [f"average_{second}", f"std_dev_{second}", f"occurrence_{second}"]
-            + [f"difference_{second}_minus_{first}", "source_row_1", "source_row_2"]
+            + [f"difference_{second}_minus_{first}"]
+            # Appended, never inserted earlier: a reader that indexes the
+            # columns above positionally keeps working.
+            + [self.percent_column_name(mode) for mode in self.percent_modes]
+            + ["source_row_1", "source_row_2"]
         )
 
     def unmatched_columns(self) -> List[str]:
@@ -842,6 +869,7 @@ class MolGeomCalculator:
             self._write_source_header(out, 1, self.parsed_1, self.label_1, self.filtered_out_1)
             self._write_source_header(out, 2, self.parsed_2, self.label_2, self.filtered_out_2)
             out.write(f"# minimum_occurrence_fraction {self.min_occurrence:g}\n")
+            self._write_percent_header(out)
             out.write(f"# matched_parameters {len(self.matched)}\n")
             out.write(f"# only_in_file_1 {len(self.only_in_file_1)}\n")
             out.write(f"# only_in_file_2 {len(self.only_in_file_2)}\n")
@@ -885,8 +913,28 @@ class MolGeomCalculator:
             out.write(f"# file_{position}_local_to_global {mapping}\n")
         out.write(f"# file_{position}_rows_below_threshold {filtered_out}\n")
 
-    @staticmethod
-    def _format_matched_row(row_index: int, match: MatchedParameter) -> str:
+    def _write_percent_header(self, out) -> None:
+        """The formula, guard and global-metric block.
+
+        Nothing is written when no mode is selected, so the file stays exactly
+        what it was before relative differences existed.
+        """
+        kind = self.parsed_1.kind
+        if not self.percent_modes:
+            return
+
+        for mode in self.percent_modes:
+            out.write(f"# formula_{mode} {self.percent_formula(mode)}\n")
+        out.write(
+            f"# percent_denominator_floor {kind.percent_floor:g} {kind.unit}\n"
+        )
+        out.write(f"# percent_undefined_rows {self.percent_undefined}\n")
+        out.write(f"# global_metric_category {kind.label}\n")
+        out.write(f"# global_metric_n {len(self.matched)}\n")
+        for name, value in self.global_metrics().items():
+            out.write(f"# {name} {value:.8f}\n")
+
+    def _format_matched_row(self, row_index: int, match: MatchedParameter) -> str:
         fields = [f"{row_index:>6d}"]
         fields += [f"{atom:>8d}" for atom in match.local_atoms]
         fields += [f"{element:>8s}" for element in match.elements]
@@ -898,6 +946,13 @@ class MolGeomCalculator:
             f"{match.std_2:>16.8f}",
             f"{match.occurrence_2:>16.8f}",
             f"{match.difference:>16.8f}",
+        ]
+        # An undefined percentage formats as 'nan' under this spec, which is
+        # exactly the marker the header's undefined-row count refers to.
+        fields += [
+            f"{self.percent_of(match, mode):>16.8f}" for mode in self.percent_modes
+        ]
+        fields += [
             f"{match.source_row_1:>12d}",
             f"{match.source_row_2:>12d}",
         ]
