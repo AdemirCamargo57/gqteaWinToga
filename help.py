@@ -295,6 +295,86 @@ To select frames around the minimum Helmholtz free energy, follow the procedure 
     file named "frame_closest_to_average.xyz".
 """
 
+    help_mol_geom_comparator = """COMPARISON OF MOLECULAR GEOMETRIC PARAMETERS
+
+This module compares the geometric parameters of the same molecule taken from two
+simulations. The usual case is one run of the isolated molecule and one run of the
+same molecule in a water box, from which the solvent has already been removed.
+
+INPUT FILES
+
+Both files must be combined parameter files written by one of these tools, and both
+must be of the same type:
+
+ - All bond distance analysis    (all_bond_analysis_combined.txt)
+ - All bond angle analysis       (all_angle_analysis_combined.txt)
+ - All dihedral angle analysis   (all_dihedral_analysis_combined.txt)
+
+The type is taken from the file's own title line, and the columns are located by the
+names on its "# row" header line, so the files are read exactly as they were written.
+
+HOW THE PARAMETERS ARE MATCHED
+
+Atoms are NOT matched by their raw index. In a solvated run the analysis is usually
+restricted to the solute, so its atoms keep the indices they have in the full box:
+the three oxygens of the reference molecule may be atoms 295, 296 and 297 there while
+they are atoms 29, 30 and 31 in the isolated run. The tool reads the
+"# solute_atom_indices" header and renumbers every atom back onto the molecule, so
+that C1-O295 in the box is recognised as the same bond as C1-O29 isolated.
+
+Before anything is compared, the two files are checked against each other:
+
+ - they must hold the same parameter type;
+ - they must describe molecules of the same size;
+ - every atom must carry the same element in both files.
+
+If any check fails the comparison is refused and the offending atom is named. A wrong
+atom mapping would produce results that look perfectly reasonable but are meaningless,
+so the tool stops instead of guessing.
+
+Parameters are matched regardless of how the atoms are ordered inside a row: a bond is
+undirected, an angle keeps its vertex but may have its arms swapped, and a dihedral
+read backwards has the same signed value.
+
+MINIMUM OCCURRENCE FRACTION
+
+Leave this blank (or 0) to keep every parameter. The all-* tools list any pair that
+came within the connection distance in at least one frame, so a long trajectory picks
+up contacts that are not real bonds - typically H-H pairs sitting just under the
+1.7 A cutoff in a fraction of a percent of the frames. Set the field to, for example,
+0.05 to ignore parameters present in fewer than 5% of the frames. The filter is applied
+to both files before matching, so a rare contact cannot appear as a parameter that one
+simulation is missing.
+
+OUTPUT
+
+One text file with a metadata header (both source files, their labels, frame counts,
+atom scopes, the atom renumbering that was applied, and the counts below) and three
+labelled sections:
+
+ - matched            one row per parameter found in both files, with each file's
+                      average, standard deviation and occurrence, the difference
+                      (file 2 minus file 1), and the row number it came from in each
+                      source file;
+ - only_in_file_1     parameters present in the first file only;
+ - only_in_file_2     parameters present in the second file only.
+
+Bond distances are in angstroms and angles in degrees. Dihedral differences are wrapped
+into (-180, 180], so a shift from +179 to -179 degrees is reported as +2 degrees rather
+than -358.
+
+The labels typed for the two files become part of the column names, for example
+average_isolated and average_solvated, so the output is readable on its own. Every
+column is whitespace separated and every comment line starts with "#", so the sections
+can be read back with numpy.
+
+THE RESULTS BOX
+
+After a successful run the box reports how many parameters were matched, how many were
+unique to each file, how many rows the occurrence filter dropped, where the output was
+written, and the ten parameters whose average changed most between the two simulations.
+"""
+
     help_bond_analysis = f"""BOND LENGTH ANALYSIS MODULE
 
 This python module calculates: 

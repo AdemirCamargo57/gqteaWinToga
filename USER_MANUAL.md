@@ -26,6 +26,7 @@
     - [Dihedral Angle Analysis](#dihedral-angle-analysis)
     - [All Dihedral Angle Analysis](#all-dihedral-angle-analysis)
     - [Hydrogen Bond Analysis](#hydrogen-bond-analysis)
+    - [Comparison of Molecular Geometric Parameters](#comparison-of-molecular-geometric-parameters)
   - [Input Builders](#input-builders)
     - [CPMD Inputs](#cpmd-inputs)
     - [Surface Hopping Input Builder](#surface-hopping-input-builder)
@@ -507,6 +508,51 @@ Inputs:
 - `TRAJEC.xyz` trajectory file.
 
 Click **Exec** or the main action button in the tool window to run the calculation.
+
+#### Comparison of Molecular Geometric Parameters
+
+Use this tool to see how a different environment changes a molecule's geometry. It compares the geometric parameters of the **same molecule** taken from two simulations — typically the isolated molecule and the same molecule in a water box, with the solvent already removed from the trajectory.
+
+Inputs:
+
+- **Parameter file 1 (reference)** and **Parameter file 2 (comparison)**: two combined parameter files written by the All bond distance, All bond angle or All dihedral angle analysis tools. Both must be of the same type; the type is read from each file's own title line.
+- **Label for file 1** / **Label for file 2** (default `isolated` and `solvated`): these become part of the output column names, e.g. `average_isolated`.
+- **Minimum occurrence fraction** (blank = 0, keep everything): ignores parameters present in fewer than this fraction of frames.
+- **Output folder** (blank = next to parameter file 1) and **Output txt filename** (blank = `geometry_comparison_<type>.txt`).
+
+Each file is read as soon as you select it, so a wrong or corrupt file is reported immediately, together with its type, frame count, atom scope and molecule size.
+
+Click **Compare** to run, **Help** for the full in-program description.
+
+##### How atoms are matched
+
+Atoms are **not** matched by their raw index. A solvated run is normally analysed with solute atom indices, so its rows carry the atoms' indices in the **full box**: the oxygens of the reference molecule may be atoms 295, 296 and 297 there, while the same atoms are 29, 30 and 31 in the isolated run. The tool reads the `# solute_atom_indices` header and renumbers every atom back onto the molecule, so `C1-O295` in the box is recognised as the same bond as `C1-O29` isolated. The renumbering it applied is recorded in the output header.
+
+Before comparing, the two files must agree on the parameter type, the molecule size, and the element of every atom. If any check fails the run is refused and the offending atom is named — a wrong atom mapping would produce results that look reasonable but are meaningless.
+
+Parameters match regardless of atom order within a row: a bond is undirected, an angle keeps its vertex but may have its arms swapped, and a dihedral read backwards has the same signed value.
+
+##### Why the occurrence filter matters
+
+The all-\* tools list every pair that came within the connection distance in at least one frame, so a long trajectory collects contacts that are not real bonds — typically H–H pairs sitting just under the 1.7 Å cutoff in a fraction of a percent of the frames. Setting the fraction to e.g. `0.05` drops them. The filter is applied to **both** files before matching, so a rare contact cannot be reported as a parameter that one simulation is missing.
+
+##### Output
+
+A single text file with a metadata header (both source paths, labels, frame counts, atom scopes, the atom renumbering applied, the occurrence threshold and what it dropped, and the matched/unmatched counts) followed by three labelled sections:
+
+```text
+# section matched
+# row atom_i atom_j element_i element_j average_isolated std_dev_isolated occurrence_isolated average_solvated std_dev_solvated occurrence_solvated difference_solvated_minus_isolated source_row_1 source_row_2
+# section only_in_file_1
+# row atom_i atom_j element_i element_j average std_dev occurrence source_row
+# section only_in_file_2
+```
+
+Angle and dihedral files carry three and four atom/element columns instead of two. Atom labels are the **molecule-local** 1-based indices; `source_row_1` / `source_row_2` give the row number the values came from in each input file, so any row can be traced back. Distances are in ångströms and angles in degrees. Dihedral differences are wrapped into (−180, 180], so a shift from +179° to −179° is reported as +2°, not −358°.
+
+Every comment line starts with `#`, so a section can be read back with `np.genfromtxt(path, dtype=None, names=True, comments='#')` once it is separated from the others.
+
+After a successful run the text box reports the counts, the output path, and the ten parameters whose average changed most between the two simulations.
 
 ### Input Builders
 
