@@ -518,6 +518,12 @@ Inputs:
 - **Parameter file 1 (reference)** and **Parameter file 2 (comparison)**: two combined parameter files written by the All bond distance, All bond angle or All dihedral angle analysis tools. Both must be of the same type; the type is read from each file's own title line.
 - **Label for file 1** / **Label for file 2** (default `isolated` and `solvated`): these become part of the output column names, e.g. `average_isolated`.
 - **Minimum occurrence fraction** (blank = 0, keep everything): ignores parameters present in fewer than this fraction of frames.
+- **Relative difference columns** — two independent switches, either, both, or neither on:
+  - **Symmetric percent difference** (on by default): `100*(avg_2-avg_1)/mean(avg_1,avg_2)`.
+  - **Percent error vs file 1** (off by default): `100*(avg_2-avg_1)/avg_1`.
+
+  Both are signed, file 2 minus file 1. Leaving both off writes the output file exactly as it was before these columns existed.
+- **Plot** — **Open the comparison figure after comparing** (on by default) and **Parameters to plot** (blank = 25, the parameters that shifted most).
 - **Output folder** (blank = next to parameter file 1) and **Output txt filename** (blank = `geometry_comparison_<type>.txt`).
 
 Each file is read as soon as you select it, so a wrong or corrupt file is reported immediately, together with its type, frame count, atom scope and molecule size.
@@ -553,6 +559,37 @@ Angle and dihedral files carry three and four atom/element columns instead of tw
 Every comment line starts with `#`, so a section can be read back with `np.genfromtxt(path, dtype=None, names=True, comments='#')` once it is separated from the others.
 
 After a successful run the text box reports the counts, the output path, and the ten parameters whose average changed most between the two simulations.
+
+##### Relative differences and global metrics
+
+With one or both **Relative difference columns** switches on, a percent column is appended after `difference_solvated_minus_isolated` for each switch that is on — appended, never inserted earlier, so a reader that indexes the columns above by position keeps working:
+
+```text
+# row ... difference_solvated_minus_isolated percent_difference percent_error_vs_isolated source_row_1 source_row_2
+```
+
+`percent_difference` is the symmetric form; `percent_error_vs_isolated` carries the reference file's label so two identically labelled comparisons stay distinguishable. Both are signed, file 2 minus file 1. A percentage whose denominator is too close to zero to mean anything — below `1e-6` Å for a bond, below `1.0°` for an angle or a dihedral — is written `nan`; for a dihedral the symmetric denominator is the circular mean of the two angles, not their arithmetic mean, so a shift between e.g. +179° and −179° does not divide by (almost) zero.
+
+The header also carries the formula actually used, the denominator floor, the count of undefined rows, and global metrics over the whole matched set:
+
+```text
+# formula_percent_difference 100*(avg_2-avg_1)/((avg_1+avg_2)/2)
+# formula_percent_error 100*(avg_2-avg_1)/avg_1
+# percent_denominator_floor 1e-06 angstrom
+# percent_undefined_rows 0
+# global_metric_category bond distance
+# global_metric_n 42
+# mae_angstrom 0.01234567
+# rmsd_angstrom 0.01567890
+# mae_percent_difference 1.23456789
+# rmsd_percent_difference 1.56789012
+```
+
+`mae_<unit>` / `rmsd_<unit>` are the mean absolute error and root-mean-square deviation over every matched parameter, in its own unit (ångströms or degrees); the `mae_percent_*` / `rmsd_percent_*` pair is added per selected switch, over the absolute value of that percentage, skipping undefined rows. With both switches off, none of the `formula_*`, `percent_*`, `global_metric_*`, `mae_*` or `rmsd_*` lines are written and the two extra columns are absent — the file is exactly what it always was.
+
+##### The comparison figure
+
+With **Open the comparison figure after comparing** on, a grouped bar chart shows both files' averages for the **Parameters to plot** parameters that shifted most (ranked by the size of the shift), each bar carrying a ±1 standard deviation error bar taken from its source file. If a percentage switch is on, that percentage is drawn as a line on a right-hand axis; with both switches on, the line always draws the symmetric percent difference, and the legend says so. The figure opens in the same interactive viewer (zoom/pan/save) as every other tool's plots, and no `.png` file is left next to the parameter files.
 
 ### Input Builders
 

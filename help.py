@@ -373,6 +373,56 @@ THE RESULTS BOX
 After a successful run the box reports how many parameters were matched, how many were
 unique to each file, how many rows the occurrence filter dropped, where the output was
 written, and the ten parameters whose average changed most between the two simulations.
+
+RELATIVE DIFFERENCES (PERCENTAGES)
+
+Two independent switches each add a signed percentage column to every matched row,
+both defined as file 2 minus file 1:
+
+ - Symmetric percent difference   100 * (avg_2 - avg_1) / mean(avg_1, avg_2)
+ - Percent error vs file 1        100 * (avg_2 - avg_1) / avg_1
+
+Either, both, or neither switch may be on. With neither switch on the output file is
+written exactly as it always was: no percent column and none of the metric lines below.
+
+A percentage is undefined, and written as "nan", when its denominator is too close to
+zero to mean anything: below 1e-6 A for a bond distance, or below 1.0 degree for a bond
+angle or a dihedral. Without this guard a dihedral averaging a few tenths of a degree
+would turn a tiny, unremarkable shift into an enormous and meaningless percentage. The
+number of undefined rows in the file is recorded in the header as
+"# percent_undefined_rows".
+
+Dihedral differences are wrapped into (-180, 180] before either formula is applied, and
+for a dihedral the symmetric percent difference does not divide by the arithmetic mean
+of the two angles but by their circular mean: two nearly identical dihedrals of, say,
++179 and -179 degrees average arithmetically to 0 degrees, which would divide by
+(almost) zero, while the circular mean correctly sits near +179/-179.
+
+GLOBAL METRICS
+
+Whenever a comparison is written, its header also carries the mean absolute error and
+the root-mean-square deviation over the whole matched set, in the parameter's own unit
+(angstroms or degrees), as "# mae_..." and "# rmsd_...". "# global_metric_category"
+names the parameter kind and "# global_metric_n" the number of matched parameters the
+two figures were computed over. If a percentage switch is on, the same pair of metrics
+is added over that percentage's absolute values, skipping any undefined row, as
+"# mae_percent_difference" / "# rmsd_percent_difference" and/or
+"# mae_percent_error" / "# rmsd_percent_error".
+
+THE COMPARISON FIGURE
+
+With "Open the comparison figure after comparing" on, a grouped bar chart shows both
+files' averages, side by side, for the parameters that shifted most between the two
+simulations. Each bar carries a +/- 1 standard deviation error bar taken straight from
+its source file. "Parameters to plot" (blank = 25) chooses how many of the largest
+shifts are shown, ranked by the size of the shift.
+
+If a percentage switch is on, that percentage is also drawn, as a line on a right-hand
+axis, because it shares no scale with the absolute values on the left. With both
+switches on, the line always draws the symmetric percent difference, and its legend
+entry names it as such. The figure opens in the same interactive viewer (zoom, pan,
+save) used by every other tool in this program, and no image file is left behind next
+to the parameter files.
 """
 
     help_bond_analysis = f"""BOND LENGTH ANALYSIS MODULE
