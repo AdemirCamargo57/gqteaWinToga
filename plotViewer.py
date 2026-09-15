@@ -12,12 +12,30 @@ Manifest format (list of figures)::
 
 (``xlim``/``ylim`` are optional.)
 
+A third shape is a grouped bar chart with error bars and an optional
+percentage line on a twin axis::
+
+    [{"type": "bars", "categories": [...],
+      "groups": [{"label": "...", "values": [...], "errors": [...]}],
+      "line": {"label": "...", "values": [...], "ylabel": "..."},
+      "xlabel": "...", "ylabel": "...", "title": "..."}, ...]
+
+(``errors`` and ``line`` are optional.) Entries written before this shape
+existed carry no ``"type"`` key at all, so the plain curve stays the default.
+
 Usage::
 
     python plotViewer.py <manifest.json>
 """
 import sys
 import json
+
+# Imported before matplotlib.use("TkAgg") below on purpose: displayPlots.py
+# pins the non-interactive Agg backend at import time, so importing it after
+# the TkAgg pin would silently re-pin Agg and this viewer would open no
+# window at all. See draw_bar_comparison's docstring for why the renderer
+# lives there instead of here.
+from displayPlots import draw_bar_comparison
 
 import matplotlib
 # Pin an interactive GUI backend explicitly. In a packaged (frozen) build
@@ -33,11 +51,18 @@ FONT_STYLE = {"color": "darkred", "weight": "normal", "size": 14}
 def build_figures(figures):
     """Create one matplotlib figure per manifest entry (no blocking show).
 
-    Each entry is either a single curve ("x"/"y") or several labelled curves
-    ("series": [{"x", "y", "label"}, ...]) drawn overlaid with a legend.
+    Three entry shapes: a grouped bar chart with error bars and an optional
+    percentage line on a twin axis ("type": "bars"), several labelled curves
+    overlaid with a legend ("series"), or a single curve ("x"/"y"). Entries
+    written before the bar chart existed carry no "type" key, so the plain
+    curve stays the default.
     """
     for i, fig in enumerate(figures, 1):
-        plt.figure(i)
+        figure = plt.figure(i)
+        if fig.get("type") == "bars":
+            draw_bar_comparison(figure.gca(), fig, FONT_STYLE)
+            plt.tight_layout()
+            continue
         if "series" in fig:
             for s in fig["series"]:
                 plt.plot(s.get("x", []), s.get("y", []), antialiased=True,
