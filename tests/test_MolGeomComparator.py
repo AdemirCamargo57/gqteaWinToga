@@ -35,6 +35,7 @@ from MolGeomComparator import (
     default_output_name,
     detect_parameter_kind,
     parse_optional_fraction,
+    parse_optional_positive_int,
     percent_difference,
     percent_error,
     read_parameter_file,
@@ -1535,6 +1536,82 @@ def test_a_chosen_output_folder_wins(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# The comparison figure                                                         #
+# --------------------------------------------------------------------------- #
+def test_plot_dataset_ranks_by_the_size_of_the_shift(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.50), bond_row(2, 3, "C", "O", 1.40),
+         bond_row(3, 4, "O", "H", 0.96)],
+        [bond_row(1, 2, "C", "C", 1.51), bond_row(2, 3, "C", "O", 1.60),
+         bond_row(3, 4, "O", "H", 0.99)],
+    )
+    calculator.run()
+
+    dataset = calculator.plot_dataset(2, PERCENT_DIFFERENCE_MODE)
+
+    assert dataset["categories"] == ["C2-O3", "O3-H4"]  # 0.20 then 0.03
+    assert dataset["shown"] == 2
+    assert dataset["total"] == 3
+
+
+def test_plot_dataset_carries_both_averages_and_their_error_bars(tmp_path):
+    calculator = make_calculator(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.50, std_dev=0.01)],
+        [bond_row(1, 2, "C", "C", 1.55, std_dev=0.02)],
+        label_1="iso", label_2="sol",
+    )
+    calculator.run()
+
+    dataset = calculator.plot_dataset(25, None)
+
+    (label_1, values_1, errors_1), (label_2, values_2, errors_2) = dataset["groups"]
+    assert (label_1, label_2) == ("iso", "sol")
+    assert values_1 == [pytest.approx(1.50)]
+    assert errors_1 == [pytest.approx(0.01)]
+    assert values_2 == [pytest.approx(1.55)]
+    assert errors_2 == [pytest.approx(0.02)]
+
+
+def test_plot_dataset_has_no_percentages_without_a_mode(tmp_path):
+    calculator = make_calculator(
+        tmp_path, [bond_row(1, 2, "C", "C", 1.5)], [bond_row(1, 2, "C", "C", 1.6)]
+    )
+    calculator.run()
+
+    assert calculator.plot_dataset(25, None)["percent"] is None
+
+
+def test_plot_dataset_shows_everything_when_the_set_is_small(tmp_path):
+    calculator = make_calculator(
+        tmp_path, [bond_row(1, 2, "C", "C", 1.5)], [bond_row(1, 2, "C", "C", 1.6)]
+    )
+    calculator.run()
+
+    dataset = calculator.plot_dataset(25, None)
+    assert dataset["shown"] == 1 and dataset["total"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# The plot-count field                                                          #
+# --------------------------------------------------------------------------- #
+def test_blank_plot_count_uses_the_default():
+    assert parse_optional_positive_int("") == 25
+    assert parse_optional_positive_int("   ") == 25
+
+
+def test_plot_count_parses_a_whole_number():
+    assert parse_optional_positive_int("40") == 40
+
+
+def test_plot_count_rejects_zero_negatives_and_text():
+    for bad in ("0", "-3", "lots", "12.5"):
+        with pytest.raises(ValueError):
+            parse_optional_positive_int(bad)
+
+
+# --------------------------------------------------------------------------- #
 # UI plumbing that can be checked without a display                             #
 # --------------------------------------------------------------------------- #
 class FakeWidget:
@@ -1575,6 +1652,10 @@ class TestUIPlumbing:
         ui.textInput_min_occurrence = FakeWidget()
         ui.textInput_output_dir = FakeWidget()
         ui.textInput_output = FakeWidget()
+        ui.switch_percent_difference = FakeWidget(True)
+        ui.switch_percent_error = FakeWidget(False)
+        ui.switch_show_plot = FakeWidget(False)   # off: tests never spawn a viewer
+        ui.textInput_plot_count = FakeWidget()
         ui.multi_line_text = FakeWidget()
         ui.main_window = FakeWindow()
         return ui
@@ -1690,3 +1771,69 @@ class TestUIPlumbing:
         assert ui.main_window.dialogs == []
         assert os.path.isfile(tmp_path / "geometry_comparison_bond.txt")
         assert "Matched parameters: 1" in ui.multi_line_text.value
+
+    def test_read_params_maps_the_switches_onto_the_modes(self, tmp_path):
+        ui = self.bare_ui()
+        ui.file_1 = write_bond_file(tmp_path / "file_1.txt", [bond_row(1, 2, "C", "C", 1.5)])
+        ui.file_2 = write_bond_file(tmp_path / "file_2.txt", [bond_row(1, 2, "C", "C", 1.6)])
+        ui.switch_percent_difference.value = True
+        ui.switch_percent_error.value = True
+
+        assert asyncio.run(ui.read_params()) is True
+        assert ui.percent_modes == (PERCENT_DIFFERENCE_MODE, PERCENT_ERROR_MODE)
+
+    def test_read_params_allows_neither_switch(self, tmp_path):
+        """Neither is a supported state, not an error: it reproduces the
+        original output file."""
+        ui = self.bare_ui()
+        ui.file_1 = write_bond_file(tmp_path / "file_1.txt", [bond_row(1, 2, "C", "C", 1.5)])
+        ui.file_2 = write_bond_file(tmp_path / "file_2.txt", [bond_row(1, 2, "C", "C", 1.6)])
+        ui.switch_percent_difference.value = False
+        ui.switch_percent_error.value = False
+
+        assert asyncio.run(ui.read_params()) is True
+        assert ui.percent_modes == ()
+
+    def test_read_params_refuses_a_bad_plot_count(self, tmp_path):
+        ui = self.bare_ui()
+        ui.file_1 = write_bond_file(tmp_path / "file_1.txt", [bond_row(1, 2, "C", "C", 1.5)])
+        ui.file_2 = write_bond_file(tmp_path / "file_2.txt", [bond_row(1, 2, "C", "C", 1.6)])
+        ui.textInput_plot_count.value = "-5"
+
+        assert asyncio.run(ui.read_params()) is False
+        assert ui.main_window.dialogs == ["InfoDialog"]
+
+    def test_workflow_draws_no_figure_when_the_plot_switch_is_off(self, tmp_path):
+        ui = self.bare_ui()
+        ui.file_1 = write_bond_file(tmp_path / "file_1.txt", [bond_row(1, 2, "C", "C", 1.50)])
+        ui.file_2 = write_bond_file(tmp_path / "file_2.txt", [bond_row(1, 2, "C", "C", 1.55)])
+        ui.output_dir = str(tmp_path)
+        ui.saved_plot_data = []
+        ui.saved_plot_files = []
+        ui.display_plots = lambda *a, **k: None
+
+        asyncio.run(ui.workflow(None))
+
+        assert ui.saved_plot_data == []
+
+    def test_workflow_draws_the_figure_and_writes_no_png(self, tmp_path):
+        import glob
+        ui = self.bare_ui()
+        ui.file_1 = write_bond_file(tmp_path / "file_1.txt", [bond_row(1, 2, "C", "C", 1.50)])
+        ui.file_2 = write_bond_file(tmp_path / "file_2.txt", [bond_row(1, 2, "C", "C", 1.55)])
+        ui.output_dir = str(tmp_path)
+        ui.switch_show_plot.value = True
+        ui.saved_plot_data = []
+        ui.saved_plot_files = []
+        launched = []
+        ui.display_plots = lambda *a, **k: launched.append(True)
+
+        asyncio.run(ui.workflow(None))
+
+        assert launched == [True]
+        assert ui.saved_plot_data[0]["type"] == "bars"
+        assert glob.glob(os.path.join(str(tmp_path), "*.png")) == []
+
+    def test_the_ui_is_a_display_plots_subclass(self):
+        from displayPlots import DisplayPlots
+        assert issubclass(MolGeomComparatorUI, DisplayPlots)

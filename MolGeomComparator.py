@@ -31,6 +31,7 @@ import toga
 from toga.style import Pack
 from toga.style.pack import LEFT
 
+from displayPlots import DisplayPlots
 from help import HelpGqteaWin
 
 
@@ -662,6 +663,49 @@ class MolGeomCalculator:
 
         return metrics
 
+    PLOT_LABELS = {
+        PERCENT_DIFFERENCE_MODE: "%Δr (symmetric)",
+        PERCENT_ERROR_MODE: "%Error",
+    }
+    PLOT_AXIS_LABELS = {
+        PERCENT_DIFFERENCE_MODE: "percent difference (%)",
+        PERCENT_ERROR_MODE: "percent error (%)",
+    }
+
+    def plot_dataset(self, count: int, mode: Optional[str]) -> Dict[str, object]:
+        """The figure's data: the `count` parameters that moved most.
+
+        Ranked by the size of the shift so the figure shows what actually
+        changed; a comparison can match hundreds of parameters, and a bar per
+        parameter would be unreadable. Returned as plain lists so it can be
+        checked without a display.
+        """
+        shown = self.largest_shifts(count)
+        first, second = self.column_labels
+        dataset = {
+            "categories": [match.atom_label for match in shown],
+            "groups": [
+                (first,
+                 [match.average_1 for match in shown],
+                 [match.std_1 for match in shown]),
+                (second,
+                 [match.average_2 for match in shown],
+                 [match.std_2 for match in shown]),
+            ],
+            "percent": None,
+            "shown": len(shown),
+            "total": len(self.matched),
+        }
+        if mode is not None:
+            dataset["percent"] = [self.percent_of(match, mode) for match in shown]
+        return dataset
+
+    def plot_title(self, dataset: Dict[str, object]) -> str:
+        kind = self.parsed_1.kind
+        if dataset["shown"] >= dataset["total"]:
+            return f"{dataset['total']} matched {kind.label}s"
+        return f"Top {dataset['shown']} of {dataset['total']} matched {kind.label}s"
+
     # -- validation -------------------------------------------------------- #
     def _validate_threshold(self) -> None:
         if self.min_occurrence < 0.0 or self.min_occurrence > 1.0:
@@ -1073,6 +1117,28 @@ def parse_optional_fraction(text: str, default: float = 0.0) -> float:
     return value
 
 
+def parse_optional_positive_int(text: str, default: int = 25) -> int:
+    """Read an optional whole-number field; a blank field means `default`."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return default
+
+    try:
+        value = int(stripped)
+    except ValueError:
+        raise ValueError(
+            f"'{stripped}' is not a whole number. Enter how many parameters the "
+            "plot should show, or leave the field blank for the default "
+            f"({default})."
+        )
+
+    if value < 1:
+        raise ValueError(
+            f"The number of parameters to plot must be at least 1 (got {value})."
+        )
+    return value
+
+
 def resolve_output_dir(reference_file: str, chosen: str) -> str:
     """Where the results go: the chosen folder, or the first file's folder."""
     stripped = (chosen or "").strip()
@@ -1081,7 +1147,7 @@ def resolve_output_dir(reference_file: str, chosen: str) -> str:
     return os.path.dirname(os.path.abspath(reference_file)) or os.getcwd()
 
 
-class MolGeomComparatorUI:
+class MolGeomComparatorUI(DisplayPlots):
     """
     The graphical user interface is provided here.
     """
@@ -1092,6 +1158,10 @@ class MolGeomComparatorUI:
         self.parsed_1 = None
         self.parsed_2 = None
         self.output_dir = os.getcwd()
+        # Per-instance: DisplayPlots keeps these on the class, so two open
+        # windows would otherwise append into the same figure list.
+        self.saved_plot_files = []
+        self.saved_plot_data = []
         self.layout_main_window(*args)
 
     async def warning_function(self, title: str, message: str) -> None:
@@ -1161,6 +1231,27 @@ class MolGeomComparatorUI:
             style=input_style,
         )
         form_row("Minimum occurrence fraction:", self.textInput_min_occurrence)
+
+        self.switch_percent_difference = toga.Switch(
+            "Symmetric percent difference: 100*(avg_2-avg_1)/mean", value=True
+        )
+        form_row("Relative difference columns:", self.switch_percent_difference)
+
+        self.switch_percent_error = toga.Switch(
+            "Percent error vs file 1: 100*(avg_2-avg_1)/avg_1", value=False
+        )
+        form_row("", self.switch_percent_error)
+
+        self.switch_show_plot = toga.Switch(
+            "Open the comparison figure after comparing", value=True
+        )
+        form_row("Plot:", self.switch_show_plot)
+
+        self.textInput_plot_count = toga.TextInput(
+            placeholder="Default: 25 (the parameters that shifted most)",
+            style=input_style,
+        )
+        form_row("Parameters to plot:", self.textInput_plot_count)
 
         self.textInput_output_dir = toga.TextInput(
             placeholder="Leave blank to write next to parameter file 1",
@@ -1326,6 +1417,21 @@ class MolGeomComparatorUI:
             await self.warning_function("Error", str(exc))
             return False
 
+        try:
+            self.plot_count = parse_optional_positive_int(self.textInput_plot_count.value)
+        except ValueError as exc:
+            await self.warning_function("Error", str(exc))
+            return False
+
+        selected = set()
+        if self.switch_percent_difference.value:
+            selected.add(PERCENT_DIFFERENCE_MODE)
+        if self.switch_percent_error.value:
+            selected.add(PERCENT_ERROR_MODE)
+        # Canonical order, so the columns do not depend on the switching order.
+        self.percent_modes = tuple(mode for mode in PERCENT_MODES if mode in selected)
+        self.show_plot = bool(self.switch_show_plot.value)
+
         self.label_1 = self.textInput_label_1.value.strip() or "isolated"
         self.label_2 = self.textInput_label_2.value.strip() or "solvated"
 
@@ -1356,6 +1462,7 @@ class MolGeomComparatorUI:
             label_1=self.label_1,
             label_2=self.label_2,
             min_occurrence=self.min_occurrence,
+            percent_modes=self.percent_modes,
         )
 
         self.multi_line_text.value = (
@@ -1387,6 +1494,42 @@ class MolGeomComparatorUI:
             return
 
         self.multi_line_text.value = calculator.summary_text(output_file)
+
+        if self.show_plot:
+            self._show_comparison_plot(calculator)
+
+    def _show_comparison_plot(self, calculator: MolGeomCalculator) -> None:
+        """Bars for both averages with their spread, and the selected percentage.
+
+        save_png=False per the project's interactive-figures recipe: the figure
+        is shown only through the viewer, leaving no image files next to the
+        user's parameter files.
+        """
+        # With both modes selected the curve draws the symmetric one, which is
+        # the first in PERCENT_MODES; its legend entry names it.
+        mode = calculator.percent_modes[0] if calculator.percent_modes else None
+        dataset = calculator.plot_dataset(self.plot_count, mode)
+        kind = calculator.kind
+
+        line = None
+        if mode is not None:
+            line = (
+                calculator.PLOT_LABELS[mode],
+                dataset["percent"],
+                calculator.PLOT_AXIS_LABELS[mode],
+            )
+
+        self.save_bar_comparison_plot(
+            1,
+            dataset["categories"],
+            dataset["groups"],
+            "parameter",
+            f"{kind.label} ({kind.unit_symbol})",
+            calculator.plot_title(dataset),
+            line=line,
+            save_png=False,
+        )
+        self.display_plots()
 
     def open_window_help(self, widget) -> None:
         window = toga.Window(title="Instructions to compare molecular geometric parameters")
