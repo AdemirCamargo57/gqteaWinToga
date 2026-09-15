@@ -35,9 +35,13 @@ class PlotterBase:
     #                                                                      #
     #   [{"x": [...], "y": [...], "xlabel": "...", "ylabel": "...",         #
     #     "title": "...", "xlim": [lo, hi], "ylim": [lo, hi]},              #
-    #    {"series": [{"x": [...], "y": [...], "label": "..."}, ...], ...}]  #
+    #    {"series": [{"x": [...], "y": [...], "label": "..."}, ...], ...},  #
+    #    {"type": "bars", "categories": [...],                              #
+    #     "groups": [{"label": "...", "values": [...], "errors": [...]}],   #
+    #     "line": {"label": "...", "values": [...], "ylabel": "..."}}]      #
     #                                                                      #
-    # xlabel/ylabel/title/xlim/ylim are optional.                           #
+    # xlabel/ylabel/title/xlim/ylim are optional; so are a group's 'errors' #
+    # and a bars figure's 'line'.                                           #
     # ------------------------------------------------------------------ #
     @staticmethod
     def _check_numeric_sequence(values, where: str) -> int:
@@ -85,7 +89,49 @@ class PlotterBase:
             if not isinstance(figure, dict):
                 raise ValueError(f"{where} is not a JSON object.")
 
-            if "series" in figure:
+            if figure.get("type") == "bars":
+                categories = figure.get("categories")
+                if not isinstance(categories, list) or not categories:
+                    raise ValueError(
+                        f"{where}: 'categories' must be a non-empty list."
+                    )
+                n_categories = len(categories)
+                groups = figure.get("groups")
+                if not isinstance(groups, list) or not groups:
+                    raise ValueError(
+                        f"{where}: 'groups' must be a non-empty list of bar groups."
+                    )
+                for g_index, group in enumerate(groups, start=1):
+                    tag = f"{where}, group {g_index}"
+                    if not isinstance(group, dict):
+                        raise ValueError(f"{tag} is not a JSON object.")
+                    if "values" not in group:
+                        raise ValueError(f"{tag} needs a 'values' list.")
+                    n_values = cls._check_numeric_sequence(group["values"], f"{tag}: 'values'")
+                    if n_values != n_categories:
+                        raise ValueError(
+                            f"{tag}: 'values' must have the same length as "
+                            f"'categories' ({n_values} vs {n_categories})."
+                        )
+                    if group.get("errors") is not None:
+                        n_errors = cls._check_numeric_sequence(group["errors"], f"{tag}: 'errors'")
+                        if n_errors != n_categories:
+                            raise ValueError(
+                                f"{tag}: 'errors' must have the same length as "
+                                f"'categories' ({n_errors} vs {n_categories})."
+                            )
+                line = figure.get("line")
+                if line is not None:
+                    tag = f"{where}, line"
+                    if not isinstance(line, dict) or "values" not in line:
+                        raise ValueError(f"{tag} needs a 'values' list.")
+                    n_line = cls._check_numeric_sequence(line["values"], f"{tag}: 'values'")
+                    if n_line != n_categories:
+                        raise ValueError(
+                            f"{tag}: 'values' must have the same length as "
+                            f"'categories' ({n_line} vs {n_categories})."
+                        )
+            elif "series" in figure:
                 series = figure["series"]
                 if not isinstance(series, list) or not series:
                     raise ValueError(
@@ -147,7 +193,11 @@ class PlotterBase:
         lines = [f"Loaded {len(figures)} figure(s) from the JSON file:", ""]
         for index, figure in enumerate(figures, start=1):
             title = figure.get("title") or "(untitled)"
-            if "series" in figure:
+            if figure.get("type") == "bars":
+                n_groups = len(figure.get("groups", []))
+                n_categories = len(figure.get("categories", []))
+                detail = f"{n_groups} groups, {n_categories} categories"
+            elif "series" in figure:
                 n_points = len(figure["series"][0].get("x", []))
                 detail = f"{len(figure['series'])} curves, {n_points} points each"
             else:
@@ -432,22 +482,30 @@ class PlotterBase:
                 temp_filename = tempfile.NamedTemporaryFile(
                     delete=False, suffix=".png", dir=self.output_dir
                 ).name
-                plt.figure(figsize=(8, 6))
-                if "series" in figure:
-                    for curve in figure["series"]:
-                        plt.plot(curve.get("x", []), curve.get("y", []),
-                                 label=curve.get("label", ""), antialiased=True)
-                    plt.legend()
+                figure_obj = plt.figure(figsize=(8, 6))
+                if figure.get("type") == "bars":
+                    # Deferred import: displayPlots must not be pulled in at
+                    # module load time by the --plot-viewer child process (see
+                    # displayPlots.py / plotViewer.py); this method only runs in
+                    # the Toga (main) process, where the import is harmless.
+                    from displayPlots import draw_bar_comparison
+                    draw_bar_comparison(figure_obj.gca(), figure)
                 else:
-                    plt.plot(figure.get("x", []), figure.get("y", []),
-                             antialiased=True)
-                plt.xlabel(figure.get("xlabel", ""))
-                plt.ylabel(figure.get("ylabel", ""))
-                plt.title(figure.get("title", ""))
-                if "xlim" in figure:
-                    plt.xlim(*figure["xlim"])
-                if "ylim" in figure:
-                    plt.ylim(*figure["ylim"])
+                    if "series" in figure:
+                        for curve in figure["series"]:
+                            plt.plot(curve.get("x", []), curve.get("y", []),
+                                     label=curve.get("label", ""), antialiased=True)
+                        plt.legend()
+                    else:
+                        plt.plot(figure.get("x", []), figure.get("y", []),
+                                 antialiased=True)
+                    plt.xlabel(figure.get("xlabel", ""))
+                    plt.ylabel(figure.get("ylabel", ""))
+                    plt.title(figure.get("title", ""))
+                    if "xlim" in figure:
+                        plt.xlim(*figure["xlim"])
+                    if "ylim" in figure:
+                        plt.ylim(*figure["ylim"])
                 plt.tight_layout()
                 plt.savefig(temp_filename)
                 plt.close()

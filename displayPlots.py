@@ -1,5 +1,4 @@
-import toga, tempfile, os, sys, json, subprocess
-from toga.style import Pack
+import tempfile, os, sys, json, subprocess
 import matplotlib
 matplotlib.use('Agg') # non-interactive backend in the main (Toga) process
 import matplotlib.pyplot as plt
@@ -238,6 +237,13 @@ class DisplayPlots():
 
     def _display_static(self):
         """Fallback: show each saved PNG in a Toga image window (non-interactive)."""
+        # Deferred here (not a module-level import): plotViewer.py, which runs
+        # as the --plot-viewer child process, imports this module for
+        # draw_bar_comparison and must never load the Toga/OpenGL stack --
+        # this is the only method in the module that touches Toga.
+        import toga
+        from toga.style import Pack
+
         for plot_filename in self.saved_plot_files:
 
             # Load the image using Toga's Image class

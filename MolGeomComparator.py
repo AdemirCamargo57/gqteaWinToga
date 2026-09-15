@@ -778,6 +778,18 @@ class MolGeomCalculator:
             return match.percent_difference
         return match.percent_error
 
+    @staticmethod
+    def _format_shift_percent(value: float, width: int = 7) -> str:
+        """One *Largest shifts* percent column: signed, 2 decimals, '%' suffix.
+
+        A ``nan`` (undefined percentage, see ``_as_percent``) renders as the
+        literal token ``nan`` -- not ``+nan`` -- right-justified to the same
+        width, so the column stays aligned without ever raising.
+        """
+        if not math.isfinite(value):
+            return f"{'nan':>{width}s} %"
+        return f"{value:>+{width}.2f} %"
+
     def _compare(self) -> None:
         kind = self.parsed_1.kind
 
@@ -1064,7 +1076,8 @@ class MolGeomCalculator:
             plural = "" if self.percent_undefined == 1 else "s"
             lines.append(
                 f"  {self.percent_undefined} parameter{plural} have an undefined "
-                f"percentage (denominator below {kind.percent_floor:g} {unit})"
+                "percentage (the value they are relative to is below "
+                f"{kind.percent_floor:g} {unit})"
             )
 
         lines += [
@@ -1075,10 +1088,13 @@ class MolGeomCalculator:
         ]
 
         for match in self.largest_shifts(shifts):
-            lines.append(
+            row = (
                 f"  {match.atom_label:<20s} {match.average_1:>10.5f} -> "
                 f"{match.average_2:>10.5f}   {match.difference:>+10.5f} {unit}"
             )
+            for mode in self.percent_modes:
+                row += "  " + self._format_shift_percent(self.percent_of(match, mode))
+            lines.append(row)
 
         remapped = self.parsed_2.remapped_atoms()
         if remapped:

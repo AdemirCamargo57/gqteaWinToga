@@ -1332,6 +1332,65 @@ def run_with_percentages(tmp_path, rows_1, rows_2, **kwargs):
     return run_and_write(tmp_path, rows_1, rows_2, **kwargs)
 
 
+# --------------------------------------------------------------------------- #
+# Largest-shifts percent columns (spec section 6)                               #
+# --------------------------------------------------------------------------- #
+def test_largest_shifts_row_carries_both_percentages(tmp_path):
+    calculator, path, _ = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40)],
+        [bond_row(1, 2, "C", "C", 1.50)],
+    )
+
+    summary = calculator.summary_text(path)
+    match = calculator.matched[0]
+
+    expected_pd = calculator.percent_of(match, PERCENT_DIFFERENCE_MODE)
+    expected_pe = calculator.percent_of(match, PERCENT_ERROR_MODE)
+    assert expected_pd == pytest.approx(6.896551724137938)
+    assert expected_pe == pytest.approx(7.1428571428571495)
+
+    shifts_line = [line for line in summary.splitlines() if "C1-C2" in line][0]
+    assert shifts_line.endswith(f"{expected_pd:>+7.2f} %  {expected_pe:>+7.2f} %")
+
+
+def test_largest_shifts_unchanged_when_no_mode_is_selected(tmp_path):
+    calculator, path, _ = run_and_write(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40)],
+        [bond_row(1, 2, "C", "C", 1.50)],
+        percent_modes=(),
+    )
+
+    summary = calculator.summary_text(path)
+    match = calculator.matched[0]
+
+    shifts_line = [line for line in summary.splitlines() if "C1-C2" in line][0]
+    unit = calculator.parsed_1.kind.unit_symbol
+    assert shifts_line == (
+        f"  {match.atom_label:<20s} {match.average_1:>10.5f} -> "
+        f"{match.average_2:>10.5f}   {match.difference:>+10.5f} {unit}"
+    )
+    assert "%" not in shifts_line
+
+
+def test_largest_shifts_row_renders_nan_for_an_undefined_percentage(tmp_path):
+    calculator, path, _ = run_with_percentages(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80)],
+        writer=write_dihedral_file,
+    )
+
+    # The 0.4 degree difference is below the 1.0 degree floor for dihedrals,
+    # so both percentages are undefined; summary_text must still return
+    # normally with the token "nan" in each percent column.
+    summary = calculator.summary_text(path)
+
+    shifts_line = [line for line in summary.splitlines() if "H1-C2-C3-H4" in line][0]
+    assert shifts_line.endswith("nan %      nan %")
+
+
 def test_both_modes_add_both_columns_after_the_difference(tmp_path):
     _, _, text = run_with_percentages(
         tmp_path,

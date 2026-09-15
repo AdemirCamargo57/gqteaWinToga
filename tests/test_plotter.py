@@ -46,6 +46,19 @@ def multi_series(n=4):
     }
 
 
+def bar_manifest():
+    return {
+        "type": "bars",
+        "categories": ["C1-C2", "C2-O3"],
+        "groups": [
+            {"label": "isolated", "values": [1.52, 1.43], "errors": [0.01, 0.02]},
+            {"label": "solvated", "values": [1.54, 1.42], "errors": [0.02, 0.01]},
+        ],
+        "line": {"label": "%dr", "values": [1.25, -0.84], "ylabel": "percent (%)"},
+        "xlabel": "parameter", "ylabel": "bond distance (A)", "title": "t",
+    }
+
+
 def write(tmp_path, payload, name="manifest.json"):
     path = tmp_path / name
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -84,6 +97,21 @@ class TestValidManifests:
         path = write(tmp_path, [single_curve(), multi_series()])
         figures = PlotterBase.load_json_plot_file(path)
         assert len(figures) == 2
+
+    def test_bars_manifest_is_accepted(self):
+        figures = PlotterBase.validate_plot_manifest([bar_manifest()])
+        assert len(figures) == 1
+
+    def test_bars_manifest_without_errors_or_line_is_accepted(self):
+        fig = bar_manifest()
+        del fig["line"]
+        del fig["groups"][0]["errors"]
+        del fig["groups"][1]["errors"]
+        PlotterBase.validate_plot_manifest([fig])
+
+    def test_mixed_manifest_with_bars_curve_and_series(self):
+        payload = [bar_manifest(), single_curve(), multi_series()]
+        assert len(PlotterBase.validate_plot_manifest(payload)) == 3
 
 
 # --------------------------------------------------------------------------- #
@@ -172,6 +200,72 @@ class TestInvalidManifests:
             PlotterBase.validate_plot_manifest(
                 [{"x": [1.0, 2.0], "y": [1.0, float("nan")]}]
             )
+
+    def test_bars_group_values_length_mismatch(self):
+        fig = bar_manifest()
+        fig["groups"][0]["values"] = [1.52]  # one category short
+        with pytest.raises(ValueError, match="Figure 1.*same length"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_group_errors_length_mismatch(self):
+        fig = bar_manifest()
+        fig["groups"][0]["errors"] = [0.01]
+        with pytest.raises(ValueError, match="Figure 1.*errors.*same length"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_line_length_mismatch(self):
+        fig = bar_manifest()
+        fig["line"]["values"] = [1.25]
+        with pytest.raises(ValueError, match="Figure 1.*line.*same length"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_missing_categories(self):
+        fig = bar_manifest()
+        del fig["categories"]
+        with pytest.raises(ValueError, match="Figure 1.*categories"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_empty_categories(self):
+        fig = bar_manifest()
+        fig["categories"] = []
+        with pytest.raises(ValueError, match="Figure 1.*categories"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_missing_groups(self):
+        fig = bar_manifest()
+        del fig["groups"]
+        with pytest.raises(ValueError, match="Figure 1.*groups"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_group_missing_values(self):
+        fig = bar_manifest()
+        del fig["groups"][0]["values"]
+        with pytest.raises(ValueError, match="Figure 1.*values"):
+            PlotterBase.validate_plot_manifest([fig])
+
+    def test_bars_error_names_the_offending_figure(self):
+        fig = bar_manifest()
+        fig["groups"][0]["values"] = [1.52]
+        payload = [single_curve(), fig]
+        with pytest.raises(ValueError, match="Figure 2"):
+            PlotterBase.validate_plot_manifest(payload)
+
+
+# --------------------------------------------------------------------------- #
+# describe_json_figures                                                         #
+# --------------------------------------------------------------------------- #
+class TestDescribeJsonFigures:
+    def test_single_curve_point_count(self):
+        text = PlotterBase.describe_json_figures([single_curve(5)])
+        assert "5 points" in text
+
+    def test_series_curve_count(self):
+        text = PlotterBase.describe_json_figures([multi_series(4)])
+        assert "2 curves, 4 points each" in text
+
+    def test_bars_group_and_category_count(self):
+        text = PlotterBase.describe_json_figures([bar_manifest()])
+        assert "2 groups, 2 categories" in text
 
 
 # --------------------------------------------------------------------------- #

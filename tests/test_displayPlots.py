@@ -11,10 +11,43 @@ analysis tool shares this module.
 """
 import glob
 import os
+import subprocess
+import sys
 
 import pytest
 
 from displayPlots import DisplayPlots
+
+# The --plot-viewer child process (gqteaWinToga.py) imports plotViewer, which
+# imports displayPlots for draw_bar_comparison, *before* the Toga/OpenGL stack
+# is loaded -- that ordering is the whole point of the --plot-viewer dispatch,
+# so a frozen build can drop Toga from the viewer's half of the app. Both
+# modules must therefore be importable without ever pulling in toga. Checked
+# in a subprocess with a clean interpreter, since this pytest session may
+# already have imported toga (e.g. via another test module).
+SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _import_without_toga(module_name):
+    result = subprocess.run(
+        [sys.executable, "-c",
+         f"import {module_name}, sys\n"
+         "print('TOGA_ABSENT' if 'toga' not in sys.modules else 'TOGA_PRESENT')"],
+        cwd=SRC_DIR,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_importing_displayplots_does_not_load_toga():
+    assert _import_without_toga("displayPlots") == "TOGA_ABSENT"
+
+
+def test_importing_plotviewer_does_not_load_toga():
+    assert _import_without_toga("plotViewer") == "TOGA_ABSENT"
 
 
 def fresh(tmp_path):
