@@ -1242,6 +1242,82 @@ def test_summary_lines_report_the_counts_and_the_output_path(tmp_path):
     assert "C1-C2" in summary
 
 
+def test_summary_reports_the_global_metrics(tmp_path):
+    calculator, path, _ = run_and_write(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40), bond_row(2, 3, "C", "O", 1.50)],
+        [bond_row(1, 2, "C", "C", 1.50), bond_row(2, 3, "C", "O", 1.30)],
+    )
+
+    summary = calculator.summary_text(path)
+
+    assert "Global metrics over 2 matched bond distance" in summary
+    assert "MAE" in summary and "RMSD" in summary
+    assert "0.15000" in summary
+
+
+def test_summary_mentions_undefined_percentages_only_when_there_are_some(tmp_path):
+    calculator, path, _ = run_with_percentages(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40)],
+        [bond_row(1, 2, "C", "C", 1.50)],
+    )
+
+    assert "undefined" not in calculator.summary_text(path)
+
+
+def test_summary_counts_undefined_percentages_when_present(tmp_path):
+    calculator, path, _ = run_with_percentages(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 120.0)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.80),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 122.0)],
+        writer=write_dihedral_file,
+    )
+
+    assert "1 parameter" in calculator.summary_text(path)
+    assert "undefined" in calculator.summary_text(path)
+
+
+def test_summary_has_no_metric_block_when_no_mode_is_selected(tmp_path):
+    """The native-unit metrics are still useful, so they stay; only the
+    percentage lines disappear."""
+    calculator, path, _ = run_and_write(
+        tmp_path,
+        [bond_row(1, 2, "C", "C", 1.40)],
+        [bond_row(1, 2, "C", "C", 1.50)],
+        percent_modes=(),
+    )
+
+    summary = calculator.summary_text(path)
+
+    assert "MAE" in summary
+    assert "%" not in summary
+
+
+def test_summary_survives_a_mode_with_no_defined_percentages(tmp_path):
+    """When all matched rows of a selected mode are undefined, summary_text
+    must not raise KeyError; the native-unit MAE line stays but no percent
+    lines for that mode appear."""
+    calculator, path, _ = run_with_percentages(
+        tmp_path,
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.40),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 0.80)],
+        [dihedral_row(1, 2, 3, 4, "H", "C", "C", "H", 0.50),
+         dihedral_row(2, 3, 4, 5, "C", "C", "H", "H", 0.90)],
+        writer=write_dihedral_file,
+    )
+
+    # All differences are 0.1 degrees, all below the 1.0 degree floor,
+    # so every row has undefined percentages for both modes.
+    summary = calculator.summary_text(path)
+
+    # The native-unit MAE line must be present.
+    assert "Global metrics over 2 matched dihedral angle" in summary
+    assert "MAE" in summary
+
+
 # --------------------------------------------------------------------------- #
 # Percent columns and metric header lines                                       #
 # --------------------------------------------------------------------------- #

@@ -999,6 +999,32 @@ class MolGeomCalculator:
             f"Only in file 1: {len(self.only_in_file_1)}",
             f"Only in file 2: {len(self.only_in_file_2)}",
             "",
+        ]
+
+        metrics = self.global_metrics()
+        lines.append(f"Global metrics over {len(self.matched)} matched {kind.label}s:")
+        lines.append(
+            f"  MAE  {metrics['mae_' + kind.unit]:.5f} {unit}"
+            f"     RMSD  {metrics['rmsd_' + kind.unit]:.5f} {unit}"
+        )
+        for mode in self.percent_modes:
+            if ("mae_" + mode) not in metrics:
+                # Every row of this mode was undefined, so it has no aggregate.
+                continue
+            lines.append(
+                f"  MAE  {metrics['mae_' + mode]:.4f} %"
+                f"     RMSD  {metrics['rmsd_' + mode]:.4f} %"
+                f"   ({mode})"
+            )
+        if self.percent_undefined:
+            plural = "" if self.percent_undefined == 1 else "s"
+            lines.append(
+                f"  {self.percent_undefined} parameter{plural} have an undefined "
+                f"percentage (denominator below {kind.percent_floor:g} {unit})"
+            )
+
+        lines += [
+            "",
             f"Output file:\n{output_file}",
             "",
             f"Largest shifts ({second} - {first}):",
