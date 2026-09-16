@@ -26,6 +26,7 @@
     - [Dihedral Angle Analysis](#dihedral-angle-analysis)
     - [All Dihedral Angle Analysis](#all-dihedral-angle-analysis)
     - [Hydrogen Bond Analysis](#hydrogen-bond-analysis)
+    - [Comparison of Molecular Geometric Parameters](#comparison-of-molecular-geometric-parameters)
   - [Input Builders](#input-builders)
     - [CPMD Inputs](#cpmd-inputs)
     - [Surface Hopping Input Builder](#surface-hopping-input-builder)
@@ -507,6 +508,110 @@ Inputs:
 - `TRAJEC.xyz` trajectory file.
 
 Click **Exec** or the main action button in the tool window to run the calculation.
+
+#### Comparison of Molecular Geometric Parameters
+
+Use this tool to see how a different environment changes a molecule's geometry. It compares the geometric parameters of the **same molecule** taken from two simulations — typically the isolated molecule and the same molecule in a water box, with the solvent already removed from the trajectory.
+
+Inputs:
+
+- **Parameter file 1 (reference)** and **Parameter file 2 (comparison)**: two combined parameter files written by the All bond distance, All bond angle or All dihedral angle analysis tools. Both must be of the same type; the type is read from each file's own title line.
+- **Label for file 1** / **Label for file 2** (default `isolated` and `solvated`): these become part of the output column names, e.g. `average_isolated`.
+- **Minimum occurrence fraction** (blank = 0, keep everything): ignores parameters present in fewer than this fraction of frames.
+- **Relative difference columns** — two independent switches, either, both, or neither on:
+  - **Symmetric percent difference** (on by default): `100*(avg_2-avg_1)/mean(avg_1,avg_2)`.
+  - **Percent error vs file 1** (off by default): `100*(avg_2-avg_1)/avg_1`.
+
+  Both are signed, file 2 minus file 1. Leaving both off writes the output file exactly as it was before these columns existed.
+- **Plot** — **Open the comparison figure after comparing** (on by default) and **Parameters to plot** (blank = 25, the parameters that shifted most).
+- **Output folder** (blank = next to parameter file 1) and **Output txt filename** (blank = `geometry_comparison_<type>.txt`).
+
+Each file is read as soon as you select it, so a wrong or corrupt file is reported immediately, together with its type, frame count, atom scope and molecule size.
+
+Click **Compare** to run, **Help** for the full in-program description.
+
+##### How atoms are matched
+
+Atoms are **not** matched by their raw index. A solvated run is normally analysed with solute atom indices, so its rows carry the atoms' indices in the **full box**: the oxygens of the reference molecule may be atoms 295, 296 and 297 there, while the same atoms are 29, 30 and 31 in the isolated run. The tool reads the `# solute_atom_indices` header and renumbers every atom back onto the molecule, so `C1-O295` in the box is recognised as the same bond as `C1-O29` isolated. The renumbering it applied is recorded in the output header.
+
+Before comparing, the two files must agree on the parameter type, the molecule size, and the element of every atom. If any check fails the run is refused and the offending atom is named — a wrong atom mapping would produce results that look reasonable but are meaningless.
+
+Parameters match regardless of atom order within a row: a bond is undirected, an angle keeps its vertex but may have its arms swapped, and a dihedral read backwards has the same signed value.
+
+##### Why the occurrence filter matters
+
+The all-\* tools list every pair that came within the connection distance in at least one frame, so a long trajectory collects contacts that are not real bonds — typically H–H pairs sitting just under the 1.7 Å cutoff in a fraction of a percent of the frames. Setting the fraction to e.g. `0.05` drops them. The filter is applied to **both** files before matching, so a rare contact cannot be reported as a parameter that one simulation is missing.
+
+##### Output
+
+A single text file with a metadata header (both source paths, labels, frame counts, atom scopes, the atom renumbering applied, the occurrence threshold and what it dropped, and the matched/unmatched counts) followed by three labelled sections:
+
+```text
+# section matched
+# row atom_i atom_j element_i element_j average_isolated std_dev_isolated occurrence_isolated average_solvated std_dev_solvated occurrence_solvated difference_solvated_minus_isolated source_row_1 source_row_2
+# section only_in_file_1
+# row atom_i atom_j element_i element_j average std_dev occurrence source_row
+# section only_in_file_2
+```
+
+Angle and dihedral files carry three and four atom/element columns instead of two. Atom labels are the **molecule-local** 1-based indices; `source_row_1` / `source_row_2` give the row number the values came from in each input file, so any row can be traced back. Distances are in ångströms and angles in degrees. Dihedral differences are wrapped into (−180, 180], so a shift from +179° to −179° is reported as +2°, not −358°.
+
+Every comment line starts with `#`, so a section can be read back with `np.genfromtxt(path, dtype=None, names=True, comments='#')` once it is separated from the others.
+
+After a successful run the text box reports the counts, the output path, and the ten parameters whose average changed most between the two simulations.
+
+##### Relative differences and global metrics
+
+With one or both **Relative difference columns** switches on, a percent column is appended after `difference_solvated_minus_isolated` for each switch that is on — appended, never inserted earlier, so a reader that indexes the columns above by position keeps working:
+
+```text
+# row ... difference_solvated_minus_isolated percent_difference percent_error_vs_isolated source_row_1 source_row_2
+```
+
+`percent_difference` is the symmetric form; `percent_error_vs_isolated` carries the reference file's label so two identically labelled comparisons stay distinguishable. Both are signed, file 2 minus file 1. A percentage whose denominator is too close to zero to mean anything — below `1e-6` Å for a bond, below `1.0°` for an angle or a dihedral — is written `nan`; for a dihedral the symmetric denominator is the circular mean of the two angles, not their arithmetic mean, so a shift between e.g. +179° and −179° does not divide by (almost) zero.
+
+The header also carries the formula actually used, the denominator floor, the count of undefined rows, and global metrics over the whole matched set:
+
+```text
+# formula_percent_difference 100*(avg_2-avg_1)/((avg_1+avg_2)/2)
+# formula_percent_error 100*(avg_2-avg_1)/avg_1
+# percent_denominator_floor 1e-06 angstrom
+# percent_undefined_rows 0
+# global_metric_category bond distance
+# global_metric_n 42
+# mae_angstrom 0.01234567
+# rmsd_angstrom 0.01567890
+# mae_percent_difference 1.23456789
+# rmsd_percent_difference 1.56789012
+```
+
+`mae_<unit>` / `rmsd_<unit>` are the mean absolute error and root-mean-square deviation over every matched parameter, in its own unit (ångströms or degrees); the `mae_percent_*` / `rmsd_percent_*` pair is added per selected switch, over the absolute value of that percentage, skipping undefined rows. With both switches off, none of the `formula_*`, `percent_*`, `global_metric_*`, `mae_*` or `rmsd_*` lines are written and the two extra columns are absent — the file is exactly what it always was.
+
+##### What the message panel reports
+
+After a successful comparison the panel summarises both files, the molecule size, the counts of matched and unmatched parameters, and the global metrics, then lists the parameters that shifted most. Each switch that is on adds its percentage to every row of that list:
+
+```
+Global metrics over 6 matched bond distances:
+  MAE  0.01008 A     RMSD  0.01454 A
+  MAE  0.8198 %     RMSD  1.1746 %   (percent_difference)
+  MAE  0.8267 %     RMSD  1.1861 %   (percent_error)
+
+Largest shifts (solvated - isolated):
+  C2-O3                   1.41220 ->    1.44090     +0.02870 A    +2.01 %    +2.03 %
+  O3-H4                   0.97120 ->    0.99060     +0.01940 A    +1.98 %    +2.00 %
+  C1-C2                   1.52830 ->    1.53610     +0.00780 A    +0.51 %    +0.51 %
+```
+
+The percent columns appear in the same order as in the output file — symmetric difference first, then percent error — and a parameter whose percentage is undefined shows `nan` there without disturbing the rest of the row. With both switches off the list carries no percent columns at all.
+
+##### The comparison figure
+
+With **Open the comparison figure after comparing** on, a grouped bar chart shows both files' averages for the **Parameters to plot** parameters that shifted most (ranked by the size of the shift), each bar carrying a ±1 standard deviation error bar taken from its source file. If a percentage switch is on, that percentage is drawn as a line on a right-hand axis; with both switches on, the line always draws the symmetric percent difference, and the legend says so. The figure opens in the same interactive viewer (zoom/pan/save) as every other tool's plots, and no `.png` file is left next to the parameter files.
+
+##### Reopening the figure later
+
+The viewer writes a small `.json` figure manifest into the output folder when it opens. To see the chart again without re-running the comparison, open **Tools > Plots**, set **Plot type** to `JSON plot file`, and select that file — the Plotter understands the bar-chart manifest and reopens the figure exactly as it was, error bars, percentage line and all.
 
 ### Input Builders
 

@@ -53,6 +53,7 @@ from molecularAxisAlignment import MolecularAxisAlignmentUI
 from cpx_input_builder import CPInputBuilderUI
 from orca_input_builder import ORCAInputBuilderUI
 from gqteaMDinputBuilder import GqteaMDInputBuilderUI
+from MolGeomComparator import MolGeomComparatorUI
 
 class gqteaWin(toga.App):
     def startup(self):
@@ -100,6 +101,7 @@ class gqteaWin(toga.App):
             ("Dihedral angle analysis", DihedralUI),
             ("All dihedral angle analysis", allDihedralAnalysisUI),
             ("Hydrogen bond analysis", HBondUI),
+            ("Comparison of Molecular Geometric Parameters",MolGeomComparatorUI),
         ]
 
         cpmd_tools = [

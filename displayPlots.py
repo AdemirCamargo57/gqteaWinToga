@@ -1,5 +1,4 @@
-import toga, tempfile, os, sys, json, subprocess
-from toga.style import Pack
+import tempfile, os, sys, json, subprocess
 import matplotlib
 matplotlib.use('Agg') # non-interactive backend in the main (Toga) process
 import matplotlib.pyplot as plt
@@ -30,6 +29,61 @@ def launch_plot_viewer(manifest_path):
         return True
     except Exception:
         return False
+
+
+def draw_bar_comparison(axes, figure_entry, font_style=None):
+    """Draw one "bars" manifest entry onto `axes`; return the twin axis or None.
+
+    Public (no leading underscore) because plotViewer.py imports it: it is part
+    of this module's interface, not an internal detail. Kept out of the class so
+    the standalone viewer can reuse the exact same
+    rendering: a figure must not look different depending on which process drew
+    it. The percentage line sits on a twin right-hand axis because it shares no
+    scale with the absolute values in angstroms or degrees.
+    """
+    font_style = font_style or {'color': 'darkred', 'weight': 'normal', 'size': 14}
+    categories = figure_entry.get("categories", [])
+    groups = figure_entry.get("groups", [])
+    positions = range(len(categories))
+    count = max(len(groups), 1)
+    width = 0.8 / count
+
+    handles = []
+    for index, group in enumerate(groups):
+        offset = (index - (count - 1) / 2.0) * width
+        bars = axes.bar(
+            [p + offset for p in positions],
+            group.get("values", []),
+            width=width,
+            yerr=group.get("errors"),
+            capsize=4,
+            label=group.get("label", ""),
+        )
+        handles.append(bars)
+
+    axes.set_xticks(list(positions))
+    axes.set_xticklabels(categories, rotation=60, ha="right", fontsize=8)
+    axes.set_xlabel(figure_entry.get("xlabel", ""), fontdict=font_style)
+    axes.set_ylabel(figure_entry.get("ylabel", ""), fontdict=font_style)
+    axes.set_title(figure_entry.get("title", ""), fontdict=font_style)
+    axes.grid(True, axis="y", alpha=0.3)
+
+    twin = None
+    line = figure_entry.get("line")
+    if line is not None:
+        twin = axes.twinx()
+        drawn = twin.plot(
+            list(positions), line.get("values", []),
+            color="black", marker="o", markersize=4, linewidth=1.5,
+            label=line.get("label", ""),
+        )
+        twin.axhline(0.0, color="grey", linestyle="--", linewidth=0.8)
+        twin.set_ylabel(line.get("ylabel", ""), fontdict=font_style)
+        handles.extend(drawn)
+
+    # One legend for everything: two y axes would otherwise produce two.
+    axes.legend(handles=handles, loc="best", fontsize=9)
+    return twin
 
 
 class DisplayPlots():
@@ -105,6 +159,53 @@ class DisplayPlots():
             "title": plot_title,
         })
 
+    def save_bar_comparison_plot(self, k, categories, groups, plot_xlabel,
+                                 plot_ylabel, plot_title, line=None, save_png=True):
+        """Record a grouped bar chart with error bars and an optional overlaid line.
+
+        `categories` names the bar positions; `groups` is a list of
+        (label, values, errors) tuples, one bar per category per group, with
+        `errors` either a sequence of symmetric error-bar half-lengths or None.
+        `line` is an optional (label, values, y2label) tuple drawn on a twin
+        right-hand axis -- used to put a relative measure (a percentage) beside
+        absolute values that share no scale with it.
+
+        Pass save_png=False to skip writing a static PNG (see save_plots); the
+        raw data recorded below is what the interactive viewer consumes.
+        """
+        entry = {
+            "type": "bars",
+            "categories": [str(c) for c in categories],
+            "groups": [],
+            "xlabel": plot_xlabel,
+            "ylabel": plot_ylabel,
+            "title": plot_title,
+        }
+        for label, values, errors in groups:
+            group = {"label": label, "values": [float(v) for v in values]}
+            if errors is not None:
+                group["errors"] = [float(e) for e in errors]
+            entry["groups"].append(group)
+        if line is not None:
+            line_label, line_values, line_ylabel = line
+            entry["line"] = {
+                "label": line_label,
+                "values": [float(v) for v in line_values],
+                "ylabel": line_ylabel,
+            }
+
+        if save_png:
+            temp_filename = tempfile.NamedTemporaryFile(delete=False, suffix=".png", dir=self.output_dir).name
+            figure = plt.figure(k)
+            axes = figure.gca()
+            draw_bar_comparison(axes, entry)
+            plt.tight_layout()
+            plt.savefig(temp_filename)
+            plt.close(figure)
+            self.saved_plot_files.append(temp_filename)
+
+        self.saved_plot_data.append(entry)
+
     def display_plots(self):
         # Preferred path: launch an interactive matplotlib viewer in a separate
         # process (zoom/pan/save toolbar + live cursor coordinates) so it does
@@ -136,6 +237,13 @@ class DisplayPlots():
 
     def _display_static(self):
         """Fallback: show each saved PNG in a Toga image window (non-interactive)."""
+        # Deferred here (not a module-level import): plotViewer.py, which runs
+        # as the --plot-viewer child process, imports this module for
+        # draw_bar_comparison and must never load the Toga/OpenGL stack --
+        # this is the only method in the module that touches Toga.
+        import toga
+        from toga.style import Pack
+
         for plot_filename in self.saved_plot_files:
 
             # Load the image using Toga's Image class
