@@ -48,6 +48,10 @@
   - [General Tools](#general-tools)
     - [3D Molecular Viewer](#3d-molecular-viewer)
       - [Molecular Design](#molecular-design)
+        - [Opening and using the two windows](#opening-and-using-the-two-windows)
+        - [Creating and modifying bonds](#creating-and-modifying-bonds)
+        - [Running the pre-optimization](#running-the-pre-optimization)
+        - [Validation messages](#validation-messages)
     - [Energy Plots](#energy-plots)
     - [Molecular Axis Alignment](#molecular-axis-alignment)
     - [Select Frames](#select-frames)
@@ -1316,76 +1320,164 @@ Example: if a trajectory shows two atoms separating during a dissociation event,
 ##### Molecular Design
 
 The **Design** tab of the 3D Molecular Viewer lets you draw a molecule with the
-mouse, pre-optimize its geometry, and send the result to the viewer to display
-or save as an XYZ file. It is meant for building a starting structure quickly,
-without leaving the toolkit.
+mouse, pre-optimize its geometry, and send the result straight into the 3D
+viewer to inspect or save as an XYZ file. It is meant for building a starting
+structure quickly, without leaving the toolkit.
 
-**Drawing**
+###### Opening and using the two windows
 
-Pick an element by clicking it in the periodic table at the top of the tab.
-Carbon is selected when the tab opens, and the current choice is highlighted and
-named below the table. Then, on the canvas:
+The Design tab itself is a launcher. It has two buttons:
 
-- **Click empty space** to place an atom of the selected element.
-- **Press the left button on an atom, drag to a second atom and release** to
-  create a single bond between them. A dashed guide line follows the pointer
-  while you drag.
-- **Click a bond** to raise its order: single becomes double, double becomes
-  triple, and clicking a bond that is already at its maximum returns it to a
-  single bond, so one gesture both raises and lowers the order. The maximum
-  depends on the two elements, so a C-C bond reaches triple, a C-O bond stops at
-  double, and an O-H bond stays single. The status line reports the new order
-  each time, or explains the cap.
-- **Right-click an atom or a bond** to delete it. Deleting an atom also deletes
-  every bond attached to it.
-- **Undo** steps back through the last 50 edits, including **Clear**.
+- **Open periodic table** — opens the **Periodic Table** window, where you
+  choose the element to draw with.
+- **Open design canvas** — opens the **Molecular Design Canvas** window, where
+  you draw the molecule and run the optimization.
 
-Hydrogens are never added for you: draw every atom you want in the structure.
+Open both and place them side by side. They are ordinary windows: move, resize
+or close either one at any time. Pressing a launcher button again brings the
+matching window back to the front rather than opening a second copy, and the
+canvas window has its own **Periodic table** button for the same purpose.
 
-**Pre-optimizing the geometry**
+**Closing a window never loses your work.** The molecule is held by the tool,
+not by the window, so you can close the canvas, reopen it, and find your
+structure exactly as you left it. Closing the Molecular Viewer window closes
+both design windows with it.
+
+###### Selecting elements from the periodic table
+
+Click any element in the periodic-table window to select it. The table shows
+all 118 elements in the usual layout, tinted by block (s, p, d and f), with the
+selected element highlighted in yellow.
+
+The selection takes effect in the canvas window **immediately** — there is
+nothing to confirm or apply. The current element is shown in three places at
+once: under the periodic table, above the canvas, and on the Design tab. Carbon
+is selected when you start.
+
+###### Placing atoms on the canvas
+
+Click an empty part of the canvas to place an atom of the selected element. The
+atom is drawn as a coloured circle with its symbol inside, using the same
+colours as the 3D viewer.
+
+To build a molecule, select an element, place the atoms you need, then select
+the next element and continue. Clicking an existing atom does **not** place a
+second atom on top of it.
+
+**Hydrogens are never added for you.** Draw every atom you want in the final
+structure, hydrogens included.
+
+###### Creating and modifying bonds
+
+To create a bond, **press the left mouse button on one atom, drag to a second
+atom, and release**. A dashed guide line follows the pointer while you drag. A
+new bond is always a single bond.
+
+To change a bond, **click it**. Each click steps to the next bond type:
+
+```
+single  ->  double  ->  triple  ->  resonance  ->  single
+```
+
+Clicking a bond that is at the end of its cycle returns it to a single bond, so
+the same click both raises and lowers the bond type and nothing is ever out of
+reach. The status line names the new type after every click.
+
+Which types are available depends on the two elements involved:
+
+| Bond | Cycle |
+|------|-------|
+| C–C, C–N, N–N | single → double → triple → resonance → single |
+| C–O, C–S | single → double → resonance → single |
+| O–H, C–F, C–Cl | stays single (the status line explains why) |
+
+The four types are drawn like this:
+
+| Type | Appearance |
+|------|------------|
+| single | one solid line |
+| double | two parallel solid lines |
+| triple | three parallel solid lines |
+| resonance | one solid line with a dashed line beside it |
+
+**Resonance bonds** are for delocalized bonding: the aromatic bonds of benzene,
+the two equivalent C–O bonds of a carboxylate, the C–N bond of an amide. A
+resonance bond counts as one and a half bonds towards an atom's valence and
+relaxes to a length between a single and a double bond. Draw benzene as six
+carbons in a ring with six resonance bonds, and it optimizes to six equal
+1.40 Å bonds in a flat ring.
+
+To **delete** a bond, right-click it. To delete an atom, right-click the atom —
+every bond attached to it goes too. **Undo** steps back through the last 50
+edits, including **Clear**.
+
+###### Running the pre-optimization
 
 **Pre-optimize geometry** turns the drawing into a three-dimensional structure.
 The 2D positions become the starting x and y coordinates, the structure is
 lifted slightly off the plane, and the geometry is relaxed with a compact force
-field: harmonic bond stretching with reference lengths from the covalent radii,
-shortened for double and triple bonds; angle bending at the VSEPR angle for each
-atom, counting lone pairs, which is what makes water come out bent rather than
-linear; a twofold torsion term on double bonds, which keeps alkenes and
-conjugated rings flat; and a repulsive term that stops distant parts of the
-molecule from passing through each other.
+field: harmonic bond stretching with reference lengths from the covalent radii
+adjusted for each bond type; angle bending at the VSEPR angle for each atom,
+counting lone pairs, which is what makes water come out bent rather than
+linear; a twofold torsion term on double and resonance bonds, which keeps
+alkenes and aromatic rings flat; and a repulsive term that stops distant parts
+of the molecule from passing through each other.
 
-The structure is checked first. These stop the run, and the dialog names the
-atom responsible:
-
-- the canvas is empty;
-- an atom is left unbonded beside a molecule, which is almost always a stray
-  click;
-- an element has no covalent radius in the program's tables.
-
-These are reported but do not stop the run:
-
-- an unusual valence, such as five bonds on a carbon;
-- more than one disconnected fragment, which are optimized together.
-
-When the run finishes, a dialog reports the final energy, the gradient norm, the
-iteration count and any warnings. A run that does not converge is reported with
-the minimizer's own message, and its partially relaxed structure is still
+When the run finishes, a dialog reports the final energy, the gradient norm,
+the iteration count and any warnings. A run that does not converge is reported
+with the minimizer's own message, and its partially relaxed structure is still
 available to send on.
 
 This is a **pre-optimizer**: it produces a reasonable starting geometry for a
 real CPMD, cp.x or ORCA calculation, not a converged result. The energies it
-reports are in relative units and mean nothing outside a single run. It is tuned
-for main-group, mostly organic molecules; geometries with a steric number of six
-(octahedral) come out distorted.
+reports are in relative units and mean nothing outside a single run. It is
+tuned for main-group, mostly organic molecules; geometries with a steric number
+of six (octahedral) come out distorted.
 
-**Sending the structure on**
+###### Sending the structure to the 3D viewer
 
-**Send to 3D viewer** loads the optimized structure into the viewer window as
-the current molecule, together with the connectivity you drew, so the bonds you
-made are the bonds you see. From there, **Display Molecule/Trajectory** opens it
-in the 3D window and **Save Current Frame XYZ** writes it to an XYZ file.
+**Send to 3D viewer** transfers the optimized structure and **opens the 3D
+viewer window automatically**, bringing it to the front if it is already open.
+The connectivity you drew is transferred with it, so the bonds you made are the
+bonds you see. Once it is there, **Save Current Frame XYZ** writes the structure
+to an XYZ file.
+
+The 3D view draws every bond the same way whatever its type. Bond order shows
+up in the geometry instead, where it belongs: a resonance C–C bond arrives
+visibly shorter than a single one.
+
+If the 3D window cannot be opened — a missing OpenGL driver, a blocked window,
+a start that takes too long — a dialog reports the reason. The structure has
+still been transferred, so **Display Molecule/Trajectory** and **Save Current
+Frame XYZ** remain available.
+
 Editing the drawing again discards the previous geometry, so the structure you
 send is always the one you last optimized.
+
+###### Validation messages
+
+The structure is checked before every optimization. Some problems stop the run,
+because there is no sensible geometry to produce; others are only reported.
+
+**These stop the run** (an error dialog names the atom responsible):
+
+| Message | What it means | What to do |
+|---------|---------------|------------|
+| `The sketch has no atoms.` | The canvas is empty. | Draw something first. |
+| `Atom N (X) is not bonded to anything.` | A lone atom sits beside a molecule — almost always a stray click. | Bond it, or right-click it to delete it. |
+| `No covalent radius is known for X …` | The element has no radius in the program's tables, so no bond length can be assigned. | Use a different element; the tables cover the main group, the transition metals, the lanthanides and the early actinides. |
+
+**These are reported but do not stop the run:**
+
+| Message | What it means | What to do |
+|---------|---------------|------------|
+| `Unusual valence on atom N (X): 5 bonds where 4 is typical.` | The atom has more bonds than the element normally forms. | Nothing, if you meant it — unusual valences are chemically real. Otherwise remove a bond. |
+| `Isolated resonance bond between atom N (X) and atom M (Y) …` | A resonance bond with no other resonance bond at either end. Delocalization over one isolated bond has no meaning. | Give it a resonance neighbour, or click it round to a single or double bond. |
+| `The sketch contains N disconnected fragments …` | More than one separate molecule on the canvas. | Nothing, if you meant it — they are optimized together in one structure. |
+
+Other failures are reported in a dialog as they happen: an optimization that
+hits its iteration limit, or a 3D viewer that cannot open, both name the
+underlying cause and leave the structure available.
 
 #### Energy Plots
 

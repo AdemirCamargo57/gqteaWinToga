@@ -7,7 +7,14 @@ pinned here.
 """
 import pytest
 
-from molecularSketch import MoleculeSketch, SketchAtom, SketchBond
+from molecularSketch import (
+    RESONANCE_ORDER,
+    MoleculeSketch,
+    SketchAtom,
+    SketchBond,
+    bond_type_name,
+    format_order,
+)
 
 
 def _water() -> MoleculeSketch:
@@ -157,7 +164,7 @@ def test_remove_bond_reports_whether_anything_was_removed():
 # ------------------------------------------------------------------
 # Bond-order cycling
 # ------------------------------------------------------------------
-def test_cycling_a_carbon_carbon_bond_goes_single_double_triple_then_back():
+def test_cycling_a_carbon_carbon_bond_passes_through_resonance_before_single():
     sketch = MoleculeSketch()
     a = sketch.add_atom("C", 0.0, 0.0)
     b = sketch.add_atom("C", 40.0, 0.0)
@@ -165,6 +172,7 @@ def test_cycling_a_carbon_carbon_bond_goes_single_double_triple_then_back():
 
     assert sketch.cycle_bond_order(bond) == 2
     assert sketch.cycle_bond_order(bond) == 3
+    assert sketch.cycle_bond_order(bond) == RESONANCE_ORDER
     assert sketch.cycle_bond_order(bond) == 1
     assert bond.order == 1
 
@@ -178,13 +186,14 @@ def test_an_oxygen_hydrogen_bond_never_leaves_single():
     assert sketch.cycle_bond_order(bond) == 1
 
 
-def test_a_carbon_oxygen_bond_caps_at_double():
+def test_a_carbon_oxygen_bond_skips_triple_but_still_reaches_resonance():
     sketch = MoleculeSketch()
     c = sketch.add_atom("C", 0.0, 0.0)
     o = sketch.add_atom("O", 40.0, 0.0)
     bond = sketch.add_bond(c.atom_id, o.atom_id)
 
     assert sketch.cycle_bond_order(bond) == 2
+    assert sketch.cycle_bond_order(bond) == RESONANCE_ORDER
     assert sketch.cycle_bond_order(bond) == 1
 
 
@@ -427,3 +436,161 @@ def test_bond_index_pairs_are_ordered_low_to_high():
     sketch.add_bond(b.atom_id, a.atom_id)
 
     assert sketch.bond_index_pairs() == [(0, 1)]
+
+
+# ------------------------------------------------------------------
+# Resonance bonds
+# ------------------------------------------------------------------
+def _benzene() -> MoleculeSketch:
+    """Six carbons in a ring, every bond a resonance bond."""
+    sketch = MoleculeSketch()
+    carbons = [sketch.add_atom("C", 100.0 + 30.0 * i, 100.0 + 20.0 * (i % 2)) for i in range(6)]
+    for index in range(6):
+        bond = sketch.add_bond(carbons[index].atom_id, carbons[(index + 1) % 6].atom_id)
+        bond.order = RESONANCE_ORDER
+    return sketch
+
+
+def test_a_resonance_bond_is_order_one_and_a_half():
+    assert RESONANCE_ORDER == 1.5
+
+
+def test_an_oxygen_hydrogen_bond_never_reaches_resonance():
+    sketch = MoleculeSketch()
+    o = sketch.add_atom("O", 0.0, 0.0)
+    h = sketch.add_atom("H", 40.0, 0.0)
+    bond = sketch.add_bond(o.atom_id, h.atom_id)
+
+    orders = {sketch.cycle_bond_order(bond) for _ in range(6)}
+
+    assert orders == {1}
+
+
+def test_resonance_is_offered_wherever_a_double_bond_is():
+    sketch = MoleculeSketch()
+
+    assert RESONANCE_ORDER in sketch.bond_order_cycle(3)
+    assert RESONANCE_ORDER in sketch.bond_order_cycle(2)
+    assert RESONANCE_ORDER not in sketch.bond_order_cycle(1)
+
+
+def test_resonance_sits_last_in_the_cycle():
+    sketch = MoleculeSketch()
+
+    assert sketch.bond_order_cycle(3) == (1.0, 2.0, 3.0, RESONANCE_ORDER)
+    assert sketch.bond_order_cycle(2) == (1.0, 2.0, RESONANCE_ORDER)
+
+
+def test_an_unexpected_order_cycles_back_to_single():
+    """Defensive: an order outside the cycle must not strand the bond."""
+    sketch = MoleculeSketch()
+    a = sketch.add_atom("C", 0.0, 0.0)
+    b = sketch.add_atom("C", 40.0, 0.0)
+    bond = sketch.add_bond(a.atom_id, b.atom_id)
+    bond.order = 2.25
+
+    assert sketch.cycle_bond_order(bond) == 1
+
+
+def test_resonance_counts_as_one_and_a_half_towards_the_valence():
+    sketch = _benzene()
+    carbon_id = sketch.atoms[0].atom_id
+
+    assert sketch.bond_order_sum(carbon_id) == 3.0
+
+
+def test_an_aromatic_carbon_with_a_substituent_is_not_over_valent():
+    """1.5 + 1.5 + 1 is exactly 4: benzene must not warn about its own carbons."""
+    sketch = _benzene()
+    hydrogen = sketch.add_atom("H", 300.0, 300.0)
+    sketch.add_bond(sketch.atoms[0].atom_id, hydrogen.atom_id)
+
+    _, warnings = sketch.validate()
+
+    assert not any("valence" in message.lower() for message in warnings)
+
+
+def test_bond_type_names_cover_every_order():
+    assert bond_type_name(1) == "single"
+    assert bond_type_name(2) == "double"
+    assert bond_type_name(3) == "triple"
+    assert bond_type_name(RESONANCE_ORDER) == "resonance"
+
+
+def test_format_order_drops_a_trailing_zero_but_keeps_a_half():
+    assert format_order(4.0) == "4"
+    assert format_order(3.5) == "3.5"
+
+
+def test_a_valence_warning_reads_as_a_whole_number():
+    sketch = MoleculeSketch()
+    carbon = sketch.add_atom("C", 100.0, 100.0)
+    for index in range(5):
+        hydrogen = sketch.add_atom("H", 100.0 + 30.0 * index, 160.0)
+        sketch.add_bond(carbon.atom_id, hydrogen.atom_id)
+
+    _, warnings = sketch.validate()
+
+    assert any("5 bonds where 4 is typical" in message for message in warnings)
+
+
+# ------------------------------------------------------------------
+# Resonance validation
+# ------------------------------------------------------------------
+def test_an_isolated_resonance_bond_is_a_warning():
+    sketch = MoleculeSketch()
+    a = sketch.add_atom("C", 0.0, 0.0)
+    b = sketch.add_atom("C", 40.0, 0.0)
+    bond = sketch.add_bond(a.atom_id, b.atom_id)
+    bond.order = RESONANCE_ORDER
+
+    errors, warnings = sketch.validate()
+
+    assert errors == []
+    assert any("resonance" in message.lower() for message in warnings)
+
+
+def test_a_resonance_ring_raises_no_resonance_warning():
+    _, warnings = _benzene().validate()
+
+    assert not any("resonance" in message.lower() for message in warnings)
+
+
+def test_a_resonance_chain_raises_no_warning():
+    """A carboxylate: O~C~O is delocalized without being a ring."""
+    sketch = MoleculeSketch()
+    carbon = sketch.add_atom("C", 100.0, 100.0)
+    for x in (60.0, 140.0):
+        oxygen = sketch.add_atom("O", x, 160.0)
+        bond = sketch.add_bond(carbon.atom_id, oxygen.atom_id)
+        bond.order = RESONANCE_ORDER
+
+    _, warnings = sketch.validate()
+
+    assert not any("resonance" in message.lower() for message in warnings)
+
+
+def test_the_resonance_warning_names_both_atoms():
+    sketch = MoleculeSketch()
+    a = sketch.add_atom("C", 0.0, 0.0)
+    b = sketch.add_atom("N", 40.0, 0.0)
+    bond = sketch.add_bond(a.atom_id, b.atom_id)
+    bond.order = RESONANCE_ORDER
+
+    _, warnings = sketch.validate()
+
+    message = next(m for m in warnings if "resonance" in m.lower())
+    assert "atom 1 (C)" in message
+    assert "atom 2 (N)" in message
+
+
+def test_a_resonance_bond_with_a_neighbour_at_one_end_is_enough():
+    sketch = MoleculeSketch()
+    atoms = [sketch.add_atom("C", 40.0 * i, 0.0) for i in range(3)]
+    for index in range(2):
+        bond = sketch.add_bond(atoms[index].atom_id, atoms[index + 1].atom_id)
+        bond.order = RESONANCE_ORDER
+
+    _, warnings = sketch.validate()
+
+    assert not any("resonance" in message.lower() for message in warnings)

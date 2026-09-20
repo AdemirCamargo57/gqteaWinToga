@@ -14,7 +14,7 @@ from OpenGL.GLUT import *
 from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
-from molecularDesign import MolecularDesignPanel
+from molecularDesign import MolecularDesignController
 
 Atom = Tuple[str, Tuple[float, float, float]]
 Frame = List[Atom]
@@ -44,6 +44,12 @@ class MolecularViewer:
         self.window = None
         self._render_thread: Optional[threading.Thread] = None
         self._state_lock = threading.RLock()
+        # Opening the GL window is asynchronous: main_loop runs on its own
+        # thread, so a failure there has to be reported back rather than
+        # disappearing into the status line after the caller has returned.
+        self._render_ready = threading.Event()
+        self._render_error: Optional[str] = None
+        self._window_focus_requested = False
         self._status_message = ""
         self._slider_update_in_progress = False
         self._gl_resources_ready = False
@@ -318,6 +324,62 @@ class MolecularViewer:
             update_requested = self._projection_update_requested
             self._projection_update_requested = False
             return update_requested
+
+    def request_window_focus(self):
+        """Ask the render loop to bring the GL window to the front.
+
+        GLFW window calls are not safe from the Toga thread, so this follows
+        the same flag-and-consume pattern as request_projection_update: the
+        render loop performs the actual focus_window call.
+        """
+        with self._state_lock:
+            self._window_focus_requested = True
+
+    def consume_window_focus_request(self) -> bool:
+        with self._state_lock:
+            requested = self._window_focus_requested
+            self._window_focus_requested = False
+            return requested
+
+    def viewer_window_is_open(self) -> bool:
+        return bool(self._render_thread and self._render_thread.is_alive())
+
+    async def ensure_viewer_window(self, timeout: float = 5.0):
+        """Open the 3D window, or focus it if it is already open.
+
+        Returns ``(ready, error)``. Waits, bounded by ``timeout``, for the
+        render thread to report that GL came up -- which is the only way a
+        failure like a missing glfw3.dll or a refused window can be turned into
+        a message for the user, since it happens after the thread has started.
+        The wait runs in a worker thread so the Toga event loop keeps running.
+        """
+        if self.viewer_window_is_open():
+            self.request_window_focus()
+            return True, None
+
+        if not self.frames and not self.molecule_data:
+            return False, (
+                "There is no structure to display. Load an XYZ file, or design a "
+                "molecule and send it to the viewer first."
+            )
+
+        self._render_error = None
+        self._render_ready.clear()
+        self.set_status_message("Opening the 3D viewer...")
+        self._render_thread = threading.Thread(target=self.main_loop, daemon=True)
+        self._render_thread.start()
+
+        started = await asyncio.to_thread(self._render_ready.wait, timeout)
+        if not started:
+            return False, (
+                f"The 3D viewer did not open within {timeout:.0f} seconds. "
+                "The OpenGL window may be blocked or still starting."
+            )
+        if self._render_error:
+            return False, self._render_error
+
+        self.set_status_message("3D viewer ready.")
+        return True, None
 
     def _bond_cache_key(self, frame_index: int) -> Tuple[int, float, float]:
         return (frame_index, round(self.connection_distance, 4), round(self.bond_tolerance, 4))
@@ -1470,11 +1532,21 @@ class MolecularViewer:
             self.calculate_bonds(self.current_frame)
             self.update_frame_label()
         except Exception as exc:
-            self.set_status_message(f"OpenGL/GLFW error: {exc}")
+            self._render_error = f"OpenGL/GLFW error: {exc}"
+            self.set_status_message(self._render_error)
+            self._render_ready.set()
             return
+
+        self._render_ready.set()
 
         try:
             while not glfw.window_should_close(self.window):
+                if self.consume_window_focus_request():
+                    try:
+                        glfw.focus_window(self.window)
+                    except Exception:
+                        pass  # focusing is a convenience, never worth crashing over
+
                 if self.playing and (time.time() - self.last_frame_time) >= self.update_delay:
                     self.advance_frame()
                     self.update_frame_label()
@@ -1685,8 +1757,8 @@ class MolecularViewerUI(MolecularViewer):
         self.fast_playback_switch = None
         self.bond_rendering_selection = None
 
-        # Molecular design tab (molecularDesign.MolecularDesignPanel)
-        self.design_panel = None
+        # Molecular design (molecularDesign.MolecularDesignController)
+        self.design_controller = None
 
         self.layout_main_window()
 
@@ -1742,6 +1814,7 @@ class MolecularViewerUI(MolecularViewer):
         self.main_window = toga.Window(
             title="Molecular Viewer",
             size=(760, 620),
+            on_close=self._on_main_window_close,
         )
 
         # The status line is created first so that the on_change handlers
@@ -2131,14 +2204,21 @@ class MolecularViewerUI(MolecularViewer):
         return tab_box
 
     def _build_design_tab(self) -> toga.Box:
-        """The interactive molecular design canvas.
+        """Launcher for the two molecular-design windows.
 
-        All of it lives in molecularDesign.MolecularDesignPanel; the viewer
-        only owns the panel and receives the optimized structure back through
-        ``load_designed_molecule``.
+        The drawing itself happens in the separate Periodic Table and Design
+        Canvas windows; this tab only opens them and reports their state. The
+        controller owns the structure, so those windows can be closed and
+        reopened without losing work.
         """
-        self.design_panel = MolecularDesignPanel(viewer=self)
-        return self.design_panel.build()
+        self.design_controller = MolecularDesignController(viewer=self)
+        return self.design_controller.build_launcher_tab()
+
+    def _on_main_window_close(self, window, **kwargs) -> bool:
+        """Design windows must not outlive the viewer that owns them."""
+        if getattr(self, "design_controller", None) is not None:
+            self.design_controller.close_windows()
+        return True
 
     def _build_box_performance_tab(self) -> toga.Box:
         tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
@@ -2781,17 +2861,10 @@ class MolecularViewerUI(MolecularViewer):
             await self._show_error("Save Error", str(exc))
 
     async def open_opengl_window(self, widget):
-        if self._render_thread and self._render_thread.is_alive():
-            self.set_status_message("Viewer window is already open.")
-            return
-
-        if not self.frames and not self.molecule_data:
-            await self._show_error("No Data", "Load an XYZ file before opening the viewer.")
-            return
-
-        self.set_status_message("Opening OpenGL viewer...")
-        self._render_thread = threading.Thread(target=self.main_loop, daemon=True)
-        self._render_thread.start()
+        """Open or re-focus the GL window, reporting any failure in a dialog."""
+        ready, error = await self.ensure_viewer_window()
+        if not ready:
+            await self._show_error("The 3D viewer could not be opened", error)
 
 def main():
     return MolecularViewerUI()

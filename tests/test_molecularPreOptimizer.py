@@ -16,9 +16,10 @@ from molecularPreOptimizer import (
     ForceField,
     OptimizationResult,
     build_3d_seed,
+    ideal_angle_degrees,
     optimize_sketch,
 )
-from molecularSketch import MoleculeSketch
+from molecularSketch import RESONANCE_ORDER, MoleculeSketch
 
 
 # ------------------------------------------------------------------
@@ -379,3 +380,110 @@ def test_the_optimizer_never_imports_toga():
     )
 
     assert result.stdout.strip() == "False", result.stderr
+
+
+# ------------------------------------------------------------------
+# Resonance bonds
+# ------------------------------------------------------------------
+def _resonance_benzene() -> MoleculeSketch:
+    """Six carbons in a ring, every bond delocalized."""
+    import math
+
+    sketch = MoleculeSketch()
+    carbons = []
+    for index in range(6):
+        angle = math.radians(60 * index)
+        carbons.append(
+            sketch.add_atom("C", 200.0 + 60.0 * math.cos(angle), 200.0 + 60.0 * math.sin(angle))
+        )
+    for index in range(6):
+        bond = sketch.add_bond(carbons[index].atom_id, carbons[(index + 1) % 6].atom_id)
+        bond.order = RESONANCE_ORDER
+    return sketch
+
+
+def test_a_resonance_bond_lands_between_a_single_and_a_double():
+    single = _bond_length(optimize_sketch(_diatomic("C", "C", order=1)), 0, 1)
+    resonance = _bond_length(optimize_sketch(_diatomic("C", "C", order=RESONANCE_ORDER)), 0, 1)
+    double = _bond_length(optimize_sketch(_diatomic("C", "C", order=2)), 0, 1)
+
+    assert double < resonance < single
+
+
+def test_an_aromatic_carbon_carbon_bond_is_about_one_point_four_angstrom():
+    result = optimize_sketch(_diatomic("C", "C", order=RESONANCE_ORDER))
+
+    assert _bond_length(result, 0, 1) == pytest.approx(1.40, abs=0.02)
+
+
+def test_resonance_bonds_get_a_planarity_torsion():
+    """Without this an aromatic ring is free to pucker."""
+    sketch = _resonance_benzene()
+    elements, _ = build_3d_seed(sketch)
+
+    field = ForceField.from_sketch(sketch, elements)
+
+    assert field.torsion_terms
+
+
+def test_a_resonance_benzene_relaxes_flat_with_six_equal_bonds():
+    result = optimize_sketch(_resonance_benzene())
+
+    lengths = [_bond_length(result, index, (index + 1) % 6) for index in range(6)]
+    assert result.success
+    assert max(lengths) - min(lengths) < 0.01
+    assert lengths[0] == pytest.approx(1.40, abs=0.03)
+    assert _max_out_of_plane(result.coordinates) < 0.05
+
+
+def test_an_aromatic_ring_keeps_its_one_hundred_and_twenty_degree_angles():
+    result = optimize_sketch(_resonance_benzene())
+
+    angles = [_angle_degrees(result, (i - 1) % 6, i, (i + 1) % 6) for i in range(6)]
+    assert all(angle == pytest.approx(120.0, abs=2.0) for angle in angles)
+
+
+def test_a_pyridine_nitrogen_keeps_a_trigonal_angle():
+    """Two resonance bonds and one lone pair is steric number 3, not 2."""
+    assert ideal_angle_degrees("N", connections=2, bond_order_sum=3.0) == pytest.approx(120.0)
+
+
+def test_an_aromatic_carbon_is_trigonal():
+    assert ideal_angle_degrees("C", connections=3, bond_order_sum=4.0) == pytest.approx(120.0)
+
+
+def test_the_gradient_is_still_exact_with_resonance_bonds():
+    sketch = _resonance_benzene()
+    elements, coordinates = build_3d_seed(sketch)
+    field = ForceField.from_sketch(sketch, elements)
+    flat = coordinates.ravel().copy()
+
+    _, analytic = field.energy_and_gradient(flat)
+
+    step = 1e-6
+    numeric = np.zeros_like(flat)
+    for index in range(flat.size):
+        forward = flat.copy()
+        backward = flat.copy()
+        forward[index] += step
+        backward[index] -= step
+        numeric[index] = (
+            field.energy_and_gradient(forward)[0] - field.energy_and_gradient(backward)[0]
+        ) / (2.0 * step)
+
+    assert np.allclose(analytic, numeric, rtol=1e-4, atol=1e-6)
+
+
+# ------------------------------------------------------------------
+# Recalibrated reference lengths
+# ------------------------------------------------------------------
+def test_reference_lengths_match_experimental_carbon_carbon_bonds():
+    lengths = {
+        order: _bond_length(optimize_sketch(_diatomic("C", "C", order=order)), 0, 1)
+        for order in (1, RESONANCE_ORDER, 2, 3)
+    }
+
+    assert lengths[1] == pytest.approx(1.52, abs=0.02)
+    assert lengths[RESONANCE_ORDER] == pytest.approx(1.40, abs=0.02)
+    assert lengths[2] == pytest.approx(1.34, abs=0.02)
+    assert lengths[3] == pytest.approx(1.22, abs=0.02)

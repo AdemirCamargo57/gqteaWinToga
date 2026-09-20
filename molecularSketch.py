@@ -27,6 +27,32 @@ from help import AtomicData
 SINGLE_BOND = 1
 DEFAULT_MAX_BOND_ORDER = 3
 
+# A delocalized (resonance) bond genuinely *is* order 1.5, so it is stored as a
+# number rather than as a separate flag. That is what lets valence sums,
+# reference bond lengths and the planarity torsion all keep working
+# arithmetically, with no parallel code path for "is this aromatic".
+RESONANCE_ORDER = 1.5
+
+BOND_TYPE_NAMES = {
+    1.0: "single",
+    RESONANCE_ORDER: "resonance",
+    2.0: "double",
+    3.0: "triple",
+}
+
+
+def bond_type_name(order: float) -> str:
+    """Human-readable name of a bond order, for status lines and summaries."""
+    return BOND_TYPE_NAMES.get(float(order), f"order {format_order(order)}")
+
+
+def format_order(value: float) -> str:
+    """Render a bond order or valence sum without a pointless trailing zero."""
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:g}"
+
 
 @dataclass
 class SketchAtom:
@@ -40,11 +66,23 @@ class SketchAtom:
 
 @dataclass
 class SketchBond:
-    """One drawn bond between two atom ids, with an order of 1, 2 or 3."""
+    """One drawn bond between two atom ids.
+
+    ``order`` is 1, 2 or 3 for a normal bond and :data:`RESONANCE_ORDER` (1.5)
+    for a delocalized one.
+    """
 
     atom_i: int
     atom_j: int
-    order: int = SINGLE_BOND
+    order: float = SINGLE_BOND
+
+    @property
+    def is_resonance(self) -> bool:
+        return self.order == RESONANCE_ORDER
+
+    @property
+    def type_name(self) -> str:
+        return bond_type_name(self.order)
 
     def connects(self, atom_id: int) -> bool:
         return atom_id in (self.atom_i, self.atom_j)
@@ -197,7 +235,7 @@ class MoleculeSketch:
                 raise ValueError(f"Unknown atom id {atom_id}.")
         if self.find_bond(atom_i, atom_j) is not None:
             return None
-        bond = SketchBond(atom_i=atom_i, atom_j=atom_j, order=int(order))
+        bond = SketchBond(atom_i=atom_i, atom_j=atom_j, order=float(order))
         self._bonds.append(bond)
         return bond
 
@@ -245,21 +283,41 @@ class MoleculeSketch:
             self.get_atom(bond.atom_i).element, self.get_atom(bond.atom_j).element
         )
 
-    def cycle_bond_order(self, bond: SketchBond) -> int:
-        """Raise a bond's order by one, wrapping back to single past the cap.
+    def bond_order_cycle(self, maximum: int) -> Tuple[float, ...]:
+        """The orders a bond with this cap steps through, in click order.
 
-        Single -> double -> triple -> single, where the cap comes from the two
-        elements: clicking a bond that is already at its maximum returns it to
-        a single bond rather than doing nothing, so one gesture both raises and
+        Resonance sits last, and only where a double bond is possible: a pair
+        capped at single (O-H) never reaches it, so the cycle cannot produce a
+        delocalized bond that makes no chemical sense.
+        """
+        orders: List[float] = [float(order) for order in range(1, int(maximum) + 1)]
+        if maximum >= 2:
+            orders.append(RESONANCE_ORDER)
+        return tuple(orders)
+
+    def cycle_bond_order(self, bond: SketchBond) -> float:
+        """Advance a bond one step around its cycle.
+
+        Single -> double -> triple -> resonance -> single for a pair that
+        supports them all, with triple dropped when the elements cap at two.
+        Clicking a bond that is already at the end of its cycle returns it to a
+        single bond rather than doing nothing, so one gesture both raises and
         lowers the order and no state is unreachable.
         """
-        maximum = self.max_bond_order_of(bond)
-        bond.order = bond.order + 1 if bond.order < maximum else SINGLE_BOND
+        cycle = self.bond_order_cycle(self.max_bond_order_of(bond))
+        try:
+            position = cycle.index(float(bond.order))
+        except ValueError:
+            # An order outside the cycle (a narrowed cap, a hand-set value):
+            # step back to single rather than stranding the bond.
+            bond.order = float(SINGLE_BOND)
+            return bond.order
+        bond.order = cycle[(position + 1) % len(cycle)]
         return bond.order
 
-    def bond_order_sum(self, atom_id: int) -> int:
-        """Total bond order on an atom -- a double bond counts twice."""
-        return sum(bond.order for bond in self._bonds if bond.connects(atom_id))
+    def bond_order_sum(self, atom_id: int) -> float:
+        """Total bond order on an atom -- a double counts twice, a resonance 1.5."""
+        return float(sum(bond.order for bond in self._bonds if bond.connects(atom_id)))
 
     # ------------------------------------------------------------------
     # Hit-testing
@@ -295,6 +353,20 @@ class MoleculeSketch:
     # ------------------------------------------------------------------
     def neighbours(self, atom_id: int) -> List[int]:
         return [bond.other_end(atom_id) for bond in self._bonds if bond.connects(atom_id)]
+
+    def _has_resonance_neighbour(self, bond: SketchBond) -> bool:
+        """Whether another resonance bond shares either end of this one.
+
+        One shared end is enough: a carboxylate or an amide is delocalized
+        without being a ring, and only a resonance bond with no resonance
+        neighbour at all is meaningless.
+        """
+        for other in self._bonds:
+            if other is bond or not other.is_resonance:
+                continue
+            if other.connects(bond.atom_i) or other.connects(bond.atom_j):
+                return True
+        return False
 
     def fragments(self) -> List[List[int]]:
         """Connected components, each a list of atom ids in insertion order."""
@@ -356,8 +428,18 @@ class MoleculeSketch:
             if total > limit:
                 warnings.append(
                     f"Unusual valence on {self.describe_atom(atom.atom_id)}: "
-                    f"{total} bonds where {limit} is typical."
+                    f"{format_order(total)} bonds where {limit} is typical."
                 )
+
+        for bond in self._bonds:
+            if not bond.is_resonance or self._has_resonance_neighbour(bond):
+                continue
+            warnings.append(
+                "Isolated resonance bond between "
+                f"{self.describe_atom(bond.atom_i)} and {self.describe_atom(bond.atom_j)}: "
+                "delocalization over a single bond has no meaning. Give it a resonance "
+                "neighbour, or make it a single or double bond."
+            )
 
         components = self.fragments()
         if len(components) > 1:

@@ -1372,37 +1372,64 @@ by state across all subfolders.
 MOLECULAR DESIGN
 
 Draw a molecule with the mouse, pre-optimize its geometry, and send the result
-to the 3D viewer to display or save it as an XYZ file.
+to the 3D viewer to display or save as an XYZ file.
+
+TWO WINDOWS
+
+The Design tab is a launcher. It opens two windows that work together:
+
+  . Periodic Table - click an element to select it.
+  . Molecular Design Canvas - draw the molecule, and run the optimization.
+
+Leave both open side by side. Choosing an element in the periodic-table window
+takes effect in the canvas window immediately, and the selected element is
+shown in both windows and on the Design tab. Either window can be closed and
+reopened at any time without losing the drawing: the structure is held by the
+tool itself, not by the windows. Closing the Molecular Viewer closes both.
 
 DRAWING
 
-  . Click an element in the periodic table to select it. Carbon is selected
-    when the tab opens.
   . Click an empty part of the canvas to place an atom of the selected element.
   . Press the left button on one atom, drag to a second atom and release to
     create a single bond between them.
-  . Click a bond to raise its order: single becomes double, double becomes
-    triple, and clicking a bond that is already at its maximum returns it to a
-    single bond. The maximum comes from the two elements involved, so a C-C
-    bond reaches triple, a C-O bond stops at double, and an O-H bond stays
-    single.
+  . Click a bond to step through the bond types:
+
+        single -> double -> triple -> resonance -> single
+
+    Clicking a bond that is already at the end of its cycle returns it to a
+    single bond, so one gesture both raises and lowers the bond type. The types
+    on offer depend on the two elements: a C-C bond reaches all four, a C-O
+    bond skips triple, and an O-H bond stays single.
   . Right-click an atom or a bond to delete it. Deleting an atom also deletes
     every bond attached to it.
   . Undo steps back through the last 50 edits, including Clear.
 
 Hydrogens are never added for you: draw every atom you want in the structure.
 
+RESONANCE BONDS
+
+A resonance bond is a delocalized bond: the aromatic bonds of benzene, the two
+equivalent C-O bonds of a carboxylate, the C-N bond of an amide. It is drawn as
+one solid line with a dashed line beside it, and it is treated as bond order
+1.5 throughout, so it counts as one and a half bonds towards an atom's valence
+and relaxes to a length between a single and a double bond. A benzene ring
+drawn with six resonance bonds optimizes to six equal 1.40 A bonds in a flat
+ring.
+
+Delete or change a resonance bond exactly like any other: right-click to remove
+it, or click it to continue round the cycle back to single.
+
 PRE-OPTIMIZATION
 
 'Pre-optimize geometry' converts the drawing into a three-dimensional
 structure. The 2D positions become the starting x and y coordinates, the
 structure is lifted slightly off the plane, and the geometry is relaxed with a
-compact force field: harmonic bond stretching with bond lengths taken from the
-covalent radii and shortened for double and triple bonds, angle bending at the
-VSEPR angle for each atom (counting lone pairs, which is what makes water bend
-instead of coming out linear), a twofold torsion term on double bonds to keep
-them planar, and a repulsive term that stops distant parts of the molecule from
-overlapping.
+compact force field: harmonic bond stretching with lengths taken from the
+covalent radii and adjusted for the bond type, angle bending at the VSEPR angle
+for each atom (counting lone pairs, which is what makes water bend instead of
+coming out linear), a twofold torsion term on double and resonance bonds to
+keep them planar, and a repulsive term that stops distant parts of the molecule
+from overlapping.
 
 The structure is checked before the run. These stop it:
 
@@ -1414,6 +1441,8 @@ The structure is checked before the run. These stop it:
 These are only reported, and the run goes ahead:
 
   . an unusual valence, such as five bonds on a carbon;
+  . an isolated resonance bond, one with no resonance bond at either end, since
+    delocalization over a single bond has no meaning;
   . more than one disconnected fragment, which are optimized together.
 
 A run that does not converge is reported with the minimizer's own message, and
@@ -1427,11 +1456,19 @@ energies it reports are in relative units and mean nothing outside a single
 run. It is tuned for main-group, mostly organic molecules, and geometries with
 a steric number of six (octahedral) come out distorted.
 
-SENDING THE RESULT ON
+SENDING THE RESULT TO THE 3D VIEWER
 
-'Send to 3D viewer' loads the optimized structure into this window as the
-current molecule. From there, 'Display Molecule/Trajectory' opens it in the 3D
-window and 'Save Current Frame XYZ' writes it to an XYZ file. Editing the
-drawing again discards the previous geometry, so the structure you send is
-always the one you last optimized.
+'Send to 3D viewer' transfers the optimized structure and opens the 3D viewer
+window automatically, bringing it to the front if it is already open. The
+connectivity you drew is transferred with it, so the bonds you made are the
+bonds you see. The 3D view draws every bond the same way whatever its type:
+bond order shows up in the geometry, where a resonance bond is visibly shorter
+than a single one.
+
+If the 3D window cannot be opened - a missing OpenGL driver, a blocked window -
+a dialog reports the reason. The structure has still been transferred, so
+'Display Molecule/Trajectory' and 'Save Current Frame XYZ' remain available.
+
+Editing the drawing again discards the previous geometry, so the structure you
+send is always the one you last optimized.
 """

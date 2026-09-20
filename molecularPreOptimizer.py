@@ -32,7 +32,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from help import AtomicData
-from molecularSketch import MoleculeSketch
+from molecularSketch import RESONANCE_ORDER, MoleculeSketch
 
 # The design canvas is drawn at 40 px to the Angstrom, so a typical 1.5 A bond
 # is a comfortable 60 px on screen.
@@ -46,8 +46,17 @@ SEED_OUT_OF_PLANE_AMPLITUDE = 0.20
 SEED_RANDOM_STATE = 20260920
 
 # Bond length multipliers by bond order, applied to the sum of the covalent
-# radii: a C-C single bond is 1.52 A, C=C 1.38 A, C#C 1.28 A.
-BOND_ORDER_LENGTH_SCALE = {1: 1.00, 2: 0.91, 3: 0.84}
+# radii. Calibrated against experimental carbon-carbon bonds: single 1.52 A
+# (exp. 1.54), resonance 1.40 A (exp. 1.397 in benzene), double 1.34 A
+# (exp. 1.33 in ethene), triple 1.22 A (exp. 1.20 in acetylene). A delocalized
+# bond sits between a single and a double, which is exactly where order 1.5
+# puts it.
+BOND_ORDER_LENGTH_SCALE = {
+    1.0: 1.00,
+    RESONANCE_ORDER: 0.92,
+    2.0: 0.88,
+    3.0: 0.80,
+}
 
 # Force constants. Angles use a potential in cos(theta) rather than theta,
 # which removes the 1/sin(theta) singularity that a harmonic-in-theta bend hits
@@ -139,6 +148,12 @@ def ideal_angle_degrees(element: str, connections: int, bond_order_sum: int) -> 
     steric number 4, bent) from carbon dioxide (two double bonds, no lone pairs,
     steric number 2, linear). An element with no valence-electron entry falls
     back to counting bonds alone.
+
+    ``bond_order_sum`` may be fractional when resonance bonds are involved, and
+    the floor division handles that without a special case: an aromatic carbon
+    (1.5 + 1.5 + 1 = 4, no lone pairs, three connections) is trigonal, and a
+    pyridine nitrogen (1.5 + 1.5 = 3, one lone pair, two connections) is
+    trigonal too rather than linear.
     """
     valence_electrons = AtomicData.valence_electrons.get(element)
     if valence_electrons is None:
@@ -191,7 +206,8 @@ class ForceField:
             elements = [atom.element for atom in sketch.atoms]
 
         bonds = [
-            (index_of[bond.atom_i], index_of[bond.atom_j], bond.order) for bond in sketch.bonds
+            (index_of[bond.atom_i], index_of[bond.atom_j], float(bond.order))
+            for bond in sketch.bonds
         ]
 
         bond_terms = []
@@ -202,7 +218,7 @@ class ForceField:
                 raise ValueError(
                     f"No covalent radius is known for {elements[i]} or {elements[j]}."
                 )
-            scale = BOND_ORDER_LENGTH_SCALE.get(order, 1.0)
+            scale = BOND_ORDER_LENGTH_SCALE.get(float(order), 1.0)
             bond_terms.append((i, j, (radius_i + radius_j) * scale))
 
         neighbours: Dict[int, List[int]] = {index: [] for index in range(len(elements))}
@@ -224,11 +240,13 @@ class ForceField:
                 for second in attached[position + 1:]:
                     angle_terms.append((first, centre, second, cos_ideal, is_linear))
 
-        # Torsions exist only across multiple bonds: that is where planarity is
-        # a real constraint rather than a parameter guess.
+        # Torsions exist only across multiple and delocalized bonds: that is
+        # where planarity is a real constraint rather than a parameter guess.
+        # Resonance is included, so an aromatic ring is flattened by every one
+        # of its bonds instead of being free to pucker.
         torsion_terms = []
         for i, j, order in bonds:
-            if order < 2:
+            if order < RESONANCE_ORDER:
                 continue
             for a in neighbours[i]:
                 if a == j:

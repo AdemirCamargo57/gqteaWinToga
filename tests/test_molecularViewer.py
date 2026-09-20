@@ -592,3 +592,95 @@ def test_a_designed_molecule_without_bonds_leaves_the_distance_alone():
     viewer.load_designed_molecule(_designed_water())
 
     assert viewer.connection_distance == 1.5
+
+
+# ------------------------------------------------------------------
+# Opening and focusing the GL window on demand
+# ------------------------------------------------------------------
+import asyncio
+import threading
+
+
+class _AliveThread:
+    @staticmethod
+    def is_alive():
+        return True
+
+
+def test_a_focus_request_is_consumed_exactly_once():
+    viewer = MolecularViewer()
+
+    viewer.request_window_focus()
+
+    assert viewer.consume_window_focus_request() is True
+    assert viewer.consume_window_focus_request() is False
+
+
+def test_an_already_open_viewer_is_focused_rather_than_relaunched():
+    viewer = MolecularViewer()
+    viewer._render_thread = _AliveThread()
+    viewer.glfw_initialized = True
+
+    ready, error = asyncio.run(viewer.ensure_viewer_window())
+
+    assert (ready, error) == (True, None)
+    assert viewer.consume_window_focus_request() is True
+
+
+def test_opening_the_viewer_without_a_structure_is_refused():
+    viewer = MolecularViewer()
+    viewer.frames = []
+    viewer.molecule_data = []
+
+    ready, error = asyncio.run(viewer.ensure_viewer_window())
+
+    assert ready is False
+    assert "no structure" in error.lower()
+
+
+def test_a_render_thread_failure_is_reported_instead_of_vanishing():
+    """The GL error happens on the render thread, after the caller returned."""
+    viewer = MolecularViewer()
+    viewer.load_designed_molecule([("C", (0.0, 0.0, 0.0))])
+
+    def failing_loop():
+        viewer._render_error = "OpenGL/GLFW error: GLFW window creation failed"
+        viewer._render_ready.set()
+
+    viewer.main_loop = failing_loop
+    ready, error = asyncio.run(viewer.ensure_viewer_window(timeout=5.0))
+
+    assert ready is False
+    assert "GLFW window creation failed" in error
+
+
+def test_a_viewer_that_never_starts_times_out_with_a_message():
+    viewer = MolecularViewer()
+    viewer.load_designed_molecule([("C", (0.0, 0.0, 0.0))])
+    viewer.main_loop = lambda: threading.Event().wait(2.0)
+
+    ready, error = asyncio.run(viewer.ensure_viewer_window(timeout=0.2))
+
+    assert ready is False
+    assert "did not open" in error.lower()
+
+
+def test_a_successful_start_reports_ready():
+    viewer = MolecularViewer()
+    viewer.load_designed_molecule([("C", (0.0, 0.0, 0.0))])
+    viewer.main_loop = lambda: viewer._render_ready.set()
+
+    ready, error = asyncio.run(viewer.ensure_viewer_window(timeout=5.0))
+
+    assert (ready, error) == (True, None)
+
+
+def test_a_new_run_clears_the_previous_failure():
+    viewer = MolecularViewer()
+    viewer.load_designed_molecule([("C", (0.0, 0.0, 0.0))])
+    viewer._render_error = "OpenGL/GLFW error: stale failure from last time"
+    viewer.main_loop = lambda: viewer._render_ready.set()
+
+    ready, error = asyncio.run(viewer.ensure_viewer_window(timeout=5.0))
+
+    assert (ready, error) == (True, None)
