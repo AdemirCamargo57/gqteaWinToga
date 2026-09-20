@@ -47,6 +47,7 @@
     - [Classical Rate Constant](#classical-rate-constant)
   - [General Tools](#general-tools)
     - [3D Molecular Viewer](#3d-molecular-viewer)
+      - [Molecular Design](#molecular-design)
     - [Energy Plots](#energy-plots)
     - [Molecular Axis Alignment](#molecular-axis-alignment)
     - [Select Frames](#select-frames)
@@ -1311,6 +1312,80 @@ Bond mode controls how the viewer updates connectivity while stepping through or
 To use this feature, open **Tools > 3D Molecular Viewer**, load an XYZ trajectory, then choose the desired option from the **Bond mode** selector on the **Box & Performance** tab. The viewer updates the displayed bonds using the selected mode.
 
 Example: if a trajectory shows two atoms separating during a dissociation event, choose **Dynamic cached** or **Dynamic live**. As you step through the frames, the bond disappears when the atom distance exceeds the current upper bond-length limit. If you choose **Static first frame**, that bond remains visible throughout playback because the viewer keeps the first-frame connectivity.
+
+##### Molecular Design
+
+The **Design** tab of the 3D Molecular Viewer lets you draw a molecule with the
+mouse, pre-optimize its geometry, and send the result to the viewer to display
+or save as an XYZ file. It is meant for building a starting structure quickly,
+without leaving the toolkit.
+
+**Drawing**
+
+Pick an element by clicking it in the periodic table at the top of the tab.
+Carbon is selected when the tab opens, and the current choice is highlighted and
+named below the table. Then, on the canvas:
+
+- **Click empty space** to place an atom of the selected element.
+- **Press the left button on an atom, drag to a second atom and release** to
+  create a single bond between them. A dashed guide line follows the pointer
+  while you drag.
+- **Click a bond** to raise its order: single becomes double, double becomes
+  triple, and clicking a bond that is already at its maximum returns it to a
+  single bond, so one gesture both raises and lowers the order. The maximum
+  depends on the two elements, so a C-C bond reaches triple, a C-O bond stops at
+  double, and an O-H bond stays single. The status line reports the new order
+  each time, or explains the cap.
+- **Right-click an atom or a bond** to delete it. Deleting an atom also deletes
+  every bond attached to it.
+- **Undo** steps back through the last 50 edits, including **Clear**.
+
+Hydrogens are never added for you: draw every atom you want in the structure.
+
+**Pre-optimizing the geometry**
+
+**Pre-optimize geometry** turns the drawing into a three-dimensional structure.
+The 2D positions become the starting x and y coordinates, the structure is
+lifted slightly off the plane, and the geometry is relaxed with a compact force
+field: harmonic bond stretching with reference lengths from the covalent radii,
+shortened for double and triple bonds; angle bending at the VSEPR angle for each
+atom, counting lone pairs, which is what makes water come out bent rather than
+linear; a twofold torsion term on double bonds, which keeps alkenes and
+conjugated rings flat; and a repulsive term that stops distant parts of the
+molecule from passing through each other.
+
+The structure is checked first. These stop the run, and the dialog names the
+atom responsible:
+
+- the canvas is empty;
+- an atom is left unbonded beside a molecule, which is almost always a stray
+  click;
+- an element has no covalent radius in the program's tables.
+
+These are reported but do not stop the run:
+
+- an unusual valence, such as five bonds on a carbon;
+- more than one disconnected fragment, which are optimized together.
+
+When the run finishes, a dialog reports the final energy, the gradient norm, the
+iteration count and any warnings. A run that does not converge is reported with
+the minimizer's own message, and its partially relaxed structure is still
+available to send on.
+
+This is a **pre-optimizer**: it produces a reasonable starting geometry for a
+real CPMD, cp.x or ORCA calculation, not a converged result. The energies it
+reports are in relative units and mean nothing outside a single run. It is tuned
+for main-group, mostly organic molecules; geometries with a steric number of six
+(octahedral) come out distorted.
+
+**Sending the structure on**
+
+**Send to 3D viewer** loads the optimized structure into the viewer window as
+the current molecule, together with the connectivity you drew, so the bonds you
+made are the bonds you see. From there, **Display Molecule/Trajectory** opens it
+in the 3D window and **Save Current Frame XYZ** writes it to an XYZ file.
+Editing the drawing again discards the previous geometry, so the structure you
+send is always the one you last optimized.
 
 #### Energy Plots
 

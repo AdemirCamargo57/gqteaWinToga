@@ -490,3 +490,105 @@ def test_deselecting_back_to_empty_clears_the_field():
     ui._toggle_picked_atom(3)
 
     assert ui.measure_indices_input.value == ""
+
+
+# ------------------------------------------------------------------
+# Handover from the molecular design tab
+# ------------------------------------------------------------------
+def _designed_water():
+    return [
+        ("O", (0.0, 0.0, 0.0)),
+        ("H", (0.76, 0.59, 0.0)),
+        ("H", (-0.76, 0.59, 0.0)),
+    ]
+
+
+def test_a_designed_molecule_becomes_the_current_frame():
+    viewer = MolecularViewer()
+
+    viewer.load_designed_molecule(_designed_water())
+
+    assert viewer.get_current_frame_data() == _designed_water()
+
+
+def test_a_designed_molecule_replaces_a_loaded_trajectory():
+    viewer = MolecularViewer()
+    viewer.frames = [[("C", (0.0, 0.0, 0.0))], [("C", (1.0, 0.0, 0.0))]]
+    viewer.current_frame = 1
+
+    viewer.load_designed_molecule(_designed_water())
+
+    assert viewer.frames == [_designed_water()]
+    assert viewer.current_frame == 0
+    assert viewer.get_current_frame_data() == _designed_water()
+
+
+def test_a_designed_molecule_arrives_with_its_bonds_calculated():
+    """Bond detection reads self.frames, so a structure kept only in
+    molecule_data would be drawn as unconnected atoms."""
+    viewer = MolecularViewer()
+
+    viewer.load_designed_molecule(_designed_water())
+
+    assert viewer.bonds == [(0, 1), (0, 2)]
+
+
+def test_loading_a_designed_molecule_clears_the_bond_cache():
+    """Cached bonds belong to the previous structure and would be drawn wrong."""
+    viewer = MolecularViewer()
+    viewer._bond_cache[(0, 1.5, 0.45)] = [(0, 1)]
+    viewer._scene_radius_cache[0] = 12.0
+
+    viewer.load_designed_molecule(_designed_water())
+
+    assert viewer._bond_cache == {}
+    assert viewer._scene_radius_cache == {}
+
+
+def test_loading_a_designed_molecule_clears_a_stale_selection():
+    viewer = MolecularViewer()
+    viewer.picked_atoms = [5, 9]
+    viewer.identified_atoms = [7]
+
+    viewer.load_designed_molecule(_designed_water())
+
+    assert viewer.get_picked_atoms() == []
+    assert viewer.get_identified_atoms() == []
+
+
+def test_loading_an_empty_structure_is_rejected():
+    viewer = MolecularViewer()
+
+    with pytest.raises(ValueError, match="no atoms"):
+        viewer.load_designed_molecule([])
+
+
+def test_designed_bonds_widen_a_too_small_connection_distance():
+    """A real 1.52 A C-C single bond sits just past the 1.5 A default, so a
+    designed molecule would lose its single bonds on screen."""
+    viewer = MolecularViewer()
+    viewer.connection_distance = 1.5
+    frame = [("C", (0.0, 0.0, 0.0)), ("C", (1.52, 0.0, 0.0))]
+
+    viewer.load_designed_molecule(frame, bonds=[(0, 1)])
+
+    assert viewer.connection_distance > 1.52
+    assert viewer.bonds == [(0, 1)]
+
+
+def test_designed_bonds_never_shrink_the_connection_distance():
+    viewer = MolecularViewer()
+    viewer.connection_distance = 2.4
+
+    viewer.load_designed_molecule(_designed_water(), bonds=[(0, 1), (0, 2)])
+
+    assert viewer.connection_distance == 2.4
+
+
+def test_a_designed_molecule_without_bonds_leaves_the_distance_alone():
+    viewer = MolecularViewer()
+    viewer.connection_distance = 1.5
+
+    viewer.load_designed_molecule(_designed_water())
+
+    assert viewer.connection_distance == 1.5

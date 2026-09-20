@@ -14,6 +14,8 @@ from OpenGL.GLUT import *
 from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
+from molecularDesign import MolecularDesignPanel
+
 Atom = Tuple[str, Tuple[float, float, float]]
 Frame = List[Atom]
 
@@ -235,6 +237,67 @@ class MolecularViewer:
             if self.frames and 0 <= self.current_frame < len(self.frames):
                 return list(self.frames[self.current_frame])
             return list(self.molecule_data)
+
+    def load_designed_molecule(self, frame_data: Frame, bonds: Optional[List[Tuple[int, int]]] = None):
+        """Adopt a structure built in the Design tab as the current molecule.
+
+        The whole integration surface for molecularDesign. The structure is
+        stored as a **single-frame trajectory**, not only in ``molecule_data``:
+        bond detection reads ``self.frames`` and returns nothing when it is
+        empty, so a molecule kept only in ``molecule_data`` would render as
+        unconnected atoms. Holding one frame instead means "Display
+        Molecule/Trajectory" and "Save Current Frame XYZ" work on a designed
+        structure with no further plumbing.
+
+        ``bonds`` is the connectivity the user actually drew, as 0-based index
+        pairs. The viewer always re-derives bonds from distance, so rather than
+        overriding that, the connection distance is widened just enough to
+        cover the longest drawn bond: without it a designed molecule loses its
+        C-C single bonds on screen, since a real one is 1.52 A and the default
+        cutoff is 1.5 A. The distance is only ever raised, never lowered.
+        """
+        if not frame_data:
+            raise ValueError("The designed structure has no atoms.")
+
+        required_distance = self._longest_bond_distance(frame_data, bonds)
+
+        with self._state_lock:
+            if required_distance is not None and required_distance > self.connection_distance:
+                self.connection_distance = required_distance
+            self.molecule_data = list(frame_data)
+            self.frames = [list(frame_data)]
+            self.frame_offsets = []
+            self.frame_elements = [element for element, _ in frame_data]
+            self.current_frame = 0
+            self.bonds = []
+            # Picks and labels refer to the atoms of the old structure.
+            self.picked_atoms = []
+            self.identified_atoms = []
+            self.active_measurement_type = None
+            self.active_measurement_indices = []
+
+        self.invalidate_bond_cache()
+        self.invalidate_scene_cache()
+        self.request_projection_update()
+        self.calculate_bonds(0)
+
+    @staticmethod
+    def _longest_bond_distance(
+        frame_data: Frame, bonds: Optional[List[Tuple[int, int]]]
+    ) -> Optional[float]:
+        """Length of the longest listed bond, plus a small margin."""
+        if not bonds:
+            return None
+        longest = 0.0
+        for i, j in bonds:
+            if not (0 <= i < len(frame_data) and 0 <= j < len(frame_data)):
+                continue
+            start = np.array(frame_data[i][1], dtype=float)
+            end = np.array(frame_data[j][1], dtype=float)
+            longest = max(longest, float(np.linalg.norm(start - end)))
+        if longest <= 0.0:
+            return None
+        return longest + 0.05
 
     def invalidate_bond_cache(self):
         with self._state_lock:
@@ -1622,6 +1685,9 @@ class MolecularViewerUI(MolecularViewer):
         self.fast_playback_switch = None
         self.bond_rendering_selection = None
 
+        # Molecular design tab (molecularDesign.MolecularDesignPanel)
+        self.design_panel = None
+
         self.layout_main_window()
 
     # ------------------------------------------------------------------
@@ -1695,6 +1761,7 @@ class MolecularViewerUI(MolecularViewer):
                 ("Display", self._tab_page(self._build_display_tab())),
                 ("Frames", self._tab_page(self._build_frames_tab())),
                 ("Measure", self._tab_page(self._build_measure_tab())),
+                ("Design", self._tab_page(self._build_design_tab())),
                 ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
             ],
             style=Pack(flex=1),
@@ -2062,6 +2129,16 @@ class MolecularViewerUI(MolecularViewer):
         tab_box.add(self.measurement_label)
 
         return tab_box
+
+    def _build_design_tab(self) -> toga.Box:
+        """The interactive molecular design canvas.
+
+        All of it lives in molecularDesign.MolecularDesignPanel; the viewer
+        only owns the panel and receives the optimized structure back through
+        ``load_designed_molecule``.
+        """
+        self.design_panel = MolecularDesignPanel(viewer=self)
+        return self.design_panel.build()
 
     def _build_box_performance_tab(self) -> toga.Box:
         tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))

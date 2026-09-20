@@ -142,6 +142,73 @@ class AtomicData:
             "Ca":"D","P":"D","Fe":"D","F":"P","S":"P",
             "Cl":"D","Br":"D","I":"D"}
 
+    # Covalent radii in Angstrom (Cordero et al., Dalton Trans. 2008, 2832).
+    # Used by molecularSketch (to tell whether an element can be placed at all)
+    # and by molecularPreOptimizer (reference bond lengths). An element that is
+    # absent here cannot be pre-optimized, and validation says so by name.
+    covalent_radii = {
+        "H": 0.31, "He": 0.28,
+        "Li": 1.28, "Be": 0.96, "B": 0.84, "C": 0.76, "N": 0.71, "O": 0.66,
+        "F": 0.57, "Ne": 0.58,
+        "Na": 1.66, "Mg": 1.41, "Al": 1.21, "Si": 1.11, "P": 1.07, "S": 1.05,
+        "Cl": 1.02, "Ar": 1.06,
+        "K": 2.03, "Ca": 1.76, "Sc": 1.70, "Ti": 1.60, "V": 1.53, "Cr": 1.39,
+        "Mn": 1.39, "Fe": 1.32, "Co": 1.26, "Ni": 1.24, "Cu": 1.32, "Zn": 1.22,
+        "Ga": 1.22, "Ge": 1.20, "As": 1.19, "Se": 1.20, "Br": 1.20, "Kr": 1.16,
+        "Rb": 2.20, "Sr": 1.95, "Y": 1.90, "Zr": 1.75, "Nb": 1.64, "Mo": 1.54,
+        "Tc": 1.47, "Ru": 1.46, "Rh": 1.42, "Pd": 1.39, "Ag": 1.45, "Cd": 1.44,
+        "In": 1.42, "Sn": 1.39, "Sb": 1.39, "Te": 1.38, "I": 1.39, "Xe": 1.40,
+        "Cs": 2.44, "Ba": 2.15,
+        "La": 2.07, "Ce": 2.04, "Pr": 2.03, "Nd": 2.01, "Pm": 1.99, "Sm": 1.98,
+        "Eu": 1.98, "Gd": 1.96, "Tb": 1.94, "Dy": 1.92, "Ho": 1.92, "Er": 1.89,
+        "Tm": 1.90, "Yb": 1.87, "Lu": 1.87,
+        "Hf": 1.75, "Ta": 1.70, "W": 1.62, "Re": 1.51, "Os": 1.44, "Ir": 1.41,
+        "Pt": 1.36, "Au": 1.36, "Hg": 1.32, "Tl": 1.45, "Pb": 1.46, "Bi": 1.48,
+        "Po": 1.40, "At": 1.50, "Rn": 1.50,
+        "Fr": 2.60, "Ra": 2.21, "Ac": 2.15, "Th": 2.06, "Pa": 2.00, "U": 1.96,
+        "Np": 1.90, "Pu": 1.87, "Am": 1.80, "Cm": 1.69,
+    }
+
+    # Typical maximum valence, as a sum of bond orders. Exceeding it is a
+    # warning in the molecular design tool, never an error: unusual valences
+    # are chemically real, and the tool does not police what the user draws.
+    # An element absent here is never warned about (transition metals, where a
+    # single "typical" valence would be meaningless).
+    max_valence = {
+        "H": 1, "He": 0,
+        "Li": 1, "Be": 2, "B": 3, "C": 4, "N": 3, "O": 2, "F": 1, "Ne": 0,
+        "Na": 1, "Mg": 2, "Al": 3, "Si": 4, "P": 5, "S": 6, "Cl": 1, "Ar": 0,
+        "K": 1, "Ca": 2, "Ga": 3, "Ge": 4, "As": 5, "Se": 6, "Br": 1, "Kr": 0,
+        "Rb": 1, "Sr": 2, "In": 3, "Sn": 4, "Sb": 5, "Te": 6, "I": 1, "Xe": 6,
+        "Cs": 1, "Ba": 2, "Tl": 3, "Pb": 4, "Bi": 5, "At": 1, "Rn": 2,
+    }
+
+    # Valence electrons (main-group number), used by molecularPreOptimizer to
+    # count lone pairs and so derive a VSEPR steric number: it is what makes
+    # water bend rather than come out linear, since oxygen's two lone pairs
+    # matter as much as its two bonds. Transition metals are absent on purpose;
+    # for them the optimizer falls back to counting bonds only.
+    valence_electrons = {
+        "H": 1, "He": 2,
+        "Li": 1, "Be": 2, "B": 3, "C": 4, "N": 5, "O": 6, "F": 7, "Ne": 8,
+        "Na": 1, "Mg": 2, "Al": 3, "Si": 4, "P": 5, "S": 6, "Cl": 7, "Ar": 8,
+        "K": 1, "Ca": 2, "Ga": 3, "Ge": 4, "As": 5, "Se": 6, "Br": 7, "Kr": 8,
+        "Rb": 1, "Sr": 2, "In": 3, "Sn": 4, "Sb": 5, "Te": 6, "I": 7, "Xe": 8,
+        "Cs": 1, "Ba": 2, "Tl": 3, "Pb": 4, "Bi": 5, "Po": 6, "At": 7, "Rn": 8,
+    }
+
+    # Highest bond order an element takes part in, used to cap the
+    # click-to-raise bond-order cycle in the molecular design tool. The cap for
+    # a bond is the lower of its two elements, so O-H stays single while C=O
+    # reaches double and C#C reaches triple. Absent means no cap below triple.
+    max_bond_order = {
+        "H": 1, "F": 1, "Cl": 1, "Br": 1, "I": 1, "At": 1,
+        "Li": 1, "Na": 1, "K": 1, "Rb": 1, "Cs": 1, "Fr": 1,
+        "Be": 1, "Mg": 1, "Ca": 1, "Sr": 1, "Ba": 1, "Ra": 1,
+        "He": 1, "Ne": 1, "Ar": 1, "Kr": 1, "Xe": 1, "Rn": 1,
+        "O": 2, "S": 2, "Se": 2, "Te": 2,
+    }
+
 class Fonts:
     font_1 = {'color':  'darkred','weight': 'normal','size': 16}
     font_2 = {'color':  'darkred','weight': 'normal','size': 12}
@@ -1299,4 +1366,72 @@ combined trajectories separated by states. The program already performs a second
 consolidates all the stateX.xyz files from every subfolder into a single file for each state 
 in the root directory. These consolidated files contain the full trajectory information grouped 
 by state across all subfolders.
+"""
+
+    help_molecular_design = """
+MOLECULAR DESIGN
+
+Draw a molecule with the mouse, pre-optimize its geometry, and send the result
+to the 3D viewer to display or save it as an XYZ file.
+
+DRAWING
+
+  . Click an element in the periodic table to select it. Carbon is selected
+    when the tab opens.
+  . Click an empty part of the canvas to place an atom of the selected element.
+  . Press the left button on one atom, drag to a second atom and release to
+    create a single bond between them.
+  . Click a bond to raise its order: single becomes double, double becomes
+    triple, and clicking a bond that is already at its maximum returns it to a
+    single bond. The maximum comes from the two elements involved, so a C-C
+    bond reaches triple, a C-O bond stops at double, and an O-H bond stays
+    single.
+  . Right-click an atom or a bond to delete it. Deleting an atom also deletes
+    every bond attached to it.
+  . Undo steps back through the last 50 edits, including Clear.
+
+Hydrogens are never added for you: draw every atom you want in the structure.
+
+PRE-OPTIMIZATION
+
+'Pre-optimize geometry' converts the drawing into a three-dimensional
+structure. The 2D positions become the starting x and y coordinates, the
+structure is lifted slightly off the plane, and the geometry is relaxed with a
+compact force field: harmonic bond stretching with bond lengths taken from the
+covalent radii and shortened for double and triple bonds, angle bending at the
+VSEPR angle for each atom (counting lone pairs, which is what makes water bend
+instead of coming out linear), a twofold torsion term on double bonds to keep
+them planar, and a repulsive term that stops distant parts of the molecule from
+overlapping.
+
+The structure is checked before the run. These stop it:
+
+  . the canvas is empty;
+  . an atom is left unbonded beside a molecule, which is almost always a stray
+    click;
+  . an element has no covalent radius in the program's tables.
+
+These are only reported, and the run goes ahead:
+
+  . an unusual valence, such as five bonds on a carbon;
+  . more than one disconnected fragment, which are optimized together.
+
+A run that does not converge is reported with the minimizer's own message, and
+the partially relaxed structure is still available to send on.
+
+LIMITS
+
+This is a pre-optimizer that produces a reasonable starting geometry for a real
+CPMD, cp.x or ORCA calculation. It is not a calibrated force field: the
+energies it reports are in relative units and mean nothing outside a single
+run. It is tuned for main-group, mostly organic molecules, and geometries with
+a steric number of six (octahedral) come out distorted.
+
+SENDING THE RESULT ON
+
+'Send to 3D viewer' loads the optimized structure into this window as the
+current molecule. From there, 'Display Molecule/Trajectory' opens it in the 3D
+window and 'Save Current Frame XYZ' writes it to an XYZ file. Editing the
+drawing again discards the previous geometry, so the structure you send is
+always the one you last optimized.
 """
