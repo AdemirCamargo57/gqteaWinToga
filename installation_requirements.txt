@@ -1,0 +1,123 @@
+# ======================================================================
+# gqteaWinToga - gQTEA Molecular Analysis Toolkit
+# Python package requirements
+#
+# Install everything listed below with:
+#
+#     python -m pip install -r installation_requirements.txt
+#
+# Run it from this directory (venv/src) with the virtual environment
+# activated (..\Scripts\Activate.ps1). Upgrading pip first avoids stale
+# wheel resolution:
+#
+#     python -m pip install --upgrade pip
+#
+# Python 3.10 or newer is required; every package below declares
+# Requires-Python >= 3.10 or no constraint at all.
+#
+# This is a Windows application: toga-winforms builds on WinForms through
+# pythonnet, so the list is not portable to Linux or macOS as written.
+#
+# Verified working on Python 3.13.12 with:
+#     toga-winforms 0.5.3      numpy 2.4.2         scipy 1.17.0
+#     matplotlib 3.10.8        glfw 2.10.0         PyOpenGL 3.1.10
+#     PyOpenGL-accelerate 3.1.10                   PyMuPDF 1.27.2.2
+# ======================================================================
+
+# ----------------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------------
+
+# GUI framework and its WinForms backend. Used by every tool window.
+# Installs toga-core, pythonnet and pillow as dependencies, so none of
+# those need to be listed here.
+toga-winforms
+
+# Numerical core: trajectory parsing, geometry, statistics. Imported by
+# most analysis modules.
+numpy
+
+# Used by the autocorrelation FFT, the molecular pre-optimizer (L-BFGS-B)
+# and the solvent-box builders.
+scipy
+
+# All plotting, in both the main process (Agg) and the separate
+# interactive plot-viewer process (TkAgg - see the system note below).
+matplotlib
+
+# Windowing and input for the 3D molecular viewer. The wheel bundles
+# glfw3.dll, so no separate GLFW install is needed for a pip install.
+# (A packaged .exe build is different - see readme.md.)
+glfw
+
+# OpenGL bindings for the 3D molecular viewer. The Windows wheel bundles
+# freeglut, which the viewer's on-canvas text labels need, so freeglut
+# does not have to be installed separately either.
+PyOpenGL
+
+# Optional C speedups that PyOpenGL picks up automatically when present.
+# Nothing imports it directly and the application runs correctly without
+# it, only more slowly in the 3D viewer. It is the one entry here that
+# can fail to install on a Python version with no matching wheel, since
+# it would then need a C compiler; if that ever happens, comment it out
+# rather than abandoning the install.
+PyOpenGL-accelerate
+
+# Renders cpx_input_description.pdf inside the cp.x input builder's help
+# viewer. The import is guarded, so the rest of the application still
+# runs without it - only in-app PDF help is lost.
+PyMuPDF
+
+# ----------------------------------------------------------------------
+# Optional: running the test suite
+#
+#     python -m pip install pytest
+#
+# Not needed to run the application. Required only for the headless
+# tests under tests/, run from this directory with:
+#
+#     python -m pytest tests/ -q
+# ----------------------------------------------------------------------
+# pytest
+
+# ----------------------------------------------------------------------
+# Optional: building the standalone Windows executable
+#
+#     python -m pip install auto-py-to-exe
+#
+# Packaging is done manually; see readme.md for the full notes, including
+# the GLFW DLL and the TkAgg backend, which often have to be added to the
+# bundle by hand.
+# ----------------------------------------------------------------------
+# auto-py-to-exe
+
+# ======================================================================
+# System-level dependencies - NOT installable with pip
+#
+# These cannot be listed as packages above. Install them separately.
+#
+# 1. tkinter (Tcl/Tk)
+#    A standard-library module that is not distributed on PyPI. The
+#    interactive plot viewer (plotViewer.py) pins matplotlib's TkAgg
+#    backend, which requires it.
+#      Windows : included with the official python.org installer, as long
+#                as the "tcl/tk and IDLE" component is selected. To repair
+#                an existing install, re-run the installer, choose Modify
+#                and enable that component.
+#      Check   : python -c "import tkinter; print(tkinter.TkVersion)"
+#    If it is missing, plots fail to open with no visible error rather
+#    than raising - a blank result from the plot viewer is the symptom.
+#
+# 2. A graphical desktop session with working OpenGL drivers
+#    The 3D molecular viewer creates a native OpenGL window through GLFW.
+#    It cannot run over a plain SSH session, in a headless container, or
+#    on a machine with no GPU driver installed. Remote Desktop sessions
+#    may fall back to a software renderer and be slow.
+#    Vendor GPU drivers (Intel, NVIDIA, AMD) supply the OpenGL runtime;
+#    Windows' default Microsoft Basic Display Adapter driver does not.
+#
+# 3. Microsoft .NET runtime (Windows)
+#    toga-winforms runs on WinForms through pythonnet. Windows 10 and 11
+#    ship a suitable .NET Framework, so no action is normally needed;
+#    a stripped-down or Server Core installation may not.
+# ======================================================================

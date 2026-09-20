@@ -65,7 +65,7 @@ class gqteaWin(toga.App):
         # 2. Header Section
         header_box = toga.Box(style=Pack(direction=COLUMN, align_items=CENTER, margin_bottom=15))
         title_label = toga.Label(
-            "gQTEA-0.5.0 Molecular Analysis Toolkit",
+            "gQTEA-0.6.0 Molecular Analysis Toolkit",
             style=Pack(font_size=18, font_weight='bold', margin_bottom=5)
         )
         welcome_label = toga.Label(
@@ -116,8 +116,8 @@ class gqteaWin(toga.App):
 
         structural_tools = [
             ("Radial Distribution Function", RadialFunctionUI),
-            ("Mean Residence Time", MeanResidenceTimeUI),
-            ("Legacy Mean Residence Time", LegacyMeanResidenceTimeUI),
+            ("Mean Residence Time Statistical", MeanResidenceTimeUI),
+            ("Mean Residence Time Classical", LegacyMeanResidenceTimeUI),
             ("Autocorrelation function", AutoCorrelationFunctionUI),
             ("Single Solute solvent box", SingleSoluteSolventBoxUI),
             ("Mixture of two solvent box", MixtureSolventBoxUI),

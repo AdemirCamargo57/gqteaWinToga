@@ -5,6 +5,10 @@
 - [Overview](#overview)
 - [Installation and Requirements](#installation-and-requirements)
   - [Requirements](#requirements)
+    - [Python packages](#python-packages)
+    - [System requirements that pip cannot install](#system-requirements-that-pip-cannot-install)
+    - [Optional packages](#optional-packages)
+    - [External simulation programs](#external-simulation-programs)
   - [Install from Source](#install-from-source)
   - [Start the Program](#start-the-program)
 - [Input File Basics](#input-file-basics)
@@ -86,6 +90,7 @@
   - [ENERGY file format errors](#energy-file-format-errors)
   - [Solvent box insertion warnings](#solvent-box-insertion-warnings)
   - [Missing `SH_STATE.dat` or `TRAJEC.xyz`](#missing-sh_statedat-or-trajecxyz)
+  - [Plot windows do not appear](#plot-windows-do-not-appear)
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
   - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
 - [Version, Contributors, and License](#version-contributors-and-license)
@@ -108,22 +113,104 @@ gQTEA-0.4.0 Molecular Analysis Toolkit
 
 Recommended environment:
 
-- Python 3.10 or newer.
+- Python 3.10 or newer. The toolkit is developed and verified on Python 3.13.
 - Windows with a working graphical desktop session.
 - A Python virtual environment.
 
-Python packages used by the application include:
+#### Python packages
 
-- `toga-winforms`
-- `numpy`
-- `scipy`
-- `matplotlib`
-- `glfw`
-- `PyOpenGL`
-- `PyOpenGL-accelerate`
-- `PyMuPDF`
+All Python dependencies are listed in `installation_requirements.txt`, in the
+source directory. Install them in one step:
 
-Some workflows also require files produced by external chemistry programs, such as CPMD, Quantum ESPRESSO `cp.x`, ORCA, Gaussian, or Vanderbilt `runatom.x`. gqteaWinToga prepares and analyzes files for these programs, but it does not replace the external simulation engines.
+```powershell
+python -m pip install -r installation_requirements.txt
+```
+
+The file installs these packages:
+
+| Package | Used for |
+|---------|----------|
+| `toga-winforms` | The GUI framework and its Windows backend. Also installs `toga-core`, `pythonnet` and `pillow`. |
+| `numpy` | Trajectory parsing, geometry and statistics, used by most analysis tools. |
+| `scipy` | The autocorrelation FFT, the molecular pre-optimizer, and the solvent-box builders. |
+| `matplotlib` | All plotting, in both the main window and the separate interactive plot viewer. |
+| `glfw` | Windowing and mouse input for the 3D molecular viewer. |
+| `PyOpenGL` | OpenGL bindings for the 3D molecular viewer. |
+| `PyOpenGL-accelerate` | Optional speedups for `PyOpenGL`. The toolkit runs correctly without it, only more slowly in the 3D viewer. |
+| `PyMuPDF` | Renders `cpx_input_description.pdf` inside the `cp.x` input builder's help viewer. Without it, only the in-app PDF help is lost. |
+
+Verified working on Python 3.13.12 with `toga-winforms` 0.5.3, `numpy` 2.4.2,
+`scipy` 1.17.0, `matplotlib` 3.10.8, `glfw` 2.10.0, `PyOpenGL` 3.1.10,
+`PyOpenGL-accelerate` 3.1.10 and `PyMuPDF` 1.27.2.2.
+
+Two native libraries that the 3D viewer needs — `glfw3.dll` and `freeglut` —
+are bundled inside the `glfw` and `PyOpenGL` wheels, so a normal pip install
+requires no separate download. A packaged `.exe` build is different; see
+[Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw).
+
+#### System requirements that pip cannot install
+
+Three things are not Python packages and cannot be installed from
+`installation_requirements.txt`. They are listed as comments at the end of that
+file as well.
+
+**1. tkinter (Tcl/Tk)**
+
+A standard-library module that is not distributed on PyPI. The interactive plot
+viewer uses matplotlib's `TkAgg` backend, which requires it.
+
+On Windows, tkinter is included with the official python.org installer as long
+as the **tcl/tk and IDLE** component is selected. To add it to an existing
+installation, re-run the installer, choose **Modify**, and enable that
+component. Check whether it is present with:
+
+```powershell
+python -c "import tkinter; print(tkinter.TkVersion)"
+```
+
+If tkinter is missing, plot windows fail to open **silently**, with no error
+message. See [Plot windows do not appear](#plot-windows-do-not-appear).
+
+**2. A graphical desktop session with working OpenGL drivers**
+
+The 3D molecular viewer opens a native OpenGL window. It cannot run over a
+plain SSH session, in a headless container, or on a machine with no GPU driver
+installed. Install the vendor driver for your graphics hardware (Intel, NVIDIA
+or AMD); the Microsoft Basic Display Adapter driver that Windows falls back to
+does not provide an OpenGL runtime. Remote Desktop sessions may work through a
+software renderer, but slowly.
+
+**3. Microsoft .NET runtime**
+
+`toga-winforms` builds the interface on WinForms through `pythonnet`. Windows 10
+and 11 ship a suitable .NET Framework, so no action is normally needed. A
+stripped-down or Server Core installation may not include it.
+
+#### Optional packages
+
+Neither is needed to run the toolkit.
+
+To run the automated test suite:
+
+```powershell
+python -m pip install pytest
+python -m pytest tests/ -q
+```
+
+To build the standalone Windows executable:
+
+```powershell
+python -m pip install auto-py-to-exe
+```
+
+Both are listed as commented entries in `installation_requirements.txt`.
+
+#### External simulation programs
+
+Some workflows also require files produced by external chemistry programs, such
+as CPMD, Quantum ESPRESSO `cp.x`, ORCA, Gaussian, or Vanderbilt `runatom.x`.
+gqteaWinToga prepares and analyzes files for these programs, but it does not
+replace the external simulation engines.
 
 ### Install from Source
 
@@ -135,10 +222,18 @@ cd gqteaWinToga
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install toga-winforms numpy scipy matplotlib glfw PyOpenGL PyOpenGL-accelerate PyMuPDF
+python -m pip install -r installation_requirements.txt
 ```
 
-If you already have the source tree and an active virtual environment, install the packages in that environment.
+If you already have the source tree and an active virtual environment, run the
+last command in that environment.
+
+To confirm the installation before starting the program:
+
+```powershell
+python -c "import toga, numpy, scipy, matplotlib, glfw, OpenGL, fitz; print('all packages import correctly')"
+python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
+```
 
 ### Start the Program
 
@@ -2778,9 +2873,52 @@ If the solvent box builder cannot insert all requested molecules, the target den
 
 The SH Geometry Analyzer skips subfolders that do not contain both files. Add the missing files or remove incomplete subfolders from the selected root directory.
 
+### Plot windows do not appear
+
+A tool reports that it finished, but no plot window opens and no error is
+shown. The interactive plot viewer runs in a separate process and pins
+matplotlib's `TkAgg` backend, so this almost always means **tkinter is
+missing**. It fails silently rather than raising.
+
+Check for it:
+
+```powershell
+python -c "import tkinter; print(tkinter.TkVersion)"
+```
+
+If that command fails, re-run the python.org installer, choose **Modify**, and
+enable the **tcl/tk and IDLE** component. tkinter is a standard-library module
+and cannot be installed with pip. See
+[System requirements that pip cannot install](#system-requirements-that-pip-cannot-install).
+
+In a packaged `.exe` build, the same symptom means the `TkAgg` backend was not
+bundled. See the packaging notes in `readme.md`.
+
 ### Molecular viewer does not open or shows no 3D view
 
-The viewer depends on OpenGL and GLFW. Confirm that `glfw`, `PyOpenGL`, and `PyOpenGL-accelerate` are installed and that your graphics driver supports OpenGL in the current desktop session.
+The viewer depends on OpenGL and GLFW. Work through these in order:
+
+1. Confirm the packages are installed:
+
+   ```powershell
+   python -c "import glfw, OpenGL; print('ok')"
+   ```
+
+   If this fails, reinstall with
+   `python -m pip install -r installation_requirements.txt`. The required
+   `glfw3.dll` and `freeglut` libraries are bundled inside those wheels, so
+   they do not need to be downloaded separately.
+
+2. Confirm your graphics driver provides OpenGL in the current desktop
+   session. Install the vendor driver for your hardware (Intel, NVIDIA or
+   AMD); the Microsoft Basic Display Adapter driver does not include an
+   OpenGL runtime.
+
+3. The viewer cannot run over a plain SSH session or in a headless container.
+   A Remote Desktop session may work through a software renderer, but slowly.
+
+If the window still does not open, the failure reason is reported in a dialog
+and in the status line at the bottom of the Molecular Viewer window.
 
 ### Packaged Windows executable cannot find GLFW
 
