@@ -1,5 +1,6 @@
 import csv
 import json
+import math
 import os
 import tempfile
 from typing import List
@@ -8,13 +9,14 @@ import matplotlib.pyplot as plt
 import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW, LEFT, CENTER
-from displayPlots import launch_plot_viewer
+from displayPlots import launch_plot_viewer, series_style_kwargs
 from help import HelpGqteaWin
 
 class PlotterBase:
     CPMD_PLOT_TYPE = "CPMD energy file"
     GQTEAMD_PLOT_TYPE = "gqteaMD energy file"
     JSON_PLOT_TYPE = "JSON plot file"
+    TABLE_PLOT_TYPE = "Multi-column data file"
 
     def __init__(self):
         # Initialize x_axis to avoid attribute error
@@ -25,6 +27,7 @@ class PlotterBase:
         self.gqtea_y_switches = []
         self.json_figures = []
         self.json_file = ""
+        self.table_data = None
 
     # ------------------------------------------------------------------ #
     # JSON plot manifests                                                  #
@@ -150,6 +153,17 @@ class PlotterBase:
                             f"{tag}: 'x' and 'y' must have the same length "
                             f"({n_x} vs {n_y})."
                         )
+                    # Optional styling; an unknown value would crash the viewer.
+                    if "linestyle" in curve and curve["linestyle"] not in cls.SERIES_LINESTYLES:
+                        raise ValueError(
+                            f"{tag}: 'linestyle' must be one of "
+                            f"{', '.join(cls.SERIES_LINESTYLES)}."
+                        )
+                    if "marker" in curve and curve["marker"] not in cls.SERIES_MARKERS:
+                        raise ValueError(
+                            f"{tag}: 'marker' must be one of "
+                            f"{' '.join(cls.SERIES_MARKERS)}."
+                        )
             elif "x" in figure and "y" in figure:
                 n_x = cls._check_numeric_sequence(figure["x"], f"{where}: 'x'")
                 n_y = cls._check_numeric_sequence(figure["y"], f"{where}: 'y'")
@@ -213,13 +227,224 @@ class PlotterBase:
     def is_json_plot_type(self):
         return self.plot_type_selection.value == self.JSON_PLOT_TYPE
 
+    # ------------------------------------------------------------------ #
+    # Multi-column tables                                                  #
+    #                                                                      #
+    # Column 1 is x; every further column is one y series plotted against  #
+    # it. Blank lines and comment lines (TABLE_COMMENT_PREFIXES, plus any  #
+    # trailing "# ..." on a line) are skipped wherever they appear. The    #
+    # last non-comment, non-numeric line before the first data row is the  #
+    # column-name header; earlier ones (e.g. a title) are ignored. Once    #
+    # data has started, a non-numeric line is an error, never a header.    #
+    # ------------------------------------------------------------------ #
+    TABLE_COMMENT_PREFIXES = ("#", "!", "%", "@", "//")
+
+    # Line-style choices offered per y column: label -> (matplotlib
+    # linestyle, marker or None). Written into each manifest series as the
+    # optional 'linestyle'/'marker' keys, which plotViewer passes to plot().
+    TABLE_LINE_STYLES = {
+        "Solid": ("-", None),
+        "Dashed": ("--", None),
+        "Dotted": (":", None),
+        "Dash-dot": ("-.", None),
+        "Line + markers": ("-", "o"),
+        "Markers only": ("none", "o"),
+    }
+    DEFAULT_TABLE_LINE_STYLE = "Solid"
+    # Values accepted for a series' optional 'linestyle'/'marker' keys.
+    SERIES_LINESTYLES = ("-", "--", ":", "-.", "none")
+    SERIES_MARKERS = ("o", "s", "^", "v", "D", "x", "+", "*", ".")
+
+    @staticmethod
+    def _split_table_line(line: str) -> List[str]:
+        """Split on commas (CSV), else tabs (TSV), else any whitespace."""
+        if "," in line:
+            tokens = [token.strip() for token in line.split(",")]
+        elif "\t" in line:
+            tokens = [token.strip() for token in line.split("\t")]
+        else:
+            return line.split()
+        # A trailing delimiter ("1,2,") leaves an empty last field.
+        while tokens and not tokens[-1]:
+            tokens.pop()
+        return tokens
+
+    @staticmethod
+    def _parse_numeric_tokens(tokens: List[str]):
+        """Return the tokens as floats, or None if any is not a number."""
+        try:
+            return [float(token) for token in tokens]
+        except ValueError:
+            return None
+
+    @classmethod
+    def parse_table_text(cls, text: str) -> dict:
+        """Parse a multi-column numeric table.
+
+        Returns {"x", "ys", "xlabel", "labels", "has_header", "n_rows"};
+        raises ValueError naming the offending line when the table is unusable.
+        """
+        header = None
+        header_line_no = None
+        x_values: List[float] = []
+        ys: List[List[float]] = []
+        n_columns = None
+
+        for line_no, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if not line or line.startswith(cls.TABLE_COMMENT_PREFIXES):
+                continue
+            line = line.split("#", 1)[0].strip()  # trailing inline comment
+            if not line:
+                continue
+
+            tokens = cls._split_table_line(line)
+            values = cls._parse_numeric_tokens(tokens)
+
+            if values is None:
+                if n_columns is None:
+                    header, header_line_no = tokens, line_no
+                    continue
+                raise ValueError(
+                    f"Line {line_no} is not numeric: '{raw.strip()}'. Text is only "
+                    "allowed before the data, as comments or a column-name header."
+                )
+
+            if any(math.isnan(v) or math.isinf(v) for v in values):
+                raise ValueError(
+                    f"Line {line_no} must contain only finite numbers: '{raw.strip()}'."
+                )
+
+            if n_columns is None:
+                n_columns = len(values)
+                if n_columns < 2:
+                    raise ValueError(
+                        f"The table needs at least two columns (x and one y); "
+                        f"line {line_no} has {n_columns}."
+                    )
+                ys = [[] for _ in range(n_columns - 1)]
+            elif len(values) != n_columns:
+                raise ValueError(
+                    f"Line {line_no} has {len(values)} values, but the table has "
+                    f"{n_columns} columns."
+                )
+
+            x_values.append(values[0])
+            for column, value in zip(ys, values[1:]):
+                column.append(value)
+
+        if n_columns is None:
+            raise ValueError("The file contains no numeric data rows.")
+
+        if header is not None:
+            if len(header) != n_columns:
+                raise ValueError(
+                    f"The column-name header (line {header_line_no}) has "
+                    f"{len(header)} names, but the data has {n_columns} columns."
+                )
+            xlabel, labels = header[0], header[1:]
+        else:
+            xlabel = "Column 1"
+            labels = [f"Column {i}" for i in range(2, n_columns + 1)]
+
+        return {
+            "x": x_values,
+            "ys": ys,
+            "xlabel": xlabel,
+            "labels": labels,
+            "has_header": header is not None,
+            "n_rows": len(x_values),
+        }
+
+    @classmethod
+    def load_table_file(cls, filepath: str) -> dict:
+        """Read and parse a multi-column table from disk."""
+        if not filepath or not os.path.isfile(filepath):
+            raise ValueError(f"Data file not found: {filepath}")
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError as exc:
+            raise ValueError(f"Could not read the data file: {exc}") from exc
+        return cls.parse_table_text(text)
+
+    @classmethod
+    def table_to_figure(cls, table: dict, title: str = "", xlabel: str = "",
+                        ylabel: str = "", styles: List[str] = None,
+                        include: List[bool] = None) -> dict:
+        """Express a parsed table as one plotViewer 'series' figure.
+
+        Blank xlabel/ylabel fall back to the header's first name and "Value".
+        ``styles`` holds one TABLE_LINE_STYLES key per y column (default Solid);
+        ``include`` one flag per y column saying whether to plot it (default
+        all). Both are indexed by column, so a style stays with its column
+        whichever columns are left out.
+        """
+        n_series = len(table["ys"])
+        if styles is None:
+            styles = [cls.DEFAULT_TABLE_LINE_STYLE] * n_series
+        if include is None:
+            include = [True] * n_series
+        if len(styles) != n_series:
+            raise ValueError(
+                f"The table has {n_series} y columns but {len(styles)} line "
+                f"styles were given."
+            )
+        if len(include) != n_series:
+            raise ValueError(
+                f"The table has {n_series} y columns but {len(include)} plot "
+                f"selections were given."
+            )
+        if not any(include):
+            raise ValueError("Select at least one y column to plot.")
+
+        series = []
+        for y, label, style, wanted in zip(table["ys"], table["labels"], styles, include):
+            if not wanted:
+                continue
+            if style not in cls.TABLE_LINE_STYLES:
+                raise ValueError(f"Unknown line style '{style}' for '{label}'.")
+            linestyle, marker = cls.TABLE_LINE_STYLES[style]
+            curve = {"x": table["x"], "y": y, "label": label, "linestyle": linestyle}
+            if marker:
+                curve["marker"] = marker
+            series.append(curve)
+
+        return {
+            "series": series,
+            "xlabel": (xlabel or "").strip() or table["xlabel"],
+            "ylabel": (ylabel or "").strip() or "Value",
+            "title": title,
+        }
+
+    @staticmethod
+    def describe_table(table: dict) -> str:
+        """Readable summary of a loaded table, for the message panel."""
+        source = "column-name header" if table["has_header"] else "no header (generic names)"
+        lines = [
+            f"Loaded {table['n_rows']} data rows, {len(table['ys'])} y-axis series.",
+            f"Column names: {source}",
+            "",
+            f"  x-axis: {table['xlabel']}",
+        ]
+        lines += [f"  y{i}: {label}" for i, label in enumerate(table["labels"], start=1)]
+        lines += ["", "Press Plot to open the figure in the interactive viewer."]
+        return "\n".join(lines)
+
+    def is_table_plot_type(self):
+        return self.plot_type_selection.value == self.TABLE_PLOT_TYPE
+
     async def open_file_dialog(self, widget):
         try:
             is_gqtea = self.is_gqtea_plot_type()
             is_json = self.is_json_plot_type()
+            is_table = self.is_table_plot_type()
             if is_json:
                 dialog_title = "Open JSON plot file"
                 file_types = ["json"]
+            elif is_table:
+                dialog_title = "Open multi-column data file"
+                file_types = ["dat", "txt", "csv", "xvg"]
             elif is_gqtea:
                 dialog_title = "Open gqteaMD energy file"
                 file_types = ["*.csv", "*.dat", "*.log", "*.txt", "*.*"]
@@ -245,6 +470,8 @@ class PlotterBase:
             self.data = []
             if is_json:
                 await self.parse_json_plot_file()
+            elif is_table:
+                await self.parse_table_file()
             elif is_gqtea:
                 await self.parse_gqtea_energy_file()
             else:
@@ -476,9 +703,66 @@ class PlotterBase:
         # matching how the other plot types in this module display figures.
         await self.json_plot_static()
 
-    async def json_plot_static(self):
+    async def parse_table_file(self):
+        """Load the selected multi-column table, or report what is wrong."""
+        self.table_data = None
+        self.update_table_style_controls([])
         try:
-            for figure in self.json_figures:
+            table = self.load_table_file(self.energy_file)
+        except ValueError as exc:
+            self.multi_line_text.value = f"Could not load the data file.\n\n{exc}"
+            await self.main_window.dialog(
+                toga.ErrorDialog("Invalid data file", str(exc))
+            )
+            return
+
+        self.table_data = table
+        self.update_table_style_controls(table["labels"])
+        self.multi_line_text.value = self.describe_table(table)
+
+    async def table_plot(self):
+        """Plot every y column against column 1, preferring the interactive viewer."""
+        if not self.table_data:
+            await self.main_window.dialog(
+                toga.InfoDialog(
+                    "No data",
+                    "Load a multi-column data file first, using the Browse button.",
+                )
+            )
+            return
+
+        try:
+            figure = self.table_to_figure(
+                self.table_data,
+                title=os.path.basename(self.energy_file),
+                xlabel=self.table_xlabel_input.value,
+                ylabel=self.table_ylabel_input.value,
+                styles=self.selected_table_styles(),
+                include=self.selected_table_columns(),
+            )
+        except ValueError as exc:
+            await self.main_window.dialog(toga.ErrorDialog("Plot Error", str(exc)))
+            return
+        # plotViewer reads a manifest from disk; keep it in the temp dir so
+        # nothing is left next to the user's data.
+        with tempfile.NamedTemporaryFile(
+            "w", delete=False, suffix=".json", prefix="gqtea_table_plot_",
+            encoding="utf-8",
+        ) as handle:
+            json.dump([figure], handle)
+            manifest_path = handle.name
+
+        if launch_plot_viewer(manifest_path):
+            return
+        await self.render_figures_static([figure])
+
+    async def json_plot_static(self):
+        await self.render_figures_static(self.json_figures)
+
+    async def render_figures_static(self, figures: List[dict]):
+        """Fallback: draw manifest figures to PNGs shown in Toga windows."""
+        try:
+            for figure in figures:
                 temp_filename = tempfile.NamedTemporaryFile(
                     delete=False, suffix=".png", dir=self.output_dir
                 ).name
@@ -494,7 +778,8 @@ class PlotterBase:
                     if "series" in figure:
                         for curve in figure["series"]:
                             plt.plot(curve.get("x", []), curve.get("y", []),
-                                     label=curve.get("label", ""), antialiased=True)
+                                     label=curve.get("label", ""), antialiased=True,
+                                     **series_style_kwargs(curve))
                         plt.legend()
                     else:
                         plt.plot(figure.get("x", []), figure.get("y", []),
@@ -727,7 +1012,7 @@ class PlotterUI(PlotterBase):
         # Create the main window
         self.main_window = toga.Window(
             title="Energy File Plot",
-            size=(760, 680),
+            size=(760, 620),
         )
 
         # Define common styles
@@ -752,6 +1037,7 @@ class PlotterUI(PlotterBase):
                 self.CPMD_PLOT_TYPE,
                 self.GQTEAMD_PLOT_TYPE,
                 self.JSON_PLOT_TYPE,
+                self.TABLE_PLOT_TYPE,
             ],
             on_change=self.on_plot_type_change,
             style=Pack(flex=1, margin=(0,5,0,5)),
@@ -807,7 +1093,8 @@ class PlotterUI(PlotterBase):
         for switch in switches:
             self.cpmd_switch_box.add(switch)
 
-        main_box.add(self.cpmd_switch_box)
+        self._section_slots = {}
+        self._add_section(main_box, "cpmd_switch_box")
 
         # File selection section
         file_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0,5,0,5)))
@@ -865,8 +1152,8 @@ class PlotterUI(PlotterBase):
         self.units_box.add(self.units_label)
         self.units_box.add(self.unit_selection)
         
-        main_box.add(self.time_step_box)
-        main_box.add(self.units_box)
+        self._add_section(main_box, "time_step_box")
+        self._add_section(main_box, "units_box")
 
         # gqteaMD column selection
         self.gqtea_column_box = toga.Box(
@@ -898,8 +1185,49 @@ class PlotterUI(PlotterBase):
 
         self.gqtea_column_box.add(self.gqtea_x_axis_box)
         self.gqtea_column_box.add(self.gqtea_y_columns_label)
-        self.gqtea_column_box.add(self.gqtea_y_columns_box)
-        main_box.add(self.gqtea_column_box)
+        # One switch per file column: scroll, so a wide file cannot grow the window.
+        self.gqtea_column_box.add(toga.ScrollContainer(
+            content=self.gqtea_y_columns_box,
+            horizontal=False,
+            style=Pack(height=110, margin=(0,5,0,5)),
+        ))
+        self._add_section(main_box, "gqtea_column_box")
+
+        # Multi-column table: axis labels and one line style per y column
+        self.table_options_box = toga.Box(
+            style=Pack(direction=COLUMN, margin=(0,5,10,5))
+        )
+        self.table_xlabel_input = toga.TextInput(
+            placeholder="blank = name of the first column",
+            style=Pack(flex=1, margin=(0,5,0,5)),
+        )
+        self.table_ylabel_input = toga.TextInput(
+            placeholder="blank = Value",
+            style=Pack(flex=1, margin=(0,5,0,5)),
+        )
+        for text, field in (("Table x-axis label:", self.table_xlabel_input),
+                            ("Table y-axis label:", self.table_ylabel_input)):
+            row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0,5,0,5)))
+            row.add(toga.Label(text, style=Pack(margin=(0,5,0,5), text_align=LEFT, width=200)))
+            row.add(field)
+            self.table_options_box.add(row)
+
+        self.table_styles_label = toga.Label(
+            "Y columns to plot and their line styles:",
+            style=Pack(margin=(5,5,0,10), text_align=LEFT),
+        )
+        self.table_styles_box = toga.Box(style=Pack(direction=COLUMN))
+        self.table_style_selections = []
+        self.table_column_switches = []
+        # Scrolls so a table with many columns cannot push the buttons off-screen.
+        table_styles_scroll = toga.ScrollContainer(
+            content=self.table_styles_box,
+            horizontal=False,
+            style=Pack(height=110, margin=(0,5,0,5)),
+        )
+        self.table_options_box.add(self.table_styles_label)
+        self.table_options_box.add(table_styles_scroll)
+        self._add_section(main_box, "table_options_box")
 
         # Multi-line text for messages
         self.multi_line_text = toga.MultilineTextInput(
@@ -928,15 +1256,20 @@ class PlotterUI(PlotterBase):
         button_box.add(self.btn_close)
         main_box.add(button_box)
 
-        # Set the content of the main window
-        self.main_window.content = main_box
+        # Trim to the active type's sections *before* setting the content: with
+        # every section present the window would first grow to fit them all.
         self.on_plot_type_change(self.plot_type_selection)
+        self.main_window.content = main_box
         self.main_window.show()
 
     async def workflow(self, widget):
         # JSON mode carries its own data and none of the switches below apply.
         if self.is_json_plot_type():
             await self.json_plot()
+            return
+
+        if self.is_table_plot_type():
+            await self.table_plot()
             return
 
         if not self.data:
@@ -979,14 +1312,18 @@ class PlotterUI(PlotterBase):
     def on_plot_type_change(self, widget):
         is_gqtea = self.is_gqtea_plot_type()
         is_json = self.is_json_plot_type()
+        is_table = self.is_table_plot_type()
 
-        # In JSON mode the figures are fully described by the file, so every
-        # other plot-specific control is switched off.
-        is_cpmd = not is_gqtea and not is_json
+        # In JSON and table modes the figure is fully described by the file,
+        # so every other plot-specific control is switched off.
+        is_cpmd = not is_gqtea and not is_json and not is_table
 
         if is_json:
             self.file_label.text = "Select JSON plot file:"
             self.text_input_file.placeholder = "Click Browse to select a JSON plot file"
+        elif is_table:
+            self.file_label.text = "Select multi-column data file:"
+            self.text_input_file.placeholder = "Click Browse to select a data table (x, y1, y2, ...)"
         elif is_gqtea:
             self.file_label.text = "Select gqteaMD data file:"
             self.text_input_file.placeholder = "Click Browse to select gqteaMD energy file"
@@ -1014,10 +1351,87 @@ class PlotterUI(PlotterBase):
         self.x_axis = []
         self.json_figures = []
         self.json_file = ""
+        self.table_data = None
         self.text_input_file.value = ""
-        self.multi_line_text.value = (
-            HelpGqteaWin.Json_Plot_Options if is_json else HelpGqteaWin.Plotting_Options
-        )
+        if is_json:
+            self.multi_line_text.value = HelpGqteaWin.Json_Plot_Options
+        elif is_table:
+            self.multi_line_text.value = HelpGqteaWin.Table_Plot_Options
+        else:
+            self.multi_line_text.value = HelpGqteaWin.Plotting_Options
+
+        # Table customisation belongs to the loaded file, so it is reset too.
+        self.table_xlabel_input.value = ""
+        self.table_ylabel_input.value = ""
+        self.update_table_style_controls([])
+        self.table_xlabel_input.enabled = is_table
+        self.table_ylabel_input.enabled = is_table
+        self.table_styles_label.enabled = is_table
+
+        # Only the active type's section takes up room: stacking all of them
+        # (disabled) made the window taller than a laptop screen.
+        self.show_sections({
+            "cpmd_switch_box": is_cpmd,
+            "time_step_box": is_cpmd,
+            "units_box": is_cpmd,
+            "gqtea_column_box": is_gqtea,
+            "table_options_box": is_table,
+        })
+
+    def _add_section(self, main_box, name):
+        """Place section ``name`` in its own slot box, so it can later be
+        removed and restored at the same position in the window."""
+        slot = toga.Box(style=Pack(direction=COLUMN))
+        slot.add(getattr(self, name))
+        main_box.add(slot)
+        self._section_slots[name] = slot
+
+    def show_sections(self, shown_by_name):
+        # Toga 0.5's Pack layout ignores display="none" (a hidden widget still
+        # takes its full height), so a hidden section is taken out of its
+        # slot; an empty slot has zero height. Remove before adding: otherwise
+        # both types' sections coexist for a moment and the window grows to
+        # fit them, and Toga never shrinks it back.
+        for name, shown in shown_by_name.items():
+            section, slot = getattr(self, name), self._section_slots[name]
+            if not shown and section in slot.children:
+                slot.remove(section)
+        for name, shown in shown_by_name.items():
+            section, slot = getattr(self, name), self._section_slots[name]
+            if shown and section not in slot.children:
+                slot.add(section)
+
+    def update_table_style_controls(self, labels):
+        """Rebuild one row per y column (in column order): a Switch choosing
+        whether to plot it and a line-style Selection."""
+        for child in list(self.table_styles_box.children):
+            self.table_styles_box.remove(child)
+        self.table_style_selections = []
+        self.table_column_switches = []
+        for label in labels:
+            row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0,5,0,5)))
+            selection = toga.Selection(
+                items=list(self.TABLE_LINE_STYLES),
+                style=Pack(flex=1, margin=(0,5,0,5)),
+            )
+            selection.value = self.DEFAULT_TABLE_LINE_STYLE
+            switch = toga.Switch(
+                label,
+                value=True,
+                on_change=lambda widget, sel=selection: setattr(sel, "enabled", widget.value),
+                style=Pack(margin=(0,5,0,5), text_align=LEFT, width=190),
+            )
+            row.add(switch)
+            row.add(selection)
+            self.table_styles_box.add(row)
+            self.table_column_switches.append(switch)
+            self.table_style_selections.append(selection)
+
+    def selected_table_styles(self):
+        return [selection.value for selection in self.table_style_selections]
+
+    def selected_table_columns(self):
+        return [bool(switch.value) for switch in self.table_column_switches]
 
     def get_cpmd_switches(self):
         return [

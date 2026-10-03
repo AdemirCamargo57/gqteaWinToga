@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 import glfw
 import numpy as np
+from scipy.spatial import cKDTree
 import toga
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -14,6 +15,7 @@ from OpenGL.GLUT import *
 from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
+from help import AtomicData
 from molecularDesign import MolecularDesignController
 
 Atom = Tuple[str, Tuple[float, float, float]]
@@ -26,6 +28,10 @@ class MolecularViewer:
     # Measurement type that runs no measurement at all: left-clicking an atom
     # just toggles its number on the canvas. This is the default.
     NO_MEASUREMENT = "None"
+
+    # Bond threshold (Å) for a pair with an unknown covalent radius, used
+    # only when the user has not typed a maximum bond length.
+    DEFAULT_CONNECTION_DISTANCE = 1.5
 
     # How many atoms each measurement consumes. This is the single source of
     # truth for both the typed field ("1,2,3") and the canvas pick list.
@@ -182,7 +188,10 @@ class MolecularViewer:
         self.mouse_down = False
         self.right_mouse_down = False
         self.last_mouse_pos = None
-        self.connection_distance = 1.5
+        # Maximum bond length the user typed, in Å. None means "not specified":
+        # each atom pair then uses its covalent default (see
+        # get_bond_distance_threshold).
+        self.connection_distance: Optional[float] = None
         self.atom_scale_factor = 1.0
         self.atom_display_style = "Line style"
         self.bond_thickness_scale_factor = 1.0
@@ -206,7 +215,10 @@ class MolecularViewer:
         # Cache for bond lists by frame and connectivity settings
         self._bond_cache: Dict[Tuple[int, float, float], List[Tuple[int, int]]] = {}
         self._bond_cache_limit = 250
-        self.bond_rendering_mode = "Static first frame"
+        # False: frame 0's connectivity is reused for every frame (steady
+        # picture during vibrations). True: bonds are re-detected from each
+        # frame's own distances, so bond breaking/forming is visible.
+        self.recompute_bonds_per_frame = False
         self._reference_bonds: Optional[List[Tuple[int, int]]] = None
 
         # Playback timing
@@ -257,18 +269,27 @@ class MolecularViewer:
 
         ``bonds`` is the connectivity the user actually drew, as 0-based index
         pairs. The viewer always re-derives bonds from distance, so rather than
-        overriding that, the connection distance is widened just enough to
-        cover the longest drawn bond: without it a designed molecule loses its
-        C-C single bonds on screen, since a real one is 1.52 A and the default
-        cutoff is 1.5 A. The distance is only ever raised, never lowered.
+        overriding that, a user-typed connection distance is widened just
+        enough to cover the longest drawn bond (a real C-C single bond is
+        1.52 A, past a typed 1.5 A). With no typed distance the element-pair
+        defaults normally cover every drawn bond and nothing changes; if one
+        does not, the longest drawn bond becomes the threshold. The distance
+        is only ever raised, never lowered.
         """
         if not frame_data:
             raise ValueError("The designed structure has no atoms.")
 
         required_distance = self._longest_bond_distance(frame_data, bonds)
+        if required_distance is not None and self.connection_distance is None:
+            # Element-pair defaults already cover every drawn bond in the
+            # usual case; only fall back to a uniform threshold when not.
+            if self._drawn_bonds_fit_defaults(frame_data, bonds):
+                required_distance = None
 
         with self._state_lock:
-            if required_distance is not None and required_distance > self.connection_distance:
+            if required_distance is not None and (
+                self.connection_distance is None or required_distance > self.connection_distance
+            ):
                 self.connection_distance = required_distance
             self.molecule_data = list(frame_data)
             self.frames = [list(frame_data)]
@@ -286,6 +307,17 @@ class MolecularViewer:
         self.invalidate_scene_cache()
         self.request_projection_update()
         self.calculate_bonds(0)
+
+    def _drawn_bonds_fit_defaults(self, frame_data: Frame, bonds: List[Tuple[int, int]]) -> bool:
+        """True when every drawn bond is within its element-pair default."""
+        for i, j in bonds:
+            if not (0 <= i < len(frame_data) and 0 <= j < len(frame_data)):
+                continue
+            (elem_i, pos_i), (elem_j, pos_j) = frame_data[i], frame_data[j]
+            distance = float(np.linalg.norm(np.subtract(pos_i, pos_j, dtype=float)))
+            if distance > self.get_bond_distance_threshold(elem_i, elem_j):
+                return False
+        return True
 
     @staticmethod
     def _longest_bond_distance(
@@ -382,7 +414,9 @@ class MolecularViewer:
         return True, None
 
     def _bond_cache_key(self, frame_index: int) -> Tuple[int, float, float]:
-        return (frame_index, round(self.connection_distance, 4), round(self.bond_tolerance, 4))
+        # -1 stands for "no user threshold" (element-pair defaults).
+        user = -1.0 if self.connection_distance is None else round(self.connection_distance, 4)
+        return (frame_index, user, round(self.bond_tolerance, 4))
 
     def _trim_bond_cache_if_needed(self):
         if len(self._bond_cache) > self._bond_cache_limit:
@@ -937,30 +971,85 @@ class MolecularViewer:
         with self._state_lock:
             return self.active_measurement_type, list(self.active_measurement_indices)
 
+    def _default_covalent_radius(self, element: str) -> Optional[float]:
+        """Covalent radius (Å) used by the element-pair default threshold.
+
+        The viewer's own short table first, then help.py's full table, so a
+        Si or metal atom still gets a pair default instead of the flat
+        DEFAULT_CONNECTION_DISTANCE.
+        """
+        symbol = element.strip()
+        symbol = symbol[:1].upper() + symbol[1:].lower()
+        radius = self.covalent_radii.get(symbol)
+        if radius is None:
+            radius = AtomicData.covalent_radii.get(symbol)
+        return radius
+
     def get_bond_distance_threshold(self, elem1: str, elem2: str) -> float:
-        r1 = self.covalent_radii.get(elem1)
-        r2 = self.covalent_radii.get(elem2)
+        """Largest distance (Å) at which two atoms are still drawn as bonded.
+
+        A maximum bond length the user typed (``connection_distance``) applies
+        to every pair as is. Without one the default is per pair: the sum of
+        the two covalent radii plus ``bond_tolerance``, or
+        DEFAULT_CONNECTION_DISTANCE when either radius is unknown.
+        """
+        if self.connection_distance is not None:
+            return self.connection_distance
+        r1 = self._default_covalent_radius(elem1)
+        r2 = self._default_covalent_radius(elem2)
         if r1 is not None and r2 is not None:
-            return min(self.connection_distance, r1 + r2 + self.bond_tolerance)
-        return self.connection_distance
+            return r1 + r2 + self.bond_tolerance
+        return self.DEFAULT_CONNECTION_DISTANCE
+
+    def describe_bond_threshold(self) -> str:
+        if self.connection_distance is not None:
+            return f"maximum bond length {self.connection_distance:.3f} Å"
+        return f"default bond lengths (covalent radii + {self.bond_tolerance:.2f} Å)"
 
     def _compute_bonds_for_frame(self, frame_index: int) -> List[Tuple[int, int]]:
+        """Bonds present in one frame, judged from that frame's own distances.
+
+        A pair is bonded only while its distance is <= its threshold, so a
+        bond stretched past the threshold does not exist in that frame.
+        Uses a KD-tree because per-frame recomputation runs this on every new
+        frame during playback (~5 ms for 3000 atoms; the old pure-Python pair
+        loop was O(N^2)). Thresholds are looked up once per distinct element
+        pair, not once per atom pair.
+        """
         frame_data = self.frames[frame_index]
+        natoms = len(frame_data)
+        if natoms < 2:
+            return []
         coords = np.array([pos for _, pos in frame_data], dtype=float)
         elements = [element for element, _ in frame_data]
-        bonds: List[Tuple[int, int]] = []
 
-        natoms = len(frame_data)
-        for i in range(natoms):
-            elem_i = elements[i]
-            for j in range(i + 1, natoms):
-                threshold = self.get_bond_distance_threshold(elem_i, elements[j])
-                diff = coords[i] - coords[j]
-                distance_sq = float(np.dot(diff, diff))
-                if distance_sq <= threshold * threshold:
-                    bonds.append((i, j))
+        unique = sorted(set(elements))
+        code_of = {element: k for k, element in enumerate(unique)}
+        codes = np.array([code_of[e] for e in elements], dtype=np.intp)
+        limit_sq_table = np.array(
+            [[self.get_bond_distance_threshold(a, b) ** 2 for b in unique] for a in unique],
+            dtype=float,
+        )
 
-        return bonds
+        # A KD-tree finds candidates within the largest threshold (each pair
+        # once, i < j); each candidate is then held to its own pair threshold.
+        largest = float(np.sqrt(limit_sq_table.max()))
+        pairs = cKDTree(coords).query_pairs(largest, output_type="ndarray")
+        if pairs.size == 0:
+            return []
+        diff = coords[pairs[:, 0]] - coords[pairs[:, 1]]
+        dist_sq = np.einsum("ij,ij->i", diff, diff)
+        keep = dist_sq <= limit_sq_table[codes[pairs[:, 0]], codes[pairs[:, 1]]]
+        pairs = pairs[keep]
+        # query_pairs order is arbitrary; sort so the bond list is stable.
+        pairs = pairs[np.lexsort((pairs[:, 1], pairs[:, 0]))]
+        return [(int(i), int(j)) for i, j in pairs]
+
+    def set_recompute_bonds_per_frame(self, enabled: bool):
+        """Switch between frame-0 connectivity and per-frame bond detection."""
+        self.recompute_bonds_per_frame = bool(enabled)
+        self.invalidate_bond_cache()
+        self.calculate_bonds(self.current_frame if self.frames else None)
 
     def calculate_bonds(self, frame_index: Optional[int] = None):
         with self._state_lock:
@@ -974,14 +1063,10 @@ class MolecularViewer:
                 self.bonds = []
                 return
 
-            if self.bond_rendering_mode == "Static first frame":
+            if not self.recompute_bonds_per_frame:
                 if self._reference_bonds is None:
                     self._reference_bonds = self._compute_bonds_for_frame(0)
                 self.bonds = list(self._reference_bonds)
-                return
-
-            if self.bond_rendering_mode == "Dynamic live":
-                self.bonds = self._compute_bonds_for_frame(frame_index)
                 return
 
             key = self._bond_cache_key(frame_index)
@@ -1755,7 +1840,7 @@ class MolecularViewerUI(MolecularViewer):
         self.box_centering_selection = None
         self.box_visibility_switch = None
         self.fast_playback_switch = None
-        self.bond_rendering_selection = None
+        self.recompute_bonds_switch = None
 
         # Molecular design (molecularDesign.MolecularDesignController)
         self.design_controller = None
@@ -1832,7 +1917,7 @@ class MolecularViewerUI(MolecularViewer):
         tabs = toga.OptionContainer(
             content=[
                 ("Display", self._tab_page(self._build_display_tab())),
-                ("Frames", self._tab_page(self._build_frames_tab())),
+                ("Dynamics", self._tab_page(self._build_dynamics_tab())),
                 ("Measure", self._tab_page(self._build_measure_tab())),
                 ("Design", self._tab_page(self._build_design_tab())),
                 ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
@@ -1922,7 +2007,7 @@ class MolecularViewerUI(MolecularViewer):
         )
 
         self.textInput_length = toga.TextInput(
-            placeholder="e.g. 1.7",
+            placeholder="default",
             style=Pack(width=self.FIELD_WIDTH),
             on_confirm=self.set_connection_distance,
         )
@@ -1931,6 +2016,12 @@ class MolecularViewerUI(MolecularViewer):
                 self._form_label("Max bond length:"),
                 self.textInput_length,
                 self._form_label("Å", width=20),
+            )
+        )
+        tab_box.add(
+            self._hint(
+                "Blank = per-element default (covalent radii + "
+                f"{self.bond_tolerance:.2f} Å). Atoms farther apart are not bonded."
             )
         )
 
@@ -2034,7 +2125,7 @@ class MolecularViewerUI(MolecularViewer):
 
         return tab_box
 
-    def _build_frames_tab(self) -> toga.Box:
+    def _build_dynamics_tab(self) -> toga.Box:
         tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
         tab_box.add(self._hint("Type a frame number, step or delay and press Enter to apply it."))
 
@@ -2130,6 +2221,24 @@ class MolecularViewerUI(MolecularViewer):
         )
         self.zoom_playback_switch.value = self.auto_frame_zoom
         tab_box.add(self._form_row(self.zoom_playback_switch))
+
+        tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
+        tab_box.add(self._section_heading("Bonds"))
+        # value is passed to the constructor so building the tab does not
+        # fire on_change.
+        self.recompute_bonds_switch = toga.Switch(
+            "Recompute bonds for every frame (show bond breaking/forming)",
+            value=self.recompute_bonds_per_frame,
+            on_change=self.toggle_recompute_bonds,
+        )
+        tab_box.add(self._form_row(self.recompute_bonds_switch))
+        tab_box.add(
+            self._hint(
+                "On: bonds are re-detected from each frame's distances and dropped once "
+                "they exceed Max bond length (Display tab; blank = element defaults). "
+                "Off: frame 0's bonds are kept for the whole trajectory."
+            )
+        )
 
         return tab_box
 
@@ -2275,14 +2384,6 @@ class MolecularViewerUI(MolecularViewer):
         self.fast_playback_switch.value = self.fast_playback_mode
         tab_box.add(self._form_row(self.fast_playback_switch))
 
-        self.bond_rendering_selection = toga.Selection(
-            items=["Static first frame", "Dynamic cached", "Dynamic live"],
-            style=Pack(width=180),
-            on_change=self.set_bond_rendering_mode,
-        )
-        self.bond_rendering_selection.value = self.bond_rendering_mode
-        tab_box.add(self._form_row(self._form_label("Bond mode:"), self.bond_rendering_selection))
-
         return tab_box
 
     async def _show_error(self, title: str, message: str):
@@ -2320,17 +2421,26 @@ class MolecularViewerUI(MolecularViewer):
 
     async def set_connection_distance(self, widget):
         try:
-            distance = float(self.textInput_length.value.strip())
-            if distance <= 0:
+            text = (self.textInput_length.value or "").strip()
+            # Blank means "not specified": back to the element-pair defaults.
+            distance = None if not text else float(text)
+            if distance is not None and distance <= 0:
                 raise ValueError
 
             self.connection_distance = distance
             self.invalidate_bond_cache()
             self.calculate_bonds()
-            self.set_status_message(f"Maximum bond length set to {distance:.3f} Å.")
+            if distance is None:
+                self.set_status_message(
+                    f"Maximum bond length cleared: using {self.describe_bond_threshold()}."
+                )
+            else:
+                self.set_status_message(f"Maximum bond length set to {distance:.3f} Å.")
         except (TypeError, ValueError, AttributeError):
             await self._show_error(
-                "Invalid Input", "Please enter a valid positive number for connection distance."
+                "Invalid Input",
+                "Please enter a valid positive number for the maximum bond length, "
+                "or leave it blank to use the default.",
             )
 
     def set_visualization_style(self, widget):
@@ -2539,16 +2649,14 @@ class MolecularViewerUI(MolecularViewer):
             else "Fast playback mode disabled."
         )
 
-    def set_bond_rendering_mode(self, widget):
-        self.bond_rendering_mode = self.bond_rendering_selection.value or "Static first frame"
-        self.invalidate_bond_cache()
-        self.calculate_bonds(self.current_frame if self.frames else None)
-        messages = {
-            "Static first frame": "Using first-frame connectivity for playback.",
-            "Dynamic cached": "Dynamic bond recalculation enabled with per-frame caching.",
-            "Dynamic live": "Dynamic live bond recalculation enabled for every frame.",
-        }
-        self.set_status_message(messages.get(self.bond_rendering_mode, "Bond rendering mode updated."))
+    def toggle_recompute_bonds(self, widget):
+        self.set_recompute_bonds_per_frame(bool(self.recompute_bonds_switch.value))
+        if self.recompute_bonds_per_frame:
+            self.set_status_message(
+                f"Bonds recomputed for every frame using {self.describe_bond_threshold()}."
+            )
+        else:
+            self.set_status_message("Using first-frame connectivity for the whole trajectory.")
 
     def _parse_box_size_inputs(self):
         """Read the a/b/c entry fields as typed, without waiting for Enter.

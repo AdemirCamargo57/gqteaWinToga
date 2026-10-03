@@ -31,6 +31,20 @@ def launch_plot_viewer(manifest_path):
         return False
 
 
+def series_style_kwargs(curve):
+    """plt.plot keyword args for a manifest series' optional styling.
+
+    'linestyle' and 'marker' are optional keys of a "series" curve (written by
+    plotter.py's table plot); a curve without them draws exactly as before.
+    """
+    kwargs = {}
+    if "linestyle" in curve:
+        kwargs["linestyle"] = curve["linestyle"]
+    if "marker" in curve:
+        kwargs["marker"] = curve["marker"]
+    return kwargs
+
+
 def draw_bar_comparison(axes, figure_entry, font_style=None):
     """Draw one "bars" manifest entry onto `axes`; return the twin axis or None.
 

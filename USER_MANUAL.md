@@ -1325,7 +1325,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels.
-- **Frames** tab: frame navigation and trajectory playback.
+- **Dynamics** tab: frame navigation, trajectory playback, and per-frame bond recomputation.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
@@ -1339,12 +1339,12 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Projection**: `Orthographic` or `Perspective`.
 - **Atom style**: `Line style`, `CPK style`, or `vdW style`.
 - **Atom scale** and **Bond scale**: relative size of the drawn atoms and bonds.
-- **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded.
+- **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded. Type a value and press Enter to apply it to every atom pair. Leave it blank (and press Enter to clear a previous value) to use the default, which depends on the two elements: the sum of their covalent radii plus 0.45 Å (for example 1.97 Å for C–C, 1.42 Å for O–H), or 1.5 Å for an element with no known radius. Two atoms farther apart than the applicable limit are never drawn as bonded.
 - **Rotation**: rotate the displayed system about X, Y, and Z (described below).
 - **Atom numbers** and **Atomic symbols**: label every atom in the 3D view. Both are **off by default**, so the view starts uncluttered — click individual atoms to read their numbers (see the **Measure** tab's **None** type), or turn **Atom numbers** on to label the whole structure at once.
 - **Clear selection**: deselect every atom you have clicked, remove any atom numbers you revealed by clicking, and clear the **Measure** tab's field and result.
 
-##### Frames tab
+##### Dynamics tab
 
 - `|<`, `<<`, `>>`, `>|` and the slider move through the trajectory. The field to the left of the slider jumps to a specific frame when you press Enter; the counter to the right shows `current / last`.
 - **Play** / **Pause** animates the trajectory.
@@ -1352,6 +1352,7 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Frame step**: how many frames each step or playback advance skips. Use `<` and `>`, or type a value and press Enter.
 - **Delay (s)**: seconds between frames during playback. Larger values play more slowly.
 - **Auto-zoom to fit each frame**: rescales the view for every frame. Turn it off for a steadier view during playback.
+- **Recompute bonds for every frame**: re-detects the bonds from each frame's own interatomic distances (described below). Off by default, in which case the bonds found in the first frame are kept for the whole trajectory.
 
 ##### Measure tab
 
@@ -1368,7 +1369,6 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Box center**: where the displayed box is placed (described below).
 - **Show simulation box**: draw or hide the box.
 - **Reduce overlays during playback**: skips some overlay drawing to keep long trajectories smooth.
-- **Bond mode**: how connectivity is updated during playback (described below).
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
 
@@ -1402,15 +1402,12 @@ When the periodic box is shown, it rotates with the molecular system. The **Box 
 - **Geometric center**: centers the box on the molecular system's geometric center.
 - **Bottom at z=0**: centers the box in the a-b plane while placing the bottom face of the box at `z = 0`.
 
-Bond mode controls how the viewer updates connectivity while stepping through or playing a trajectory:
+**Recompute bonds for every frame** (Dynamics tab) controls whether connectivity follows the trajectory:
 
-- **Static first frame**: calculates bonds from frame 0 and reuses that same connectivity for all frames. This is useful when you want stable visual connectivity during normal vibrations or rotations.
-- **Dynamic cached**: recalculates bonds for each frame and stores the result for faster revisiting of frames. This is useful for trajectories where bonds may form or break and you still want smooth playback.
-- **Dynamic live**: recalculates bonds every time the current frame is rendered, without using cached bond lists. This is useful when you are actively changing bond-length settings or want the freshest possible connectivity during inspection.
+- **Off** (default): bonds are calculated once from the first frame and that same connectivity is drawn in every frame. This gives a steady picture during ordinary vibrations and rotations, but a bond that breaks later in the run stays drawn.
+- **On**: for every frame, each interatomic distance is compared with the applicable limit — the **Max bond length** you typed on the Display tab, or the element-pair default when that field is blank — and a bond is drawn only while the distance is within it. Bonds therefore disappear when they break and appear when they form. Each frame's result is cached, so revisiting a frame is instant.
 
-To use this feature, open **Tools > 3D Molecular Viewer**, load an XYZ trajectory, then choose the desired option from the **Bond mode** selector on the **Box & Performance** tab. The viewer updates the displayed bonds using the selected mode.
-
-Example: if a trajectory shows two atoms separating during a dissociation event, choose **Dynamic cached** or **Dynamic live**. As you step through the frames, the bond disappears when the atom distance exceeds the current upper bond-length limit. If you choose **Static first frame**, that bond remains visible throughout playback because the viewer keeps the first-frame connectivity.
+Example: in a trajectory where two atoms separate during a dissociation event, turn **Recompute bonds for every frame** on. As you step through or play the frames, the bond disappears in the first frame where the distance exceeds the limit. To make the bond break at a specific distance, type that distance in **Max bond length** and press Enter. Changing the limit takes effect immediately on the current frame.
 
 ##### Molecular Design
 
@@ -1640,6 +1637,31 @@ or several labelled curves drawn together
 | `x` and `y` differ in length | `Figure 1: 'x' and 'y' must have the same length (3 vs 2).` |
 | Neither `x`/`y` nor `series` | `Figure 1 must provide either 'x' and 'y', or 'series'.` |
 | A value is not a number | `Figure 1: 'y' must contain only numbers.` |
+
+##### Multi-column data file
+
+The fourth **Plot type**, **Multi-column data file**, plots any numeric table, whatever its number of columns. **Column 1 is the x axis; every other column becomes its own curve**, all drawn against the same x values in one figure in the interactive viewer. As in JSON mode, every other plot option is disabled while this type is selected.
+
+```text
+# RDF of O around Na+            <- comment, ignored
+r      g(r)     integral         <- optional column-name header
+0.05   0.000    0.000
+0.10   0.012    0.001   # inline comments are ignored too
+```
+
+- Columns can be separated by spaces, tabs or commas.
+- Blank lines and lines starting with `#`, `!`, `%`, `@` or `//` are comments and are skipped wherever they appear (so GROMACS `.xvg` files load as is).
+- If the table has a **column-name header** (the last text line before the first row of numbers), the y-column names label the curves in the legend and the first name labels the x axis. Without a header the curves are called `Column 2`, `Column 3`, …. Names written inside a comment line (`# r g(r) integral`) are ignored like any other comment.
+- The header is never read as data. Once the numbers start, every line must hold the same number of finite numbers.
+
+**Customising the figure.** Two fields and a per-column list below the file row apply only to this plot type:
+
+- **Table x-axis label** and **Table y-axis label** set the axis titles. Left blank, the x axis uses the first column's name (or `Column 1`) and the y axis reads `Value`.
+- **Y columns to plot and their line styles** shows one row per y column once a file is loaded. The **switch** (labelled with the column name) chooses whether that column is plotted: all are on by default, and turning one off leaves it out of the figure and greys out its style. At least one must stay on. The **dropdown** sets that curve's style: **Solid** (default), **Dashed**, **Dotted**, **Dash-dot**, **Line + markers** or **Markers only**, independently of the others. The list scrolls when the table has many columns.
+
+Labels and styles are reset when you load another file or change the plot type.
+
+After **Browse**, the message panel lists the row count and the column names it found. Problems are reported with the line at fault, for example `Line 7 has 2 values, but the table has 3 columns.`, `Line 12 is not numeric: ...`, or `The column-name header (line 2) has 2 names, but the data has 3 columns.`
 
 #### Molecular Axis Alignment
 

@@ -35,7 +35,7 @@ import json
 # the TkAgg pin would silently re-pin Agg and this viewer would open no
 # window at all. See draw_bar_comparison's docstring for why the renderer
 # lives there instead of here.
-from displayPlots import draw_bar_comparison
+from displayPlots import draw_bar_comparison, series_style_kwargs
 
 import matplotlib
 # Pin an interactive GUI backend explicitly. In a packaged (frozen) build
@@ -66,7 +66,7 @@ def build_figures(figures):
         if "series" in fig:
             for s in fig["series"]:
                 plt.plot(s.get("x", []), s.get("y", []), antialiased=True,
-                         label=s.get("label", ""))
+                         label=s.get("label", ""), **series_style_kwargs(s))
             plt.legend()
         else:
             plt.plot(fig.get("x", []), fig.get("y", []), antialiased=True)

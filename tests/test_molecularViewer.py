@@ -684,3 +684,178 @@ def test_a_new_run_clears_the_previous_failure():
     ready, error = asyncio.run(viewer.ensure_viewer_window(timeout=5.0))
 
     assert (ready, error) == (True, None)
+
+
+# ------------------------------------------------------------------
+# Bond detection: thresholds and per-frame recomputation (Dynamics tab)
+# ------------------------------------------------------------------
+def _stretching_dimer():
+    """Two carbons: bonded at 1.4 A in frame 0, 1.9 A in 1, broken at 3.0 A in 2."""
+    return [
+        [("C", (0.0, 0.0, 0.0)), ("C", (1.4, 0.0, 0.0))],
+        [("C", (0.0, 0.0, 0.0)), ("C", (1.9, 0.0, 0.0))],
+        [("C", (0.0, 0.0, 0.0)), ("C", (3.0, 0.0, 0.0))],
+    ]
+
+
+def _bonds_per_frame(viewer):
+    result = []
+    for index in range(len(viewer.frames)):
+        viewer.calculate_bonds(index)
+        result.append(list(viewer.bonds))
+    return result
+
+
+def test_no_user_threshold_means_element_pair_defaults():
+    viewer = MolecularViewer()
+    assert viewer.connection_distance is None
+    # C-C: 0.76 + 0.76 + 0.45 tolerance. A real 1.54 A single bond is kept,
+    # which the old flat 1.5 A default dropped.
+    assert viewer.get_bond_distance_threshold("C", "C") == pytest.approx(1.97)
+    assert viewer.get_bond_distance_threshold("O", "H") == pytest.approx(1.42)
+    # Si is missing from the viewer's short table; help.py's table covers it.
+    assert viewer.get_bond_distance_threshold("Si", "O") == pytest.approx(1.11 + 0.66 + 0.45)
+
+
+def test_unknown_elements_fall_back_to_the_flat_default():
+    viewer = MolecularViewer()
+    assert viewer.get_bond_distance_threshold("Xx", "C") == pytest.approx(
+        MolecularViewer.DEFAULT_CONNECTION_DISTANCE
+    )
+
+
+def test_a_user_threshold_applies_to_every_pair_as_typed():
+    viewer = MolecularViewer()
+    viewer.connection_distance = 1.2
+    assert viewer.get_bond_distance_threshold("C", "C") == pytest.approx(1.2)
+    assert viewer.get_bond_distance_threshold("Xx", "H") == pytest.approx(1.2)
+    viewer.connection_distance = 2.5
+    assert viewer.get_bond_distance_threshold("H", "H") == pytest.approx(2.5)
+
+
+def test_per_frame_recomputation_shows_the_bond_breaking():
+    viewer = MolecularViewer()
+    viewer.frames = _stretching_dimer()
+    viewer.set_recompute_bonds_per_frame(True)
+
+    # Defaults (C-C limit 1.97 A): bonded, still bonded, broken.
+    assert _bonds_per_frame(viewer) == [[(0, 1)], [(0, 1)], []]
+
+
+def test_per_frame_recomputation_honours_the_user_threshold():
+    viewer = MolecularViewer()
+    viewer.frames = _stretching_dimer()
+    viewer.set_recompute_bonds_per_frame(True)
+    viewer.connection_distance = 1.5
+    viewer.invalidate_bond_cache()
+
+    # 1.9 A now exceeds the typed limit, so the bond is gone one frame earlier.
+    assert _bonds_per_frame(viewer) == [[(0, 1)], [], []]
+
+
+def test_static_mode_keeps_the_first_frame_bonds():
+    viewer = MolecularViewer()
+    viewer.frames = _stretching_dimer()
+    assert viewer.recompute_bonds_per_frame is False
+
+    assert _bonds_per_frame(viewer) == [[(0, 1)], [(0, 1)], [(0, 1)]]
+
+
+def test_a_distance_equal_to_the_threshold_is_still_a_bond():
+    viewer = MolecularViewer()
+    viewer.connection_distance = 1.5
+    viewer.frames = [[("C", (0.0, 0.0, 0.0)), ("C", (1.5, 0.0, 0.0))]]
+    viewer.calculate_bonds(0)
+    assert viewer.bonds == [(0, 1)]
+
+
+def test_changing_the_threshold_is_not_served_from_a_stale_cache():
+    viewer = MolecularViewer()
+    viewer.frames = _stretching_dimer()
+    viewer.set_recompute_bonds_per_frame(True)
+    viewer.calculate_bonds(1)
+    assert viewer.bonds == [(0, 1)]
+
+    viewer.connection_distance = 1.5  # no explicit invalidation
+    viewer.calculate_bonds(1)
+    assert viewer.bonds == []
+
+
+def test_vectorized_detection_matches_a_brute_force_scan():
+    rng = np.random.default_rng(7)
+    elements = ["C", "H", "O", "N", "Xx"]
+    natoms = 120
+    frame = [
+        (elements[k % len(elements)], tuple(rng.uniform(0.0, 6.0, size=3)))
+        for k in range(natoms)
+    ]
+    viewer = MolecularViewer()
+    viewer.frames = [frame]
+
+    for user in (None, 1.6):
+        viewer.connection_distance = user
+        expected = []
+        for i in range(natoms):
+            for j in range(i + 1, natoms):
+                limit = viewer.get_bond_distance_threshold(frame[i][0], frame[j][0])
+                if np.linalg.norm(np.subtract(frame[i][1], frame[j][1])) <= limit:
+                    expected.append((i, j))
+        assert viewer._compute_bonds_for_frame(0) == expected
+        assert expected  # the fixture really exercises bonding
+
+
+def test_designed_bonds_within_the_defaults_leave_the_threshold_unset():
+    viewer = MolecularViewer()
+    frame = [("C", (0.0, 0.0, 0.0)), ("C", (1.52, 0.0, 0.0))]
+
+    viewer.load_designed_molecule(frame, bonds=[(0, 1)])
+
+    assert viewer.connection_distance is None
+    assert viewer.bonds == [(0, 1)]
+
+
+def test_a_designed_bond_beyond_the_defaults_sets_a_threshold():
+    viewer = MolecularViewer()
+    frame = [("C", (0.0, 0.0, 0.0)), ("C", (2.2, 0.0, 0.0))]
+
+    viewer.load_designed_molecule(frame, bonds=[(0, 1)])
+
+    assert viewer.connection_distance > 2.2
+    assert viewer.bonds == [(0, 1)]
+
+
+def _headless_bond_ui():
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.loop = _StubLoop()
+    ui.loading_label = None
+    ui.frames = _stretching_dimer()
+    ui.textInput_length = _StubInput()
+    ui.recompute_bonds_switch = _StubInput()
+    return ui
+
+
+def test_the_dynamics_switch_turns_per_frame_bonds_on_and_off():
+    ui = _headless_bond_ui()
+    ui.current_frame = 2
+
+    ui.recompute_bonds_switch.value = True
+    ui.toggle_recompute_bonds(ui.recompute_bonds_switch)
+    assert ui.recompute_bonds_per_frame is True
+    assert ui.bonds == []
+
+    ui.recompute_bonds_switch.value = False
+    ui.toggle_recompute_bonds(ui.recompute_bonds_switch)
+    assert ui.recompute_bonds_per_frame is False
+    assert ui.bonds == [(0, 1)]
+
+
+def test_a_blank_max_bond_length_restores_the_defaults():
+    ui = _headless_bond_ui()
+    ui.textInput_length.value = "1.2"
+    asyncio.run(ui.set_connection_distance(None))
+    assert ui.connection_distance == pytest.approx(1.2)
+
+    ui.textInput_length.value = "   "
+    asyncio.run(ui.set_connection_distance(None))
+    assert ui.connection_distance is None

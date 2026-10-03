@@ -1307,6 +1307,50 @@ example "Figure 3: 'x' and 'y' must have the same length (5 vs 4)." - so you
 can find the problem without opening the file.
 """
 
+    Table_Plot_Options = """
+MULTI-COLUMN DATA FILE
+
+Plots any numeric table with any number of columns:
+
+    column 1          -> x axis
+    columns 2, 3, ... -> one y-axis curve each, all against the same x
+
+Pick a file with Browse, check the column list that appears here, then
+press Plot. All other options in this panel are disabled for this type.
+
+ACCEPTED LAYOUT
+
+    # comment lines are ignored (also lines starting with ! % @ //)
+    time  E_kin  E_pot  E_tot          <- optional column-name header
+    0.0   1.20   -15.3  -14.1
+    0.5   1.25   -15.4  -14.15   # trailing comments are ignored too
+
+- Columns may be separated by spaces, tabs or commas (CSV).
+- Blank lines and comment lines are skipped wherever they appear.
+- If a column-name header is present, the y-column names are used as the
+  legend labels and the first name as the x-axis label. Without one, the
+  curves are labelled "Column 2", "Column 3", ...
+- The header is the last text line before the first row of numbers. It is
+  never read as data, and its number of names must match the number of
+  columns. Column names in a commented line (e.g. "# x y1 y2") are ignored
+  like any other comment.
+- After the data starts, every line must contain the same number of
+  finite numbers; otherwise the message names the line at fault.
+
+CUSTOMISING THE FIGURE
+
+- Table x-axis label / Table y-axis label: type your own axis titles.
+  Left blank, the x axis uses the first column's name (or "Column 1") and
+  the y axis reads "Value".
+- Y columns to plot and their line styles: after a file is loaded, one
+  row per y column appears. Its switch chooses whether that column is
+  plotted (all are on by default; at least one must stay on), and its
+  dropdown sets the curve's style: Solid, Dashed, Dotted, Dash-dot,
+  Line + markers or Markers only (default: Solid).
+- These settings are reset when another file is loaded or the plot type
+  is changed.
+"""
+
     Plotting_Options = """
 Choose from multiple plot types, including:
     - Fictitious and Ionic Kinetic Energy
