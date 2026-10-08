@@ -52,7 +52,7 @@ def parse_solute_index_ranges(text: str, sort_unique: bool = True) -> List[int]:
 
 @dataclass
 class BondPair:
-    """An atom pair that is within the connection cutoff in at least one frame.
+    """An atom pair that is within the bond cutoff in at least one frame.
 
     ``first_bonded_distance`` is the separation in the first frame where the
     pair became bonded; ``frames_bonded`` is how many frames it stayed within
@@ -204,7 +204,7 @@ class AllBondAnalysis:
     def _prepare_run(self) -> np.ndarray:
         """Validate the cutoff / cell and return the candidate pair index array."""
         if self.max_connection_distance <= 0:
-            raise ValueError("Maximum connection distance must be greater than zero.")
+            raise ValueError("Maximum bond length must be greater than zero.")
 
         if self.cell_lengths is not None:
             if self.cell_lengths.shape != (3,):
@@ -214,7 +214,7 @@ class AllBondAnalysis:
             half_box = float(np.min(self.cell_lengths)) / 2.0
             if self.max_connection_distance > half_box:
                 raise ValueError(
-                    f"Maximum connection distance ({self.max_connection_distance}) must not "
+                    f"Maximum bond length ({self.max_connection_distance}) must not "
                     f"exceed half the smallest cell length ({half_box:.4f} Angstrom) for the "
                     f"minimum-image convention to be valid."
                 )
@@ -240,7 +240,7 @@ class AllBondAnalysis:
         if not np.any(bonded_ever):
             raise ValueError(
                 "No connected atom pairs were identified in any frame "
-                "(no pair came within the maximum connection distance)."
+                "(no pair came within the maximum bond distance)."
             )
 
         self.num_frames = frame_count
@@ -364,7 +364,7 @@ class AllBondAnalysis:
         os.makedirs(os.path.dirname(output_file) or os.getcwd(), exist_ok=True)
 
         with open(output_file, "w") as out:
-            out.write("# gQTEA All Bond Distance Analysis\n")
+            out.write("# gQTEA All bond length Analysis\n")
             out.write(f"# frames_used {self.num_frames}\n")
             out.write(f"# max_connection_distance {self.max_connection_distance:g}\n")
             if self.solute_atom_indices is None:
@@ -399,7 +399,7 @@ class AllBondAnalysis:
 
 
 class allBondAnalysisUI:
-    """Toga frontend for all connected bond distance statistics."""
+    """Toga frontend for all connected bond length statistics."""
 
     def __init__(self, *args) -> None:
         self.trajec = None
@@ -411,7 +411,7 @@ class allBondAnalysisUI:
 
     def layout_main_window(self, widget) -> None:
         self.main_window = toga.Window(
-            title="All Bond Distance Analysis from Molecular Dynamics Simulations",
+            title="All bond length Analysis from Molecular Dynamics Simulations",
             size=(720, 560),
         )
 
@@ -425,7 +425,7 @@ class allBondAnalysisUI:
 
         title_row = toga.Box(style=Pack(direction="row", margin=(0, 0, 10, 0)))
         title_box = toga.Box(style=Pack(width=660))
-        title_label = toga.Label("All Bond Distance Analysis", style=heading_style)
+        title_label = toga.Label("All bond length Analysis", style=heading_style)
         title_box.add(title_label)
         title_row.add(title_box)
         main_box.add(title_row)
@@ -443,7 +443,7 @@ class allBondAnalysisUI:
         main_box.add(file_row)
 
         distance_row = toga.Box(style=row_style)
-        distance_label = toga.Label("Maximum connection distance (A):", style=label_style)
+        distance_label = toga.Label("Maximum bond length (A):", style=label_style)
         self.textInput_max_distance = toga.TextInput(
             placeholder="Default: 1.7 (leave blank to use it)",
             style=input_style,
@@ -488,7 +488,7 @@ class allBondAnalysisUI:
         )
         self.multi_line_text.value = (
             "This module re-evaluates connectivity every frame of an XYZ trajectory using "
-            "the maximum connection distance, then computes the average distance, population "
+            "the maximum bond distance, then computes the average distance, population "
             "variance, standard deviation, and occurrence (fraction of frames bonded) for each "
             "pair. Enter cell lattices a b c to apply the minimum-image convention (PBC); leave "
             "them blank for an isolated system. Provide solute atom indices (ranges allowed, "
@@ -541,7 +541,7 @@ class allBondAnalysisUI:
             await self.warning_function("Error", "No trajectory file selected.")
             return False
 
-        # Maximum connection distance: a blank field falls back to the 1.7 A default.
+        # Maximum bond distance: a blank field falls back to the 1.7 A default.
         distance_text = self.textInput_max_distance.value.strip()
         if not distance_text:
             self.max_connection_distance = AllBondAnalysis.DEFAULT_CONNECTION_DISTANCE
@@ -550,13 +550,13 @@ class allBondAnalysisUI:
                 self.max_connection_distance = float(distance_text)
             except ValueError:
                 await self.warning_function(
-                    "Error", "Maximum connection distance must be a valid number."
+                    "Error", "Maximum bond length must be a valid number."
                 )
                 return False
 
         if self.max_connection_distance <= 0:
             await self.warning_function(
-                "Error", "Maximum connection distance must be greater than zero."
+                "Error", "Maximum bond length must be greater than zero."
             )
             return False
 
@@ -678,7 +678,7 @@ class allBondAnalysisUI:
             f"Atom scope: {atom_scope}\n"
             f"Periodic boundaries: {pbc_state}\n"
             f"Connected pairs (bonded in >=1 frame): {len(analyzer.connected_atom_pairs)}\n"
-            f"Maximum connection distance: {self.max_connection_distance:.6f} A\n\n"
+            f"Maximum bond distance: {self.max_connection_distance:.6f} A\n\n"
             f"Output file:\n{output_file}\n\n"
             f"First mapped pairs:\n{pair_preview}"
         )

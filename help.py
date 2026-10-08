@@ -817,63 +817,82 @@ STEPS TO FOLLOW:
 8. Press 'Exec' button to carried out the hydrogen bond analysis
 
 """
-    help_mrt = f"""
-MRT - Mean Residence Time Analysis
-The mean residence time in molecular dynamics simulation refers 
-to the average duration that a molecule or atom spends within a 
-particular region or state during the course of the simulation. 
-It represents the typical amount of time that a molecule remains 
-in a specific location or state before transitioning  to another 
-region or  undergoing  a  particular event. This metric provides 
-insights into the dynamics and kinetics of the system under study, 
-allowing  researchers  to  analyze and understand the behavior of 
-molecules and their interactions within a simulated environment.
+    help_mrt = """
+MRT - MEAN RESIDENCE TIME (CLASSICAL)
+
+The mean residence time is the average time an atom spends inside a
+region, here a sphere of chosen radius around a central atom, before
+it leaves. It describes how stable a coordination shell is and how
+quickly its members exchange with the bulk.
 
 STEPS TO FOLLOW TO CALCULATE MRT
 
-1. Specify the full path to the TRAJEC.xyz files from a CPMD run
-   by pressing the 'Open file' button on  the  right side on the 
-   control panel.
-2. Fill in all the entry boxes in the control panel.
-    2.1 Specify the shell's inner radius in Å
-    2.2 Specify the shell's outer radius in Å
-    2.3 Specify the simulation time step in Å
-    2.4 Specify  the  folder  to  save the mrt analysis results by 
-        pressing the 'Save dir' buttom at the right panel
-    2.5 Define the frame sampling rate, which refers to the  number 
-        of frames omitted between two successive frames collected.
-    2.6 Specify the labels (indexes) of the atoms to be excluded 
-        from the mean residence time (MRT) analysis. Ensure that 
-        the labels are separated by whitespace instead of commas.
-    2.7 Specify atom labels (index) at the shell's center
-    2.8 Specify the element symbol to investigate the mean residence 
-        time within the shell.
+1. Press 'Browse' and select the TRAJEC.xyz file from a CPMD run.
+   The number of frames is counted on loading. All output files are
+   written to the folder that contains the trajectory.
 
-8. Press 'Exec' button to carried out the MRT
+2. Fill in every field (none may be left blank):
+    2.1 Cutoff radius (Å): radius of the shell. An atom is inside
+        when its distance to the shell center is <= this value.
+        A good choice is the first minimum of the g(r) given by the
+        Radial Distribution tool.
+    2.2 Atom label for the shell center: 1-based index of the
+        central atom (between 1 and the number of atoms).
+    2.3 Atom symbol for MRT: element symbol of the atoms whose
+        residence is measured (e.g. O). It must match the symbol
+        written in the trajectory. The central atom is never
+        counted, even if it has the same symbol.
+    2.4 Atom label list to exclude: 1-based labels of atoms to leave
+        out of the analysis, separated by whitespace, not commas
+        (e.g. 12 15 40). Enter 0 to exclude nothing.
+    2.5 Simulation time step: the MD time step in atomic units
+        (1 a.u. = 0.02418884 fs), as in the CPMD input.
+    2.6 Sampling interval: number of MD steps between two frames
+        saved in TRAJEC.xyz. The time between frames is
+        time step x sampling interval.
+    2.7 Tolerance frames: number of consecutive frames an atom may
+        spend outside the shell and still be counted as inside.
+        A gap of up to this many frames between two in-shell
+        frames is filled in; gaps at the start or end of the
+        trajectory are not. Enter 0 for no tolerance.
 
-The mean residence time and the coordination number are related in
-thecontext  of  molecular  dynamics  simulations. The coordination 
-number refers to the number of  neighboring  atoms  or  molecules 
-that are in direct contact with a central atom or molecule. 
-It provides information about the local environment and the extent 
-of interactions surrounding a specific atom. In molecular dynamics 
-simulations, the mean residence time can be influenced by the 
-coordination number. Generally, a higher coordination number 
-indicates a greater number of surrounding atoms or molecules, 
-implying stronger interactions and a potentially longer mean 
-residence time. This is because a higher coordination number implies
-a more stable or constrained environment for the central atom or 
-molecule, which can result in longer residence times within that 
-specific region.However, it's  important  to  note  that  the 
-relationship between mean residence time and coordination number can 
-vary depending on the specific system being studied and the nature of 
-the  interactions involved. Other factors, such as temperature, 
-pressure, and  potential energy landscapes, can also impact the mean 
-residence time independently of the coordination number. Therefore, 
-it is  essential  to consider  multiple  factors  and analyze the 
-system holistically when examining the  relationship between mean  
-residence  time  and  coordination  number in  molecular  dynamics 
-simulations.
+3. Press 'MRT calculation'. The progress bar follows the two passes
+   over the trajectory. Press 'Close' to close the window.
+
+OUTPUT FILES (times in ps)
+
+  mrt.dat          One row per frame: frame number, time, and one
+                   column per atom of the chosen symbol that entered
+                   the shell at least once (1 = inside, 0 = outside),
+                   after the tolerance correction.
+  mrt_total.dat    Time and the total number of atoms inside the
+                   shell (the coordination number) in each frame.
+  mrt_summary.dat  The total simulation time and, for each atom:
+                     total rt  - total time spent inside the shell
+                     exchange  - number of times it entered the
+                                 shell (outside -> inside)
+                     mrt       - total rt / exchange, or total rt
+                                 when the atom never re-entered
+
+A plot of the coordination number against time is opened in the
+interactive plot viewer.
+
+NOTES
+
+- Distances are plain Cartesian distances: periodic boundary
+  conditions are not applied.
+- The text in this box is replaced by the parameters and status
+  messages when a calculation runs; reopen the tool to see this
+  help again.
+
+MRT AND COORDINATION NUMBER
+
+The coordination number is the number of atoms or molecules in
+direct contact with a central atom. A higher coordination number
+often means a more constrained environment and a longer residence
+time, but the relationship depends on the system and on factors
+such as temperature, pressure and the potential energy landscape,
+so the two should be analysed together.
 """
 
     help_mrt_advanced = """

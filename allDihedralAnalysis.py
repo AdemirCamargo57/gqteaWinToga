@@ -167,7 +167,7 @@ class AllDihedralAnalysis:
     def _prepare_run(self) -> np.ndarray:
         """Validate the cutoff / cell and return the candidate pair index array."""
         if self.max_connection_distance <= 0:
-            raise ValueError("Maximum connection distance must be greater than zero.")
+            raise ValueError("Maximum bond length must be greater than zero.")
         if self.cell_lengths is not None:
             if self.cell_lengths.shape != (3,):
                 raise ValueError("Cell lengths must be exactly three values: a b c.")
@@ -176,7 +176,7 @@ class AllDihedralAnalysis:
             half_box = float(np.min(self.cell_lengths)) / 2.0
             if self.max_connection_distance > half_box:
                 raise ValueError(
-                    f"Maximum connection distance ({self.max_connection_distance}) must not "
+                    f"Maximum bond length ({self.max_connection_distance}) must not "
                     f"exceed half the smallest cell length ({half_box:.4f} Angstrom) for the "
                     f"minimum-image convention to be valid."
                 )
@@ -444,7 +444,7 @@ class allDihedralAnalysisUI:
         main_box.add(file_row)
 
         distance_row = toga.Box(style=row_style)
-        distance_label = toga.Label("Maximum connection distance (A):", style=label_style)
+        distance_label = toga.Label("Maximum bond length (A):", style=label_style)
         self.textInput_max_distance = toga.TextInput(
             placeholder="Default: 1.7 (leave blank to use it)",
             style=input_style,
@@ -551,13 +551,13 @@ class allDihedralAnalysisUI:
                 self.max_connection_distance = float(distance_text)
             except ValueError:
                 await self.warning_function(
-                    "Error", "Maximum connection distance must be a valid number."
+                    "Error", "Maximum bond length must be a valid number."
                 )
                 return False
 
         if self.max_connection_distance <= 0:
             await self.warning_function(
-                "Error", "Maximum connection distance must be greater than zero."
+                "Error", "Maximum bond length must be greater than zero."
             )
             return False
 

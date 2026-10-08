@@ -447,7 +447,7 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
         self.save_plots(1, x_axis, y_axis, plot_xlabel, plot_ylabel, plot_title)
 
 
-class LegacyMeanResidenceTimeUI(MRTAnalyzer):
+class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
     def __init__(self, *args):
         self.layout_main_window(*args)
 
@@ -555,7 +555,7 @@ class LegacyMeanResidenceTimeUI(MRTAnalyzer):
         tolerance_box = toga.Box(style=box_style)
         tolerance_label = toga.Label("Tolerance frames:", style=label_style)
         self.textInput_tolerance_frames = toga.TextInput(
-            placeholder="Enter the tolerance frames",
+            placeholder="Tolerance is the number of frames an atom/molecule may remain out the shell.",
             style=input_style,
         )
         tolerance_box.add(tolerance_label)
@@ -585,9 +585,7 @@ class LegacyMeanResidenceTimeUI(MRTAnalyzer):
         self.multi_line_text = toga.MultilineTextInput(
             style=Pack(flex=1, margin=(5, 0), font_size=11)
         )
-        self.multi_line_text.value = (
-            "\nMean Residence Time calculation using the TRAJEC.xyz file"
-        )
+        self.multi_line_text.value = HelpGqteaWin.help_mrt
         main_box.add(self.multi_line_text)
 
         # Buttons at the bottom
@@ -597,34 +595,16 @@ class LegacyMeanResidenceTimeUI(MRTAnalyzer):
         self.btn_execute = toga.Button(
             "MRT calculation", style=button_style, on_press=self.workflow
         )
-        self.btn_help = toga.Button(
-            "Help", style=button_style, on_press=self.open_window_help 
-        )
         self.btn_close = toga.Button(
             "Close", style=button_style, on_press=self.closeTopLevel
         )
         button_box.add(self.btn_execute)
-        button_box.add(self.btn_help)
         button_box.add(self.btn_close)
         main_box.add(button_box)
 
         # Set the content of the main window
         self.main_window.content = main_box
         self.main_window.show()
-
-    def open_window_help(self, widget):
-        window = toga.Window(
-            title="Instructions for Conducting Mean Residence Time (MRT) Analysis"
-        )
-        main_box = toga.Box(style=Pack(direction=COLUMN, flex=1))
-        multi_line_text = toga.MultilineTextInput(
-            style=Pack(font_size=11, margin=(5, 5), flex=1)
-        )
-        multi_line_text.value = HelpGqteaWin.help_mrt
-
-        main_box.add(multi_line_text)
-        window.content = main_box
-        window.show()
 
     async def workflow(self, widget):
         params_are_valid = await self.read_params(widget)

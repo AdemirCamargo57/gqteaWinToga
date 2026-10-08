@@ -248,7 +248,7 @@ class PlotterBase:
         "Dotted": (":", None),
         "Dash-dot": ("-.", None),
         "Line + markers": ("-", "o"),
-        "Markers only": ("none", "o"),
+        "Markers only": ("none", "*"),
     }
     DEFAULT_TABLE_LINE_STYLE = "Solid"
     # Values accepted for a series' optional 'linestyle'/'marker' keys.

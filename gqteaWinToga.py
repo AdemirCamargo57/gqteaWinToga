@@ -33,8 +33,8 @@ from selectFrames import SelectFramesUI
 from plotter import PlotterUI
 from cpmdInputToXYZ import CpmdInputToXYZUI
 from radialDistribution import RadialFunctionUI
-from meanResidenceTime import MeanResidenceTimeUI
-from legacy_meanResidenceTime import LegacyMeanResidenceTimeUI
+from meanResidenceTime_statistical import MeanResidenceTimeUI
+from meanResidenceTime_classical import ClassicalMeanResidenceTimeUI
 from molecularViewer import MolecularViewerUI
 from autocorrelationFunction import AutoCorrelationFunctionUI
 from mixtureSolventBox import MixtureSolventBoxUI
@@ -117,7 +117,7 @@ class gqteaWin(toga.App):
         structural_tools = [
             ("Radial Distribution Function", RadialFunctionUI),
             ("Mean Residence Time Statistical", MeanResidenceTimeUI),
-            ("Mean Residence Time Classical", LegacyMeanResidenceTimeUI),
+            ("Mean Residence Time Classical", ClassicalMeanResidenceTimeUI),
             ("Autocorrelation function", AutoCorrelationFunctionUI),
             ("Single Solute solvent box", SingleSoluteSolventBoxUI),
             ("Mixture of two solvent box", MixtureSolventBoxUI),

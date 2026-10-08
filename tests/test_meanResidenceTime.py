@@ -24,7 +24,7 @@ import os
 import numpy as np
 import pytest
 
-from meanResidenceTime import MeanResidenceTimeCalculator
+from meanResidenceTime_statistical import MeanResidenceTimeCalculator
 
 
 @pytest.fixture
@@ -580,7 +580,7 @@ class TestUIPlumbing:
     @staticmethod
     def bare_ui():
         """A MeanResidenceTimeUI with stub widgets and no Toga window."""
-        from meanResidenceTime import MeanResidenceTimeUI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI
         ui = MeanResidenceTimeUI.__new__(MeanResidenceTimeUI)
         ui.status_label = FakeWidget()
         ui.progress_bar = FakeWidget()
@@ -593,7 +593,7 @@ class TestUIPlumbing:
         """gqteaWinToga registers the class itself as on_press, so __init__ is
         handed the Button. It must take *args like every other tool."""
         import inspect
-        from meanResidenceTime import MeanResidenceTimeUI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI
         params = list(inspect.signature(MeanResidenceTimeUI.__init__).parameters.values())
         assert any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params), (
             "MeanResidenceTimeUI.__init__ must accept *args"
@@ -638,14 +638,14 @@ class TestUIPlumbing:
     def test_broken_helper_is_gone(self):
         """open_mean_residence_time_window() called __init__ with an 'app'
         keyword it never accepted, so it could only ever raise TypeError."""
-        import meanResidenceTime
-        assert not hasattr(meanResidenceTime, "open_mean_residence_time_window")
+        import meanResidenceTime_statistical
+        assert not hasattr(meanResidenceTime_statistical, "open_mean_residence_time_window")
 
     def test_no_deprecated_toga_dialog_calls(self):
         """The rest of the codebase uses window.dialog(toga.XDialog(...))."""
         import inspect
-        import meanResidenceTime
-        source = inspect.getsource(meanResidenceTime)
+        import meanResidenceTime_statistical
+        source = inspect.getsource(meanResidenceTime_statistical)
         for deprecated in ("error_dialog(", "info_dialog(", "question_dialog("):
             assert deprecated not in source, f"deprecated Toga API: {deprecated}"
 
@@ -678,12 +678,12 @@ class TestMassSource:
 class TestModePresentation:
     @staticmethod
     def ui_class():
-        from meanResidenceTime import MeanResidenceTimeUI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI
         return MeanResidenceTimeUI
 
     def test_labels_map_onto_the_calculator_modes(self):
         ui = self.ui_class()
-        from meanResidenceTime import MeanResidenceTimeCalculator as Calc
+        from meanResidenceTime_statistical import MeanResidenceTimeCalculator as Calc
         assert set(ui.REFERENCE_MODE_LABELS.values()) == {
             "single_atom", "geometric_center", "center_of_mass"
         }
@@ -726,18 +726,18 @@ class TestModePresentation:
 
     def test_long_definition_is_abbreviated(self, calc=None):
         """Selecting every solvent H makes a definition thousands of chars long."""
-        from meanResidenceTime import MeanResidenceTimeCalculator as C
+        from meanResidenceTime_statistical import MeanResidenceTimeCalculator as C
         long_def = ",".join(str(i) for i in range(1, 300))
         out = C._abbreviate(long_def)
         assert len(out) < 200
         assert "299 entries in total" in out
 
     def test_short_definition_is_left_alone(self):
-        from meanResidenceTime import MeanResidenceTimeCalculator as C
+        from meanResidenceTime_statistical import MeanResidenceTimeCalculator as C
         assert C._abbreviate("1,2,3") == "1,2,3"
 
     def test_many_object_labels_are_summarised(self):
-        from meanResidenceTime import MeanResidenceTimeCalculator as C
+        from meanResidenceTime_statistical import MeanResidenceTimeCalculator as C
         labels = [f"Atom {i}" for i in range(1, 281)]
         out = C._abbreviate_labels(labels)
         assert len(out) == 8
@@ -746,7 +746,7 @@ class TestModePresentation:
         assert "273 more" in out[5]
 
     def test_few_object_labels_are_listed_in_full(self):
-        from meanResidenceTime import MeanResidenceTimeCalculator as C
+        from meanResidenceTime_statistical import MeanResidenceTimeCalculator as C
         labels = [f"Atom {i}" for i in range(1, 5)]
         assert C._abbreviate_labels(labels) == labels
 
@@ -808,7 +808,7 @@ class TestOutputDirectory:
 class TestPlots:
     @staticmethod
     def bare_ui(tmp_path):
-        from meanResidenceTime import MeanResidenceTimeUI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI
         ui = MeanResidenceTimeUI.__new__(MeanResidenceTimeUI)
         ui.output_dir = str(tmp_path)
         ui.saved_plot_data = []
@@ -821,7 +821,7 @@ class TestPlots:
         durations = calc.extract_event_durations(occ, 1.0, censor_boundary=True)
         t_s, S = calc.compute_origin_averaged_survival(occ, 1.0, max_lag=10)
         t_c, C, R, _ = calc.compute_intermittent_functions(occ, 1.0, max_lag=10)
-        from meanResidenceTime import MRTResults
+        from meanResidenceTime_statistical import MRTResults
         return MRTResults(
             xyz_file=str(tmp_path / "t.xyz"), n_frames=occ.shape[1], n_atoms=2,
             dt=1.0, dt_unit="fs", cutoff=2.0, tolerance_frames=0, cell_lengths=None,
@@ -931,7 +931,7 @@ class TestAdvancedOptionsExposed:
         the engine has capabilities the user cannot reach."""
         import ast
         import inspect
-        from meanResidenceTime import MeanResidenceTimeCalculator
+        from meanResidenceTime_statistical import MeanResidenceTimeCalculator
 
         accepted = set(inspect.signature(MeanResidenceTimeCalculator.run).parameters)
         accepted -= {"self", "progress"}          # progress is wired separately
@@ -947,18 +947,18 @@ class TestAdvancedOptionsExposed:
         assert not missing, f"not reachable from the GUI: {sorted(missing)}"
 
     def test_integration_rules_offered_match_the_engine(self):
-        from meanResidenceTime import MeanResidenceTimeUI as UI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI as UI
         assert set(UI.INTEGRATION_RULES) == {"zero_crossing", "exponential", "full"}
 
     def test_max_lag_blank_means_automatic(self, calc):
-        from meanResidenceTime import MeanResidenceTimeUI as UI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI as UI
         assert UI.parse_optional_int("") is None
         assert UI.parse_optional_int("   ") is None
         assert UI.parse_optional_int("250") == 250
 
     @pytest.mark.parametrize("bad", ["0", "-5", "abc", "1.5"])
     def test_max_lag_rejects_nonsense(self, bad):
-        from meanResidenceTime import MeanResidenceTimeUI as UI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI as UI
         with pytest.raises(ValueError):
             UI.parse_optional_int(bad)
 
@@ -977,15 +977,15 @@ class TestNoDeadCode:
 
     def test_show_window_is_removed(self):
         """Its only caller was open_mean_residence_time_window, already deleted."""
-        from meanResidenceTime import MeanResidenceTimeUI
+        from meanResidenceTime_statistical import MeanResidenceTimeUI
         assert not hasattr(MeanResidenceTimeUI, "show_window")
 
     def test_no_oscillating_fake_progress_loop(self):
         """The bar used to call start() (indeterminate) while also assigning
         .value in a sawtooth loop -- two contradictory modes, no real signal."""
         import inspect
-        import meanResidenceTime
-        source = inspect.getsource(meanResidenceTime)
+        import meanResidenceTime_statistical
+        source = inspect.getsource(meanResidenceTime_statistical)
         assert "progress_direction" not in source
         assert "self.progress_bar.start()" not in source
 
