@@ -488,7 +488,8 @@ class allBondAnalysisUI:
         )
         self.multi_line_text.value = (
             "This module re-evaluates connectivity every frame of an XYZ trajectory using "
-            "the maximum bond distance, then computes the average distance, population "
+            "the maximum bond length, the maximum distance between two atoms to consider them "
+            "bonded, then computes the average distance, population "
             "variance, standard deviation, and occurrence (fraction of frames bonded) for each "
             "pair. Enter cell lattices a b c to apply the minimum-image convention (PBC); leave "
             "them blank for an isolated system. Provide solute atom indices (ranges allowed, "
