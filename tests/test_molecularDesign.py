@@ -4,18 +4,21 @@ The controller holds every rule and every piece of state and touches no widget,
 so these tests construct it with ``__new__`` plus ``_init_state`` and attach
 stub views. Nothing here creates a Toga window.
 
-Two things are under test: the canvas state machine (click to place, drag to
-bond, click to cycle a bond type, right-click to delete) and the plumbing
-around it -- broadcasting to several views at once, surviving a closed window,
-and handing the finished structure to the 3D viewer.
+Three things are under test: the canvas state machine (click to place, drag to
+bond or to grow a bonded atom, click to cycle a bond type, right-click to
+delete), the 3D view (left-drag on empty space pans, right-drag rotates, and
+neither is an edit), and the plumbing around it -- broadcasting to several
+views at once, surviving a closed window, writing an optimized geometry back
+onto the drawing, and handing the finished structure to the 3D viewer.
 """
 import asyncio
 
 import numpy as np
 import pytest
 
-from molecularDesign import MolecularDesignController
-from molecularPreOptimizer import OptimizationResult
+import molecularDesign
+from molecularDesign import MolecularDesignController, blend_color
+from molecularPreOptimizer import PIXELS_PER_ANGSTROM, OptimizationResult, reference_bond_length
 from molecularSketch import RESONANCE_ORDER
 
 
@@ -79,6 +82,19 @@ def _drag(controller, from_x, from_y, to_x, to_y):
     controller.on_canvas_drag(None, (from_x + to_x) / 2.0, (from_y + to_y) / 2.0)
     controller.on_canvas_drag(None, to_x, to_y)
     controller.on_canvas_release(None, to_x, to_y)
+
+
+def _right_click(controller, x, y):
+    """A right press and release at the same point: delete, not rotate."""
+    controller.on_canvas_alt_press(None, x, y)
+    controller.on_canvas_alt_release(None, x, y)
+
+
+def _right_drag(controller, from_x, from_y, to_x, to_y):
+    controller.on_canvas_alt_press(None, from_x, from_y)
+    controller.on_canvas_alt_drag(None, (from_x + to_x) / 2.0, (from_y + to_y) / 2.0)
+    controller.on_canvas_alt_drag(None, to_x, to_y)
+    controller.on_canvas_alt_release(None, to_x, to_y)
 
 
 def _two_bonded_carbons(controller):
@@ -253,13 +269,72 @@ def test_dragging_from_an_atom_back_to_itself_creates_no_bond():
     assert controller.sketch.bond_count == 0
 
 
-def test_dragging_from_an_atom_to_empty_space_creates_no_bond():
+def test_dragging_from_an_atom_to_empty_space_grows_a_bonded_atom():
     controller = _controller()
     _click(controller, 100.0, 100.0)
-    _click(controller, 200.0, 100.0)
+    controller.select_element("O")
 
-    _drag(controller, 100.0, 100.0, 400.0, 400.0)
+    _drag(controller, 100.0, 100.0, 300.0, 100.0)
 
+    assert controller.sketch.atom_count == 2
+    assert controller.sketch.bond_count == 1
+    assert controller.sketch.atoms[1].element == "O"
+
+
+def test_a_grown_atom_sits_at_the_reference_bond_length_in_the_drag_direction():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+
+    _drag(controller, 100.0, 100.0, 100.0, 400.0)
+
+    grown = controller.sketch.atoms[1]
+    expected = reference_bond_length("C", "C") * PIXELS_PER_ANGSTROM
+    assert grown.x == pytest.approx(100.0)
+    assert grown.y == pytest.approx(100.0 + expected)
+
+
+def test_a_grown_atom_keeps_the_reference_length_when_zoomed():
+    """Zooming changes how far apart atoms look, not how far apart they are."""
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    controller.zoom_in(None)
+    sx, sy, _ = controller.screen_positions()[controller.sketch.atoms[0].atom_id]
+
+    _drag(controller, sx, sy, sx + 300.0, sy)
+
+    anchor, grown = controller.sketch.positions()
+    expected = reference_bond_length("C", "C") * PIXELS_PER_ANGSTROM
+    assert np.linalg.norm(grown - anchor) == pytest.approx(expected)
+
+
+def test_a_grown_atom_is_placed_at_the_depth_of_its_anchor():
+    controller = _controller()
+    controller.sketch.add_atom("C", 100.0, 100.0, 37.0)
+
+    _drag(controller, 100.0, 100.0, 300.0, 100.0)
+
+    assert controller.sketch.atoms[1].z == pytest.approx(37.0)
+
+
+def test_an_element_without_a_radius_grows_at_a_default_length():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    controller.select_element("Xx")
+
+    _drag(controller, 100.0, 100.0, 300.0, 100.0)
+
+    expected = molecularDesign.DEFAULT_GROWN_BOND_LENGTH * PIXELS_PER_ANGSTROM
+    assert controller.sketch.atoms[1].x == pytest.approx(100.0 + expected)
+
+
+def test_growing_an_atom_is_undone_in_one_step():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    _drag(controller, 100.0, 100.0, 300.0, 100.0)
+
+    controller.undo(None)
+
+    assert controller.sketch.atom_count == 1
     assert controller.sketch.bond_count == 0
 
 
@@ -364,7 +439,7 @@ def test_a_resonance_bond_can_be_deleted_like_any_other():
     for _ in range(3):
         _click(controller, 150.0, 100.0)
 
-    controller.on_canvas_alt_press(None, 150.0, 100.0)
+    _right_click(controller, 150.0, 100.0)
 
     assert controller.sketch.bond_count == 0
 
@@ -376,7 +451,7 @@ def test_right_clicking_an_atom_deletes_it_and_its_bonds():
     controller = _controller()
     _two_bonded_carbons(controller)
 
-    controller.on_canvas_alt_press(None, 100.0, 100.0)
+    _right_click(controller, 100.0, 100.0)
 
     assert controller.sketch.atom_count == 1
     assert controller.sketch.bond_count == 0
@@ -386,7 +461,7 @@ def test_right_clicking_a_bond_deletes_only_the_bond():
     controller = _controller()
     _two_bonded_carbons(controller)
 
-    controller.on_canvas_alt_press(None, 150.0, 100.0)
+    _right_click(controller, 150.0, 100.0)
 
     assert controller.sketch.atom_count == 2
     assert controller.sketch.bond_count == 0
@@ -396,7 +471,7 @@ def test_right_clicking_empty_space_does_nothing():
     controller = _controller()
     _two_bonded_carbons(controller)
 
-    controller.on_canvas_alt_press(None, 500.0, 500.0)
+    _right_click(controller, 500.0, 500.0)
 
     assert controller.sketch.atom_count == 2
     assert controller.sketch.bond_count == 1
@@ -419,7 +494,7 @@ def test_undo_restores_a_deleted_atom():
     controller = _controller()
     _two_bonded_carbons(controller)
 
-    controller.on_canvas_alt_press(None, 100.0, 100.0)
+    _right_click(controller, 100.0, 100.0)
     controller.undo(None)
 
     assert controller.sketch.atom_count == 2
@@ -588,3 +663,277 @@ def test_sending_without_a_viewer_attached_is_reported():
     asyncio.run(controller.send_to_viewer(None))
 
     assert "viewer" in controller.status_message.lower()
+
+
+# ------------------------------------------------------------------
+# The 3D view: pan, rotate, zoom -- none of them an edit
+# ------------------------------------------------------------------
+def test_dragging_empty_space_pans_the_view():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+
+    _drag(controller, 300.0, 300.0, 340.0, 280.0)
+
+    sx, sy, _ = controller.screen_positions()[controller.sketch.atoms[0].atom_id]
+    assert (sx, sy) == pytest.approx((140.0, 80.0))
+
+
+def test_panning_moves_the_view_not_the_atoms():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    before = controller.sketch.positions()
+    undo_depth = len(controller.undo_stack)
+
+    _drag(controller, 300.0, 300.0, 340.0, 280.0)
+
+    assert np.array_equal(controller.sketch.positions(), before)
+    assert len(controller.undo_stack) == undo_depth
+
+
+def test_right_dragging_rotates_the_view():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    _right_drag(controller, 300.0, 300.0, 380.0, 300.0)
+
+    assert not np.allclose(controller.camera.rotation, np.eye(3))
+
+
+def test_right_dragging_over_an_atom_rotates_instead_of_deleting():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    _right_drag(controller, 100.0, 100.0, 180.0, 160.0)
+
+    assert controller.sketch.atom_count == 2
+    assert controller.sketch.bond_count == 1
+
+
+def test_rotating_is_not_an_edit():
+    """A finished optimization still matches the drawing after a rotation."""
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.apply_optimization_result(_successful_result())
+    before = controller.sketch.positions()
+    undo_depth = len(controller.undo_stack)
+
+    _right_drag(controller, 300.0, 300.0, 380.0, 340.0)
+
+    assert np.array_equal(controller.sketch.positions(), before)
+    assert len(controller.undo_stack) == undo_depth
+    assert controller.last_result is not None
+
+
+def test_rotation_turns_about_the_molecule_centre():
+    controller = _controller()
+    _two_bonded_carbons(controller)  # centred on (150, 100)
+
+    _right_drag(controller, 300.0, 300.0, 390.0, 250.0)
+
+    centre = controller.sketch.positions().mean(axis=0)
+    projected = controller.camera.project(centre)[0]
+    assert projected[:2] == pytest.approx((150.0, 100.0))
+
+
+def test_a_bond_can_still_be_clicked_after_rotating():
+    controller = _controller()
+    bond = _two_bonded_carbons(controller)
+    _right_drag(controller, 300.0, 300.0, 340.0, 330.0)
+    a, b = (controller.screen_positions()[atom_id] for atom_id in (bond.atom_i, bond.atom_j))
+
+    _click(controller, (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+
+    assert bond.order == 2
+
+
+def test_a_click_after_rotating_places_the_atom_on_the_plane_through_the_centre():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    _right_drag(controller, 300.0, 300.0, 380.0, 330.0)
+    centre = controller.sketch.positions().mean(axis=0)
+
+    _click(controller, 400.0, 350.0)
+
+    placed = controller.sketch.positions()[-1]
+    projected = controller.camera.project(placed)[0]
+    assert projected[:2] == pytest.approx((400.0, 350.0))
+    assert projected[2] == pytest.approx(controller.camera.depth_of(centre))
+
+
+def test_a_rotated_view_lets_you_build_out_of_the_drawing_plane():
+    """The point of the 3D canvas: atoms placed after a rotation are not all
+    at the same depth as the original drawing."""
+    controller = _controller()
+    _click(controller, 280.0, 210.0)
+    _right_drag(controller, 300.0, 300.0, 457.0, 300.0)  # about 90 degrees
+
+    _drag(controller, 280.0, 210.0, 450.0, 210.0)
+
+    assert abs(controller.sketch.atoms[1].z) > 10.0
+
+
+def test_zoom_buttons_change_the_zoom_and_reset_restores_it():
+    controller = _controller()
+
+    controller.zoom_in(None)
+    zoomed = controller.camera.zoom
+    controller.zoom_out(None)
+    controller.zoom_out(None)
+    controller.reset_view(None)
+
+    assert zoomed > 1.0
+    assert controller.camera.zoom == pytest.approx(1.0)
+    assert np.allclose(controller.camera.rotation, np.eye(3))
+
+
+def test_zooming_keeps_the_canvas_centre_fixed():
+    controller = _controller()
+    centre_x, centre_y = controller.view_centre
+    controller.sketch.add_atom("C", centre_x, centre_y)
+
+    controller.zoom_in(None)
+
+    sx, sy, _ = controller.screen_positions()[controller.sketch.atoms[0].atom_id]
+    assert (sx, sy) == pytest.approx((centre_x, centre_y))
+
+
+# ------------------------------------------------------------------
+# Writing the optimized geometry back onto the canvas
+# ------------------------------------------------------------------
+def _write_back_result(positions) -> OptimizationResult:
+    result = _successful_result()
+    result.elements = ["C", "C"]
+    result.coordinates = np.zeros((2, 3))
+    result.sketch_positions = np.asarray(positions, dtype=float)
+    return result
+
+
+def test_an_optimized_geometry_is_written_back_onto_the_drawing():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    optimized = [[110.0, 100.0, 5.0], [170.0, 100.0, -5.0]]
+
+    controller.apply_optimization_result(_write_back_result(optimized))
+
+    assert controller.sketch.positions().tolist() == optimized
+    assert controller.last_result is not None
+
+
+def test_the_write_back_can_be_undone_to_recover_the_drawing():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    drawn = controller.sketch.positions()
+
+    controller.apply_optimization_result(_write_back_result([[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]]))
+    controller.undo(None)
+
+    assert np.array_equal(controller.sketch.positions(), drawn)
+    assert controller.last_result is None
+
+
+def test_the_write_back_redraws_the_canvas():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    redraws = controller.test_view.redraw_count
+
+    controller.apply_optimization_result(_write_back_result([[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]]))
+
+    assert controller.test_view.redraw_count > redraws
+
+
+def test_a_result_for_a_different_atom_count_is_not_written_back():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    drawn = controller.sketch.positions()
+
+    controller.apply_optimization_result(_write_back_result([[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]]))
+
+    assert np.array_equal(controller.sketch.positions(), drawn)
+
+
+def test_pre_optimizing_updates_the_canvas_geometry():
+    controller = _controller()
+    _two_bonded_carbons(controller)  # drawn 100 px = 2.5 A apart
+
+    asyncio.run(controller.pre_optimize(None))
+
+    first, second = controller.sketch.positions()
+    expected = reference_bond_length("C", "C") * PIXELS_PER_ANGSTROM
+    assert np.linalg.norm(second - first) == pytest.approx(expected, rel=0.02)
+    assert controller.last_result is not None
+
+
+def test_an_edit_made_while_optimizing_discards_the_stale_result(monkeypatch):
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    real_optimize = molecularDesign.optimize_sketch
+
+    def optimize_then_edit(sketch):
+        result = real_optimize(sketch)
+        _click(controller, 400.0, 400.0)  # the user keeps drawing meanwhile
+        return result
+
+    monkeypatch.setattr(molecularDesign, "optimize_sketch", optimize_then_edit)
+
+    asyncio.run(controller.pre_optimize(None))
+
+    assert controller.sketch.atom_count == 3
+    assert controller.last_result is None
+    assert "changed" in controller.status_message.lower()
+
+
+# ------------------------------------------------------------------
+# Drawing helpers
+# ------------------------------------------------------------------
+def test_drawing_order_paints_back_to_front():
+    controller = _controller()
+    controller.sketch.add_atom("C", 100.0, 100.0, -20.0)
+    controller.sketch.add_atom("O", 200.0, 100.0, 20.0)
+
+    order = controller.drawing_order()
+
+    assert [item.element for kind, item, _ in order if kind == "atom"] == ["O", "C"]
+
+
+def test_a_bond_is_painted_before_the_atom_in_front_of_it():
+    controller = _controller()
+    front = controller.sketch.add_atom("C", 100.0, 100.0, -20.0)
+    back = controller.sketch.add_atom("O", 200.0, 100.0, 20.0)
+    controller.sketch.add_bond(front.atom_id, back.atom_id)
+
+    kinds = [kind for kind, _, _ in controller.drawing_order()]
+
+    assert kinds == ["atom", "bond", "atom"]
+
+
+def test_a_flat_drawing_paints_bonds_under_every_atom():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    kinds = [kind for kind, _, _ in controller.drawing_order()]
+
+    assert kinds == ["bond", "atom", "atom"]
+
+
+def test_depth_fades_are_zero_for_a_flat_drawing():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    assert all(fade == 0.0 for _, _, fade in controller.drawing_order())
+
+
+def test_the_furthest_atom_is_faded_most():
+    controller = _controller()
+    controller.sketch.add_atom("C", 100.0, 100.0, -20.0)
+    controller.sketch.add_atom("O", 200.0, 100.0, 20.0)
+
+    fades = {item.element: fade for kind, item, fade in controller.drawing_order() if kind == "atom"}
+
+    assert fades["C"] == pytest.approx(0.0)
+    assert fades["O"] == pytest.approx(1.0)
+
+
+def test_blend_color_mixes_towards_the_background():
+    assert blend_color("#000000", "#ffffff", 0.0) == "#000000"
+    assert blend_color("#000000", "#ffffff", 1.0) == "#ffffff"
+    assert blend_color("#ff0000", "#0000ff", 0.5) == "#800080"

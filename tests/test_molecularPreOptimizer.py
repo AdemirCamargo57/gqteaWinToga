@@ -15,9 +15,12 @@ from molecularPreOptimizer import (
     PIXELS_PER_ANGSTROM,
     ForceField,
     OptimizationResult,
+    angstrom_to_sketch,
     build_3d_seed,
     ideal_angle_degrees,
     optimize_sketch,
+    reference_bond_length,
+    sketch_to_angstrom,
 )
 from molecularSketch import RESONANCE_ORDER, MoleculeSketch
 
@@ -487,3 +490,141 @@ def test_reference_lengths_match_experimental_carbon_carbon_bonds():
     assert lengths[RESONANCE_ORDER] == pytest.approx(1.40, abs=0.02)
     assert lengths[2] == pytest.approx(1.34, abs=0.02)
     assert lengths[3] == pytest.approx(1.22, abs=0.02)
+
+
+# ------------------------------------------------------------------
+# 3D sketches and writing the geometry back onto the canvas
+# ------------------------------------------------------------------
+def _signed_volume(points: np.ndarray, a: int, b: int, c: int, d: int) -> float:
+    """Triple product of the three arms from ``a`` -- its sign is the handedness."""
+    return float(np.dot(points[b] - points[a], np.cross(points[c] - points[a], points[d] - points[a])))
+
+
+def _chiral_centre() -> MoleculeSketch:
+    """CHFClBr drawn as a real 3D tetrahedron (sketch units, z away from the viewer)."""
+    sketch = MoleculeSketch()
+    carbon = sketch.add_atom("C", 200.0, 200.0, 0.0)
+    for element, (x, y, z) in (
+        ("H", (200.0, 156.0, -15.0)),
+        ("F", (241.0, 220.0, -15.0)),
+        ("Cl", (159.0, 220.0, -15.0)),
+        ("Br", (200.0, 200.0, 50.0)),
+    ):
+        substituent = sketch.add_atom(element, x, y, z)
+        sketch.add_bond(carbon.atom_id, substituent.atom_id)
+    return sketch
+
+
+def test_the_sketch_to_angstrom_conversion_round_trips():
+    points = np.array([[10.0, -20.0, 30.0], [400.0, 5.0, -60.0]])
+
+    assert np.allclose(angstrom_to_sketch(sketch_to_angstrom(points)), points)
+
+
+def test_the_conversion_is_a_rotation_not_a_mirror():
+    """Flipping y alone would turn a 3D structure into its mirror image."""
+    points = _chiral_centre().positions()
+
+    converted = sketch_to_angstrom(points)
+
+    assert np.sign(_signed_volume(converted, 0, 1, 2, 3)) == np.sign(
+        _signed_volume(points, 0, 1, 2, 3)
+    )
+
+
+def test_a_three_dimensional_sketch_is_seeded_without_any_jitter():
+    sketch = _chiral_centre()
+
+    _, coordinates = build_3d_seed(sketch)
+
+    expected = sketch_to_angstrom(sketch.positions())
+    assert np.allclose(coordinates, expected - expected.mean(axis=0))
+
+
+def test_a_flat_sketch_tilted_out_of_the_screen_is_still_lifted_off_its_plane():
+    """A planar drawing made after rotating the view has non-zero z, but it is
+    still planar and still needs the out-of-plane nudge."""
+    sketch = _methane()
+    tilt = np.radians(35.0)
+    rotation = np.array(
+        [[1.0, 0.0, 0.0], [0.0, np.cos(tilt), -np.sin(tilt)], [0.0, np.sin(tilt), np.cos(tilt)]]
+    )
+    sketch.update_positions(sketch.positions() @ rotation.T)
+
+    _, coordinates = build_3d_seed(sketch)
+
+    assert _max_out_of_plane(coordinates) > 0.01
+
+
+def test_reference_bond_length_is_the_scaled_sum_of_covalent_radii():
+    from help import AtomicData
+
+    single = AtomicData.covalent_radii["C"] + AtomicData.covalent_radii["O"]
+
+    assert reference_bond_length("C", "O") == pytest.approx(single)
+    assert reference_bond_length("C", "O", 2) == pytest.approx(single * 0.88)
+
+
+def test_reference_bond_length_is_none_for_an_element_without_a_radius():
+    assert reference_bond_length("C", "Xx") is None
+
+
+def test_the_result_carries_sketch_positions_for_every_atom():
+    sketch = _methane()
+
+    result = optimize_sketch(sketch)
+
+    assert result.sketch_positions.shape == (5, 3)
+    assert np.all(np.isfinite(result.sketch_positions))
+
+
+def test_written_back_positions_keep_the_drawing_where_it_was():
+    sketch = _methane()
+
+    result = optimize_sketch(sketch)
+
+    assert np.allclose(result.sketch_positions.mean(axis=0), sketch.positions().mean(axis=0))
+
+
+def test_sketch_positions_and_angstrom_coordinates_describe_the_same_structure():
+    result = optimize_sketch(_ethene())
+
+    converted = sketch_to_angstrom(result.sketch_positions)
+
+    assert np.allclose(converted - converted.mean(axis=0), result.coordinates)
+
+
+def test_the_result_is_aligned_onto_the_drawing():
+    """The optimized structure settles in place instead of spinning: it sits
+    closer to what was drawn than the same structure in any rotated pose."""
+    sketch = _ethene()
+    drawn = sketch_to_angstrom(sketch.positions())
+    drawn -= drawn.mean(axis=0)
+
+    result = optimize_sketch(sketch)
+
+    aligned_rmsd = np.sqrt(np.mean(np.sum((result.coordinates - drawn) ** 2, axis=1)))
+    turned = result.coordinates @ np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]).T
+    turned_rmsd = np.sqrt(np.mean(np.sum((turned - drawn) ** 2, axis=1)))
+    assert aligned_rmsd < turned_rmsd
+
+
+def test_reoptimizing_a_written_back_structure_barely_moves_it():
+    sketch = _methane()
+    sketch.update_positions(optimize_sketch(sketch).sketch_positions)
+    before = sketch.positions()
+
+    again = optimize_sketch(sketch)
+
+    assert np.max(np.abs(again.sketch_positions - before)) < 0.05 * PIXELS_PER_ANGSTROM
+
+
+def test_optimizing_a_chiral_centre_keeps_its_handedness():
+    sketch = _chiral_centre()
+    drawn = sketch.positions()
+
+    result = optimize_sketch(sketch)
+
+    assert np.sign(_signed_volume(result.sketch_positions, 0, 1, 2, 3)) == np.sign(
+        _signed_volume(drawn, 0, 1, 2, 3)
+    )

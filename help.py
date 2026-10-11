@@ -1455,6 +1455,10 @@ DRAWING
   . Click an empty part of the canvas to place an atom of the selected element.
   . Press the left button on one atom, drag to a second atom and release to
     create a single bond between them.
+  . Press on an atom, drag to empty space and release to grow a new atom of
+    the selected element, already bonded to it. It is placed in the direction
+    you dragged, at the typical single-bond length for the two elements, so
+    the structure starts out close to its relaxed geometry.
   . Click a bond to step through the bond types:
 
         single -> double -> triple -> resonance -> single
@@ -1463,11 +1467,32 @@ DRAWING
     single bond, so one gesture both raises and lowers the bond type. The types
     on offer depend on the two elements: a C-C bond reaches all four, a C-O
     bond skips triple, and an O-H bond stays single.
-  . Right-click an atom or a bond to delete it. Deleting an atom also deletes
-    every bond attached to it.
+  . Right-click an atom or a bond, without dragging, to delete it. Deleting an
+    atom also deletes every bond attached to it.
   . Undo steps back through the last 50 edits, including Clear.
 
 Hydrogens are never added for you: draw every atom you want in the structure.
+
+BUILDING IN 3D
+
+The canvas is three-dimensional. Every atom has a depth, and the view can be
+turned and moved at any point while you build:
+
+  . Right-drag anywhere to rotate the molecule about its centre.
+  . Drag an empty part of the canvas to pan.
+  . 'Zoom +' and 'Zoom -' zoom about the centre of the canvas; 'Reset view'
+    returns to the original, unrotated view.
+
+Atoms further away are drawn smaller and paler. Rotating, panning and zooming
+only change how you look at the molecule: they are not edits, they are not on
+the Undo list, and they do not discard an optimized geometry.
+
+A clicked atom is placed on the screen-facing plane through the centre of the
+molecule, and an atom grown from another is placed at the same depth as the
+atom it grows from. To build out of the drawing plane - a tetrahedral carbon,
+a substituent above a ring - rotate the view first, then grow the new atom
+from the side you can now see. When atoms overlap on screen, a click picks
+the one in front.
 
 RESONANCE BONDS
 
@@ -1484,9 +1509,10 @@ it, or click it to continue round the cycle back to single.
 
 PRE-OPTIMIZATION
 
-'Pre-optimize geometry' converts the drawing into a three-dimensional
-structure. The 2D positions become the starting x and y coordinates, the
-structure is lifted slightly off the plane, and the geometry is relaxed with a
+'Pre-optimize geometry' relaxes the drawing into a realistic three-dimensional
+structure. The drawn positions are the starting point; a drawing that is still
+flat is first lifted slightly off its plane, while one you have already built
+in 3D starts exactly as drawn. The geometry is relaxed with a
 compact force field: harmonic bond stretching with lengths taken from the
 covalent radii and adjusted for the bond type, angle bending at the VSEPR angle
 for each atom (counting lone pairs, which is what makes water bend instead of
@@ -1511,6 +1537,13 @@ These are only reported, and the run goes ahead:
 A run that does not converge is reported with the minimizer's own message, and
 the partially relaxed structure is still available to send on.
 
+When the run finishes, the canvas is updated with the optimized geometry: the
+molecule relaxes in place, without moving or turning. Rotate the view to
+inspect it. This counts as one edit, so Undo brings your original drawing
+back. Further edits build on the relaxed structure, and pre-optimizing again
+starts from it. If you change the drawing while an optimization is running,
+that result is discarded rather than overwriting your edit.
+
 LIMITS
 
 This is a pre-optimizer that produces a reasonable starting geometry for a real
@@ -1532,6 +1565,7 @@ If the 3D window cannot be opened - a missing OpenGL driver, a blocked window -
 a dialog reports the reason. The structure has still been transferred, so
 'Display Molecule/Trajectory' and 'Save Current Frame XYZ' remain available.
 
-Editing the drawing again discards the previous geometry, so the structure you
-send is always the one you last optimized.
+Editing the drawing again discards the previous optimization, so the structure
+you send is always the one you last optimized. Rotating or panning the view
+does not.
 """

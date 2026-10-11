@@ -7,12 +7,14 @@ a flat 2D drawing -- and gets back a three-dimensional structure in the same
 
 Three stages:
 
-1. :func:`build_3d_seed` turns canvas pixels into Angstrom and lifts the
-   drawing off the plane by a small, deterministic amount.
+1. :func:`build_3d_seed` turns sketch coordinates into Angstrom and, when the
+   drawing is flat, lifts it off its plane by a small, deterministic amount.
 2. :class:`ForceField` assembles a compact UFF-flavoured potential from the
    sketch's own connectivity, with analytic gradients for every term.
-3. :func:`optimize_sketch` minimizes it with ``scipy.optimize`` and reports
-   what happened in an :class:`OptimizationResult`.
+3. :func:`optimize_sketch` minimizes it with ``scipy.optimize``, aligns the
+   result back onto the drawing, and reports what happened in an
+   :class:`OptimizationResult` -- including the geometry converted back to
+   sketch coordinates, so the design canvas can adopt it.
 
 **This is a pre-optimizer, not a calibrated force field.** Energies are in
 loosely kcal/mol-like units and are meaningful only relative to each other
@@ -38,12 +40,23 @@ from molecularSketch import RESONANCE_ORDER, MoleculeSketch
 # is a comfortable 60 px on screen.
 PIXELS_PER_ANGSTROM = 40.0
 
+# Sketch coordinates run x right, y down, z away from the viewer; Angstrom
+# coordinates run x right, y up, z towards the viewer. Going between them is a
+# 180-degree turn about x -- (x, -y, -z) -- and deliberately not a flip of y
+# alone, which is a reflection and would hand back the mirror image of any
+# chiral 3D structure.
+SKETCH_TO_ANGSTROM_AXES = np.array([1.0, -1.0, -1.0])
+
 # A perfectly planar start leaves several angle and torsion gradients exactly
 # zero, so the minimizer would never leave the plane. The displacement is drawn
 # from a fixed-seed generator: the same sketch always gives the same structure,
-# which is what makes the optimization reproducible and testable.
+# which is what makes the optimization reproducible and testable. It is applied
+# only to a drawing that is flat to within SEED_PLANARITY_TOLERANCE Angstrom, so
+# re-optimizing a structure that is already three-dimensional starts exactly
+# where it is.
 SEED_OUT_OF_PLANE_AMPLITUDE = 0.20
 SEED_RANDOM_STATE = 20260920
+SEED_PLANARITY_TOLERANCE = 0.05
 
 # Bond length multipliers by bond order, applied to the sum of the covalent
 # radii. Calibrated against experimental carbon-carbon bonds: single 1.52 A
@@ -95,6 +108,9 @@ class OptimizationResult:
     iterations: int
     message: str
     warnings: List[str] = dataclass_field(default_factory=list)
+    # The same structure in sketch coordinates, centred where the drawing was,
+    # in the sketch's atom order -- what the design canvas writes back.
+    sketch_positions: Optional[np.ndarray] = None
 
     @property
     def atom_count(self) -> int:
@@ -117,28 +133,79 @@ class OptimizationResult:
 # ----------------------------------------------------------------------
 # Stage 1: seeding
 # ----------------------------------------------------------------------
-def build_3d_seed(sketch: MoleculeSketch) -> Tuple[List[str], np.ndarray]:
-    """Turn the 2D drawing into a starting 3D geometry.
+def sketch_to_angstrom(points) -> np.ndarray:
+    """Sketch coordinates (pixels, y down, z away) to Angstrom (y up, z towards)."""
+    return np.asarray(points, dtype=float).reshape(-1, 3) * SKETCH_TO_ANGSTROM_AXES / PIXELS_PER_ANGSTROM
 
-    Canvas pixels become Angstrom, the canvas y axis is flipped (it grows
-    downward, so without this the structure comes out mirrored against what the
-    user drew), the structure is centred on the origin, and a small
-    deterministic displacement lifts it off the plane.
+
+def angstrom_to_sketch(points) -> np.ndarray:
+    """The inverse of :func:`sketch_to_angstrom`."""
+    return np.asarray(points, dtype=float).reshape(-1, 3) * SKETCH_TO_ANGSTROM_AXES * PIXELS_PER_ANGSTROM
+
+
+def reference_bond_length(element_i: str, element_j: str, order: float = 1.0) -> Optional[float]:
+    """Force-field reference length in Angstrom, or ``None`` without radii.
+
+    The sum of the covalent radii scaled by the bond order -- the same length
+    the bond-stretch term relaxes towards, which is also how far from its
+    anchor the design canvas places an atom grown out of another.
+    """
+    radius_i = AtomicData.covalent_radii.get(element_i)
+    radius_j = AtomicData.covalent_radii.get(element_j)
+    if radius_i is None or radius_j is None:
+        return None
+    return (radius_i + radius_j) * BOND_ORDER_LENGTH_SCALE.get(float(order), 1.0)
+
+
+def _plane_normal(centred: np.ndarray) -> np.ndarray:
+    """Unit normal of the best-fit plane, signed so the result is deterministic."""
+    _, _, vectors = np.linalg.svd(centred, full_matrices=True)
+    normal = vectors[-1]
+    if normal[np.argmax(np.abs(normal))] < 0.0:
+        normal = -normal
+    return normal
+
+
+def build_3d_seed(sketch: MoleculeSketch) -> Tuple[List[str], np.ndarray]:
+    """Turn the drawing into a starting 3D geometry, centred on the origin.
+
+    Sketch coordinates become Angstrom through a rotation (see
+    :data:`SKETCH_TO_ANGSTROM_AXES`), so the structure is neither mirrored nor
+    upside down against what the user sees. A drawing that is still flat --
+    anything drawn without rotating, or drawn flat on a rotated view -- is
+    lifted off its own plane by a small deterministic displacement; one that
+    is already three-dimensional is used exactly as drawn.
     """
     elements = [atom.element for atom in sketch.atoms]
     if not elements:
         return [], np.zeros((0, 3), dtype=float)
 
-    planar = np.array(
-        [[atom.x / PIXELS_PER_ANGSTROM, -atom.y / PIXELS_PER_ANGSTROM] for atom in sketch.atoms],
-        dtype=float,
-    )
-    generator = np.random.default_rng(SEED_RANDOM_STATE)
-    out_of_plane = generator.normal(0.0, SEED_OUT_OF_PLANE_AMPLITUDE, size=len(elements))
-
-    coordinates = np.column_stack([planar, out_of_plane])
+    coordinates = sketch_to_angstrom(sketch.positions())
     coordinates -= coordinates.mean(axis=0)
+
+    normal = _plane_normal(coordinates)
+    if np.max(np.abs(coordinates @ normal)) < SEED_PLANARITY_TOLERANCE:
+        generator = np.random.default_rng(SEED_RANDOM_STATE)
+        out_of_plane = generator.normal(0.0, SEED_OUT_OF_PLANE_AMPLITUDE, size=len(elements))
+        coordinates = coordinates + out_of_plane[:, None] * normal
+        coordinates -= coordinates.mean(axis=0)
     return elements, coordinates
+
+
+def align_onto(mobile: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Rotate centred ``mobile`` to best fit centred ``target`` (Kabsch).
+
+    Proper rotations only: the determinant correction stops the fit from
+    "improving" the overlap by reflecting the structure into its mirror image.
+    """
+    if len(mobile) < 2:
+        return mobile.copy()
+    covariance = mobile.T @ target
+    left, _, right = np.linalg.svd(covariance)
+    handedness = np.sign(np.linalg.det(right.T @ left.T)) or 1.0
+    correction = np.diag([1.0, 1.0, handedness])
+    rotation = right.T @ correction @ left.T
+    return mobile @ rotation.T
 
 
 def ideal_angle_degrees(element: str, connections: int, bond_order_sum: int) -> float:
@@ -212,14 +279,12 @@ class ForceField:
 
         bond_terms = []
         for i, j, order in bonds:
-            radius_i = AtomicData.covalent_radii.get(elements[i])
-            radius_j = AtomicData.covalent_radii.get(elements[j])
-            if radius_i is None or radius_j is None:
+            length = reference_bond_length(elements[i], elements[j], order)
+            if length is None:
                 raise ValueError(
                     f"No covalent radius is known for {elements[i]} or {elements[j]}."
                 )
-            scale = BOND_ORDER_LENGTH_SCALE.get(float(order), 1.0)
-            bond_terms.append((i, j, (radius_i + radius_j) * scale))
+            bond_terms.append((i, j, length))
 
         neighbours: Dict[int, List[int]] = {index: [] for index in range(len(elements))}
         order_sum: Dict[int, int] = {index: 0 for index in range(len(elements))}
@@ -465,6 +530,14 @@ def optimize_sketch(sketch: MoleculeSketch, max_iterations: int = 500) -> Optimi
         coordinates = seed
     coordinates = coordinates - coordinates.mean(axis=0)
 
+    # Settle the result onto what was drawn (minus the seed's jitter), so the
+    # canvas shows the molecule relaxing in place rather than jumping or
+    # spinning, and put it back where the drawing was on the canvas.
+    drawn_positions = sketch.positions()
+    drawn = sketch_to_angstrom(drawn_positions)
+    coordinates = align_onto(coordinates, drawn - drawn.mean(axis=0))
+    sketch_positions = angstrom_to_sketch(coordinates) + drawn_positions.mean(axis=0)
+
     message = outcome.message
     if isinstance(message, bytes):  # older SciPy builds report bytes
         message = message.decode("utf-8", errors="replace")
@@ -478,4 +551,5 @@ def optimize_sketch(sketch: MoleculeSketch, max_iterations: int = 500) -> Optimi
         iterations=int(getattr(outcome, "nit", 0)),
         message=str(message),
         warnings=list(warnings),
+        sketch_positions=sketch_positions,
     )

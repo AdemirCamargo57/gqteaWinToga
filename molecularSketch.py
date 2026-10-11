@@ -13,14 +13,24 @@ Two conventions matter throughout:
   Deleting an atom would otherwise renumber every bond, which is exactly the
   class of silent off-by-one this project has been bitten by before. Ids are
   handed out in increasing order and never reused.
-* **Positions are canvas pixels**, not Angstrom. The conversion to a 3D
-  structure belongs to molecularPreOptimizer, which is the only module that
-  needs to know the scale.
+* **Positions are sketch coordinates**, not Angstrom: canvas pixels at the
+  default view (x right, y down) plus a depth ``z`` that grows *away* from the
+  viewer, in the same pixel units. Every atom is a 3D point; a structure drawn
+  without rotating simply has ``z = 0`` everywhere. How those points reach the
+  screen is molecularCamera's job, and the conversion to Angstrom belongs to
+  molecularPreOptimizer, the only module that needs to know the scale.
 """
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+
+import numpy as np
 
 from help import AtomicData
+
+# Where an atom appears on screen: ``(screen_x, screen_y, depth)``, with depth
+# growing away from the viewer. Hit-testing takes a mapping of atom id to one of
+# these, so it works the same on a rotated view as on the flat default one.
+ScreenPositions = Mapping[int, Tuple[float, float, float]]
 
 # Bond order used for a newly drawn bond, and the ceiling the cycle wraps at
 # for a pair of elements that both support it.
@@ -56,12 +66,13 @@ def format_order(value: float) -> str:
 
 @dataclass
 class SketchAtom:
-    """One drawn atom. ``x``/``y`` are canvas pixels, ``atom_id`` is stable."""
+    """One drawn atom in sketch coordinates; ``atom_id`` is stable."""
 
     atom_id: int
     element: str
     x: float
     y: float
+    z: float = 0.0
 
 
 @dataclass
@@ -129,9 +140,10 @@ def point_to_segment_distance(
 class MoleculeSketch:
     """The atoms and bonds the user has drawn on the design canvas."""
 
-    # Click tolerances in canvas pixels. An atom is drawn at ~11 px radius, so
-    # the atom target is slightly generous and the bond target deliberately
+    # Click tolerances in screen pixels. An atom is drawn at ATOM_DISC_RADIUS,
+    # so the atom target is slightly generous and the bond target deliberately
     # tighter, since the caller tests atoms first.
+    ATOM_DISC_RADIUS = 11.0
     ATOM_HIT_RADIUS = 14.0
     BOND_HIT_TOLERANCE = 6.0
 
@@ -191,6 +203,30 @@ class MoleculeSketch:
             pairs.append((min(i, j), max(i, j)))
         return pairs
 
+    def positions(self) -> np.ndarray:
+        """``(N, 3)`` sketch coordinates in :meth:`ordered_atom_ids` order."""
+        return np.array(
+            [[atom.x, atom.y, atom.z] for atom in self._atoms.values()], dtype=float
+        ).reshape(-1, 3)
+
+    def update_positions(self, positions: Sequence[Sequence[float]]):
+        """Move every atom at once, in :meth:`ordered_atom_ids` order.
+
+        This is how an optimized geometry is written back onto the drawing.
+        Ids, elements and bonds are untouched; a wrong shape or a non-finite
+        value is refused before anything moves.
+        """
+        array = np.asarray(positions, dtype=float)
+        if array.shape != (self.atom_count, 3):
+            raise ValueError(
+                f"Expected positions for {self.atom_count} atoms as (x, y, z) rows, "
+                f"got an array of shape {array.shape}."
+            )
+        if not np.all(np.isfinite(array)):
+            raise ValueError("Atom positions must be finite numbers.")
+        for atom, (x, y, z) in zip(self._atoms.values(), array):
+            atom.x, atom.y, atom.z = float(x), float(y), float(z)
+
     def atom_number(self, atom_id: int) -> int:
         """1-based position of an atom, matching how the rest of gQTEA labels atoms."""
         return self.ordered_atom_ids().index(atom_id) + 1
@@ -202,12 +238,13 @@ class MoleculeSketch:
     # ------------------------------------------------------------------
     # Editing
     # ------------------------------------------------------------------
-    def add_atom(self, element: str, x: float, y: float) -> SketchAtom:
+    def add_atom(self, element: str, x: float, y: float, z: float = 0.0) -> SketchAtom:
         atom = SketchAtom(
             atom_id=self._next_atom_id,
             element=normalise_element(element),
             x=float(x),
             y=float(y),
+            z=float(z),
         )
         self._atoms[atom.atom_id] = atom
         self._next_atom_id += 1
@@ -322,19 +359,45 @@ class MoleculeSketch:
     # ------------------------------------------------------------------
     # Hit-testing
     # ------------------------------------------------------------------
-    def atom_at(self, x: float, y: float) -> Optional[SketchAtom]:
-        """Nearest atom within ``ATOM_HIT_RADIUS`` of a canvas point."""
+    def _screen_position(
+        self, atom: SketchAtom, screen: Optional[ScreenPositions]
+    ) -> Optional[Tuple[float, float, float]]:
+        """Where ``atom`` is on screen; its own x/y/z on the unrotated view."""
+        if screen is None:
+            return atom.x, atom.y, atom.z
+        return screen.get(atom.atom_id)
+
+    def atom_at(
+        self, x: float, y: float, screen: Optional[ScreenPositions] = None
+    ) -> Optional[SketchAtom]:
+        """The atom a click at screen point ``(x, y)`` selects, or ``None``.
+
+        ``screen`` maps atom ids to projected ``(sx, sy, depth)``; without it
+        the atoms' own x/y are the screen positions (the default view). A click
+        inside an atom's drawn disc beats one merely within the hit tolerance,
+        and among equals the atom in front wins, then the nearest -- so after a
+        rotation the atom the user can see is the one that gets picked.
+        """
         best: Optional[SketchAtom] = None
-        best_distance = self.ATOM_HIT_RADIUS
+        best_key = None
         for atom in self._atoms.values():
-            distance = ((atom.x - x) ** 2 + (atom.y - y) ** 2) ** 0.5
-            if distance <= best_distance:
+            position = self._screen_position(atom, screen)
+            if position is None:
+                continue
+            sx, sy, depth = position
+            distance = ((sx - x) ** 2 + (sy - y) ** 2) ** 0.5
+            if distance > self.ATOM_HIT_RADIUS:
+                continue
+            key = (distance > self.ATOM_DISC_RADIUS, depth, distance)
+            if best_key is None or key < best_key:
                 best = atom
-                best_distance = distance
+                best_key = key
         return best
 
-    def bond_at(self, x: float, y: float) -> Optional[SketchBond]:
-        """Nearest bond within ``BOND_HIT_TOLERANCE`` of a canvas point."""
+    def bond_at(
+        self, x: float, y: float, screen: Optional[ScreenPositions] = None
+    ) -> Optional[SketchBond]:
+        """Nearest bond within ``BOND_HIT_TOLERANCE`` of a screen point."""
         best: Optional[SketchBond] = None
         best_distance = self.BOND_HIT_TOLERANCE
         for bond in self._bonds:
@@ -342,7 +405,13 @@ class MoleculeSketch:
             end = self._atoms.get(bond.atom_j)
             if start is None or end is None:
                 continue
-            distance = point_to_segment_distance(x, y, start.x, start.y, end.x, end.y)
+            start_position = self._screen_position(start, screen)
+            end_position = self._screen_position(end, screen)
+            if start_position is None or end_position is None:
+                continue
+            distance = point_to_segment_distance(
+                x, y, start_position[0], start_position[1], end_position[0], end_position[1]
+            )
             if distance <= best_distance:
                 best = bond
                 best_distance = distance
@@ -466,3 +535,9 @@ class MoleculeSketch:
         self._atoms = {atom.atom_id: replace(atom) for atom in atoms}
         self._bonds = [replace(bond) for bond in bonds]
         self._next_atom_id = next_atom_id
+
+    def copy(self) -> "MoleculeSketch":
+        """An independent duplicate, e.g. to optimize while the user keeps drawing."""
+        duplicate = MoleculeSketch()
+        duplicate.restore(self.snapshot())
+        return duplicate

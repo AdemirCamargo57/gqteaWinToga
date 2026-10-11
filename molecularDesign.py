@@ -19,24 +19,39 @@ freely, and it is also what lets a click in the periodic-table window reach the
 canvas immediately -- the two windows never reference each other, they only
 talk to the controller, which broadcasts to every live view.
 
+The canvas is **three-dimensional**: every atom has a depth, a
+:class:`~molecularCamera.ViewCamera` projects the drawing onto the screen, and
+the view can be rotated, panned and zoomed while building. The view is never
+an edit -- it pushes no undo entry and leaves a finished optimization valid.
+
 Canvas gestures, all on the left button unless stated:
 
 ========================================  ==========================================
 Gesture                                   Result
 ========================================  ==========================================
-Click empty space                         Place an atom of the selected element
+Click empty space                         Place an atom on the screen-facing plane
+                                          through the molecule's centre
 Press an atom, drag to another, release   Create a single bond between them
+Press an atom, drag to empty space        Grow a new atom bonded to it, at the
+                                          anchor's depth and the reference length
 Click a bond                              Step its type: single, double, triple,
                                           resonance, back to single
-Right-click an atom or bond               Delete it
+Drag empty space                          Pan the view
+Right-drag                                Rotate the view about the molecule
+Right-click (no drag) an atom or bond     Delete it
 ========================================  ==========================================
+
+Pre-optimizing writes the optimized geometry **back onto the drawing** (one
+undo step), so the canvas always shows the structure that would be sent to
+the 3D viewer, and the next edit builds on the relaxed geometry.
 
 The controller owns no chemistry: what a gesture *means* is decided here, but
 whether it is allowed comes from :class:`~molecularSketch.MoleculeSketch`.
 """
 import asyncio
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import toga
 from toga.constants import Baseline
 from toga.fonts import Font
@@ -44,9 +59,30 @@ from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, ROW
 
 from help import HelpGqteaWin
-from molecularPreOptimizer import OptimizationResult, optimize_sketch
+from molecularCamera import ViewCamera
+from molecularPreOptimizer import (
+    PIXELS_PER_ANGSTROM,
+    OptimizationResult,
+    optimize_sketch,
+    reference_bond_length,
+)
 from molecularSketch import RESONANCE_ORDER, MoleculeSketch, SketchBond, bond_type_name
 from periodicTable import PeriodicTableWindow
+
+# Canvas size in pixels; the view zooms about its centre.
+CANVAS_WIDTH = 560
+CANVAS_HEIGHT = 420
+
+# Length, in Angstrom, of a bond grown from an atom when either element has no
+# covalent radius to derive a reference length from.
+DEFAULT_GROWN_BOND_LENGTH = 1.5
+
+ZOOM_STEP = 1.25
+
+# Depth cue: the furthest atom is drawn this much smaller and this far faded
+# towards the background; the nearest is drawn as is.
+DEPTH_SHRINK = 0.25
+DEPTH_FADE = 0.55
 
 # Canvas palette. Atom colours match molecularViewer's own, so a molecule looks
 # the same in the sketch and in the 3D window.
@@ -68,6 +104,17 @@ ATOM_CANVAS_COLORS = {
     "Br": "#996633",
     "I": "#8000cc",
 }
+
+
+def blend_color(color: str, background: str, fraction: float) -> str:
+    """Mix ``fraction`` of ``background`` into ``color`` (both ``#rrggbb``)."""
+    fraction = min(1.0, max(0.0, float(fraction)))
+    mixed = []
+    for start in (1, 3, 5):
+        front = int(color[start:start + 2], 16)
+        back = int(background[start:start + 2], 16)
+        mixed.append(int(round(front + (back - front) * fraction)))
+    return "#" + "".join(f"{channel:02x}" for channel in mixed)
 
 
 class MolecularDesignController:
@@ -102,7 +149,19 @@ class MolecularDesignController:
         self._press_point: Optional[Tuple[float, float]] = None
         self._press_target: Tuple[str, object] = ("empty", None)
         self._dragged = False
+        self._last_drag_point: Optional[Tuple[float, float]] = None
         self._optimization_running = False
+
+        # The 3D view, and the right-button gesture that rotates it.
+        self.camera = ViewCamera()
+        self.view_centre = (CANVAS_WIDTH / 2.0, CANVAS_HEIGHT / 2.0)
+        self._alt_press_point: Optional[Tuple[float, float]] = None
+        self._alt_last_point: Optional[Tuple[float, float]] = None
+        self._alt_dragged = False
+
+        # Bumped by every edit, so an optimization that finishes after the
+        # user has changed the drawing can tell its result is stale.
+        self._edit_generation = 0
 
         # Launcher-tab widgets, the only ones the controller holds directly.
         self.launcher_status_label = None
@@ -238,19 +297,82 @@ class MolecularDesignController:
         self.set_status(f"{symbol} selected. Click the canvas to place an atom.")
 
     # ------------------------------------------------------------------
+    # The 3D view
+    # ------------------------------------------------------------------
+    def screen_positions(self) -> Dict[int, Tuple[float, float, float]]:
+        """Every atom's projected ``(screen_x, screen_y, depth)``, by atom id."""
+        projected = self.camera.project(self.sketch.positions())
+        return {
+            atom_id: (float(sx), float(sy), float(depth))
+            for atom_id, (sx, sy, depth) in zip(self.sketch.ordered_atom_ids(), projected)
+        }
+
+    def drawing_order(self) -> List[Tuple[str, object, float]]:
+        """What to paint, back to front, as ``(kind, item, fade)`` triples.
+
+        ``kind`` is ``"bond"`` or ``"atom"``; ``fade`` runs from 0 for the
+        nearest depth to 1 for the furthest, and is 0 throughout a flat
+        drawing. A bond sits at the mean depth of its ends, so it is painted
+        over the atom behind it and under the atom in front -- and at equal
+        depth bonds go first, so a flat drawing looks exactly as it always did.
+        """
+        screen = self.screen_positions()
+        if not screen:
+            return []
+        depths = [depth for _, _, depth in screen.values()]
+        nearest = min(depths)
+        span = max(depths) - nearest
+
+        def fade(depth: float) -> float:
+            return 0.0 if span < 1e-9 else (depth - nearest) / span
+
+        items = []
+        for bond in self.sketch.bonds:
+            depth = (screen[bond.atom_i][2] + screen[bond.atom_j][2]) / 2.0
+            items.append((depth, 0, "bond", bond))
+        for atom in self.sketch.atoms:
+            items.append((screen[atom.atom_id][2], 1, "atom", atom))
+        items.sort(key=lambda item: (-item[0], item[1]))
+        return [(kind, item, fade(depth)) for depth, _, kind, item in items]
+
+    def zoom_in(self, widget=None):
+        self._zoom(ZOOM_STEP)
+
+    def zoom_out(self, widget=None):
+        self._zoom(1.0 / ZOOM_STEP)
+
+    def _zoom(self, factor: float):
+        self.camera.zoom_by(factor, *self.view_centre)
+        self.set_status(f"Zoom {self.camera.zoom * 100.0:.0f}%.")
+        self._redraw()
+
+    def reset_view(self, widget=None):
+        self.camera.reset()
+        self.set_status("View reset: unrotated, unpanned, 100% zoom.")
+        self._redraw()
+
+    def _placement_depth(self) -> float:
+        """Depth of the screen-facing plane through the molecule's centre."""
+        if self.sketch.is_empty:
+            return 0.0
+        return self.camera.depth_of(self.sketch.positions().mean(axis=0))
+
+    # ------------------------------------------------------------------
     # Canvas interaction
     # ------------------------------------------------------------------
     def on_canvas_press(self, widget, x, y, **kwargs):
         """Classify what is under the pointer once, on press."""
         self._press_point = (x, y)
+        self._last_drag_point = (x, y)
         self._dragged = False
         self.drag_preview = None
 
-        atom = self.sketch.atom_at(x, y)
+        screen = self.screen_positions()
+        atom = self.sketch.atom_at(x, y, screen)
         if atom is not None:
             self._press_target = ("atom", atom.atom_id)
             return
-        bond = self.sketch.bond_at(x, y)
+        bond = self.sketch.bond_at(x, y, screen)
         if bond is not None:
             self._press_target = ("bond", bond)
             return
@@ -267,17 +389,24 @@ class MolecularDesignController:
             self._dragged = True
 
         kind, target = self._press_target
-        if kind != "atom":
-            return
-        anchor = self.sketch.get_atom(target)
-        self.drag_preview = (anchor.x, anchor.y, x, y)
-        self._redraw()
+        if kind == "atom":
+            anchor_x, anchor_y, _ = self.screen_positions()[target]
+            self.drag_preview = (anchor_x, anchor_y, x, y)
+            self._redraw()
+        elif kind == "empty":
+            # Panning starts from the press point, so the movement made while
+            # still inside the drag threshold is not lost.
+            last_x, last_y = self._last_drag_point
+            self.camera.pan_by(x - last_x, y - last_y)
+            self._last_drag_point = (x, y)
+            self._redraw()
 
     def on_canvas_release(self, widget, x, y, **kwargs):
         kind, target = self._press_target
         dragged = self._dragged
 
         self._press_point = None
+        self._last_drag_point = None
         self._press_target = ("empty", None)
         self._dragged = False
         self.drag_preview = None
@@ -293,8 +422,46 @@ class MolecularDesignController:
         self._redraw()
 
     def on_canvas_alt_press(self, widget, x, y, **kwargs):
-        """Right-click deletes whatever is under the pointer."""
-        atom = self.sketch.atom_at(x, y)
+        """Start a right-button gesture: a drag rotates, a click deletes."""
+        self._alt_press_point = (x, y)
+        self._alt_last_point = (x, y)
+        self._alt_dragged = False
+
+    def on_canvas_alt_drag(self, widget, x, y, **kwargs):
+        if self._alt_press_point is None:
+            return
+        if not self._alt_dragged:
+            press_x, press_y = self._alt_press_point
+            if (x - press_x) ** 2 + (y - press_y) ** 2 <= self.DRAG_THRESHOLD ** 2:
+                return
+            self._alt_dragged = True
+            # Turn about the molecule's centre, wherever it is on screen.
+            if not self.sketch.is_empty:
+                self.camera.set_pivot(self.sketch.positions().mean(axis=0))
+
+        last_x, last_y = self._alt_last_point
+        self.camera.rotate_by_drag(x - last_x, y - last_y)
+        self._alt_last_point = (x, y)
+        self._redraw()
+
+    def on_canvas_alt_release(self, widget, x, y, **kwargs):
+        press = self._alt_press_point
+        dragged = self._alt_dragged
+        self._alt_press_point = None
+        self._alt_last_point = None
+        self._alt_dragged = False
+
+        if press is None:
+            return
+        if dragged:
+            self.set_status("View rotated. Reset view returns to the original orientation.")
+            return
+        self._delete_at(*press)
+
+    def _delete_at(self, x: float, y: float):
+        """Delete whatever is under a right-click."""
+        screen = self.screen_positions()
+        atom = self.sketch.atom_at(x, y, screen)
         if atom is not None:
             description = self.sketch.describe_atom(atom.atom_id)
             self._push_undo()
@@ -303,7 +470,7 @@ class MolecularDesignController:
             self._redraw()
             return
 
-        bond = self.sketch.bond_at(x, y)
+        bond = self.sketch.bond_at(x, y, screen)
         if bond is not None:
             name = bond_type_name(bond.order)
             self._push_undo()
@@ -318,8 +485,9 @@ class MolecularDesignController:
     # Edits
     # ------------------------------------------------------------------
     def _place_atom(self, x: float, y: float):
+        position = self.camera.unproject(x, y, self._placement_depth())
         self._push_undo()
-        atom = self.sketch.add_atom(self.selected_element, x, y)
+        atom = self.sketch.add_atom(self.selected_element, *position)
         self.set_status(
             f"Placed {self.sketch.describe_atom(atom.atom_id)}. "
             f"{self.sketch.atom_count} atoms, {self.sketch.bond_count} bonds."
@@ -327,12 +495,21 @@ class MolecularDesignController:
 
     def _release_from_atom(self, atom_id: int, x: float, y: float, dragged: bool):
         if not dragged:
-            self.set_status("Drag from this atom to another atom to bond them.")
+            self.set_status(
+                "Drag from this atom to another atom to bond them, "
+                "or to empty space to grow a new bonded atom."
+            )
             return
 
-        other = self.sketch.atom_at(x, y)
-        if other is None or other.atom_id == atom_id:
-            self.set_status("Release the pointer on another atom to create a bond.")
+        other = self.sketch.atom_at(x, y, self.screen_positions())
+        if other is None:
+            self._grow_atom(atom_id, x, y)
+            return
+        if other.atom_id == atom_id:
+            self.set_status(
+                "Release the pointer on another atom to bond them, "
+                "or on empty space to grow a new bonded atom."
+            )
             return
 
         if self.sketch.find_bond(atom_id, other.atom_id) is not None:
@@ -346,6 +523,37 @@ class MolecularDesignController:
         self._push_undo()
         self.sketch.add_bond(atom_id, other.atom_id)
         self.set_status(f"Single bond created between {first} and {second}.")
+
+    def _grow_atom(self, anchor_id: int, x: float, y: float):
+        """Add an atom bonded to ``anchor_id``, towards the release point.
+
+        It lands at the anchor's depth, at the single-bond reference length
+        the pre-optimizer would relax to, so a structure grown this way is
+        already close to its optimized geometry. Rotating the view first is
+        how a branch is grown out of the drawing plane.
+        """
+        anchor = self.sketch.get_atom(anchor_id)
+        anchor_x, anchor_y, depth = self.screen_positions()[anchor_id]
+        dx, dy = x - anchor_x, y - anchor_y
+        distance = (dx * dx + dy * dy) ** 0.5
+        if distance == 0.0:
+            return
+
+        length = reference_bond_length(anchor.element, self.selected_element)
+        if length is None:
+            length = DEFAULT_GROWN_BOND_LENGTH
+        on_screen = length * PIXELS_PER_ANGSTROM * self.camera.zoom
+        position = self.camera.unproject(
+            anchor_x + dx / distance * on_screen, anchor_y + dy / distance * on_screen, depth
+        )
+
+        self._push_undo()
+        atom = self.sketch.add_atom(self.selected_element, *position)
+        self.sketch.add_bond(anchor_id, atom.atom_id)
+        self.set_status(
+            f"Placed {self.sketch.describe_atom(atom.atom_id)} bonded to "
+            f"{self.sketch.describe_atom(anchor_id)}."
+        )
 
     def _cycle_bond(self, bond: SketchBond):
         element_i = self.sketch.get_atom(bond.atom_i).element
@@ -376,6 +584,7 @@ class MolecularDesignController:
         if len(self.undo_stack) > self.UNDO_DEPTH:
             self.undo_stack.pop(0)
         self.last_result = None
+        self._edit_generation += 1
 
     def undo(self, widget=None):
         if not self.undo_stack:
@@ -383,6 +592,7 @@ class MolecularDesignController:
             return
         self.sketch.restore(self.undo_stack.pop())
         self.last_result = None
+        self._edit_generation += 1
         self.set_status(
             f"Undone. {self.sketch.atom_count} atoms, {self.sketch.bond_count} bonds."
         )
@@ -412,8 +622,11 @@ class MolecularDesignController:
 
         self._optimization_running = True
         self.set_status("Pre-optimizing geometry...")
+        # Optimize a copy: the canvas stays live while the minimizer runs on a
+        # worker thread, and an edit made meanwhile must not race with it.
+        generation = self._edit_generation
         try:
-            result = await asyncio.to_thread(optimize_sketch, self.sketch)
+            result = await asyncio.to_thread(optimize_sketch, self.sketch.copy())
         except ValueError as exc:
             self.set_status("Optimization refused: the structure is not ready.")
             await self._show_error("Cannot optimize this structure", str(exc))
@@ -425,23 +638,50 @@ class MolecularDesignController:
         finally:
             self._optimization_running = False
 
+        if generation != self._edit_generation:
+            self.set_status(
+                "The drawing changed while it was being optimized, so that result was "
+                "discarded. Pre-optimize again to relax the current structure."
+            )
+            return
+
         self.apply_optimization_result(result)
         title = "Pre-optimization complete" if result.success else "Pre-optimization did not converge"
         await self._show_info(title, self.describe_result(result))
 
     def apply_optimization_result(self, result: OptimizationResult):
-        """Record a finished optimization and report it in the status line."""
+        """Adopt a finished optimization: write it onto the drawing and report it.
+
+        The optimized geometry replaces the drawn one as a single undo step, so
+        Undo brings the hand-drawn layout back. ``last_result`` is set *after*
+        that push, since every push clears it. A partially relaxed result is
+        written back too -- it is still closer to a sensible structure than the
+        drawing was.
+        """
+        positions = result.sketch_positions
+        written_back = positions is not None and np.shape(positions) == (self.sketch.atom_count, 3)
+        if written_back:
+            self._push_undo()
+            self.sketch.update_positions(positions)
         self.last_result = result
+
+        on_canvas = (
+            " The canvas shows the optimized geometry (Undo restores your drawing)."
+            if written_back
+            else ""
+        )
         if result.success:
             self.set_status(
                 f"Optimization converged - {result.atom_count} atoms, "
-                f"gradient norm {result.gradient_norm:.4f}. Send it to the 3D viewer to see it."
+                f"gradient norm {result.gradient_norm:.4f}.{on_canvas} "
+                "Send it to the 3D viewer to see it."
             )
         else:
             self.set_status(
                 f"Optimization stopped early - {result.message} "
-                "The partially relaxed structure is still available."
+                f"The partially relaxed structure is still available.{on_canvas}"
             )
+        self._redraw()
 
     def describe_result(self, result: OptimizationResult) -> str:
         """The multi-line report shown in the dialog after an optimization."""
@@ -468,6 +708,7 @@ class MolecularDesignController:
 
         lines.append("")
         lines.append(
+            "The canvas now shows this geometry; Undo restores your drawing. "
             "This is a pre-optimized starting geometry, not a converged "
             "electronic-structure result."
         )
@@ -566,12 +807,12 @@ class _LauncherView:
 
 
 class DesignCanvasWindow:
-    """The drawing window: canvas, actions and a status line."""
+    """The drawing window: 3D canvas, edit and view actions, and a status line."""
 
     TITLE = "Molecular Design Canvas"
-    CANVAS_WIDTH = 560
-    CANVAS_HEIGHT = 420
-    WINDOW_SIZE = (600, 620)
+    CANVAS_WIDTH = CANVAS_WIDTH
+    CANVAS_HEIGHT = CANVAS_HEIGHT
+    WINDOW_SIZE = (600, 680)
     HINT_COLOR = "#666666"
 
     def __init__(self, controller: MolecularDesignController):
@@ -598,9 +839,14 @@ class DesignCanvasWindow:
         content.add(self.element_label)
         content.add(
             toga.Label(
-                "Click empty space to place an atom - drag from one atom to another to "
-                "bond them - click a bond to step single, double, triple, resonance - "
-                "right-click to delete.",
+                "Click empty space to place an atom - drag atom to atom to bond them, or "
+                "atom to empty space to grow a bonded atom - click a bond to change its type.",
+                style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 2, 0)),
+            )
+        )
+        content.add(
+            toga.Label(
+                "Right-drag to rotate - drag empty space to pan - right-click to delete.",
                 style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 6, 0)),
             )
         )
@@ -610,6 +856,8 @@ class DesignCanvasWindow:
             on_drag=self.controller.on_canvas_drag,
             on_release=self.controller.on_canvas_release,
             on_alt_press=self.controller.on_canvas_alt_press,
+            on_alt_drag=self.controller.on_canvas_alt_drag,
+            on_alt_release=self.controller.on_canvas_alt_release,
             style=Pack(
                 width=self.CANVAS_WIDTH,
                 height=self.CANVAS_HEIGHT,
@@ -618,6 +866,7 @@ class DesignCanvasWindow:
         )
         content.add(self.canvas)
         content.add(self._build_actions())
+        content.add(self._build_view_actions())
         content.add(self.status_label)
         return content
 
@@ -649,6 +898,23 @@ class DesignCanvasWindow:
         )
         actions.add(toga.Button("Clear", on_press=self.controller.clear_canvas, style=Pack(width=64)))
         return actions
+
+    def _build_view_actions(self) -> toga.Box:
+        """Zoom and reset: the view controls the mouse cannot reach on its own."""
+        view = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(6, 0, 0, 0)))
+        view.add(toga.Label("View:", style=Pack(width=44, color=self.HINT_COLOR)))
+        view.add(
+            toga.Button(
+                "Zoom +", on_press=self.controller.zoom_in, style=Pack(width=80, margin=(0, 6, 0, 0))
+            )
+        )
+        view.add(
+            toga.Button(
+                "Zoom -", on_press=self.controller.zoom_out, style=Pack(width=80, margin=(0, 6, 0, 0))
+            )
+        )
+        view.add(toga.Button("Reset view", on_press=self.controller.reset_view, style=Pack(width=100)))
+        return view
 
     # ------------------------------------------------------------------
     # Controller hooks
@@ -683,59 +949,93 @@ class DesignCanvasWindow:
     # Drawing
     # ------------------------------------------------------------------
     def _draw_sketch(self):
+        """Paint the projected drawing back to front, with a depth cue."""
         context = getattr(self.canvas, "context", None)
         if context is None:
             return
         context.clear()
 
-        sketch = self.controller.sketch
-        for bond in sketch.bonds:
-            self._draw_bond(context, bond)
-
-        if self.controller.drag_preview is not None:
-            from_x, from_y, to_x, to_y = self.controller.drag_preview
-            with context.Stroke(
-                color=RUBBER_BAND_COLOR, line_width=1.5, line_dash=[4.0, 3.0]
-            ) as stroke:
-                stroke.move_to(from_x, from_y)
-                stroke.line_to(to_x, to_y)
-
-        radius = self.controller.ATOM_RADIUS
+        screen = self.controller.screen_positions()
+        order = self.controller.drawing_order()
+        radii = {
+            item.atom_id: self._atom_radius(fade) for kind, item, fade in order if kind == "atom"
+        }
         label_font = Font(family="sans-serif", size=9)
-        for atom in sketch.atoms:
-            color = ATOM_CANVAS_COLORS.get(atom.element, DEFAULT_ATOM_COLOR)
-            with context.Fill(color=color) as fill:
-                fill.ellipse(atom.x, atom.y, radius, radius)
-            with context.Stroke(color=ATOM_OUTLINE_COLOR, line_width=1.0) as stroke:
-                stroke.ellipse(atom.x, atom.y, radius, radius)
-            with context.Fill(color=ATOM_LABEL_COLOR) as fill:
-                fill.write_text(
-                    atom.element,
-                    atom.x - 2.0 * len(atom.element) - 1.0,
-                    atom.y,
-                    label_font,
-                    Baseline.MIDDLE,
-                )
+        preview_drawn = False
+        for kind, item, fade in order:
+            if kind == "bond":
+                self._draw_bond(context, item, screen, radii, fade)
+                continue
+            # The rubber band sits over every bond behind the first atom and
+            # under the atoms, as it did on the flat canvas.
+            if not preview_drawn:
+                self._draw_drag_preview(context)
+                preview_drawn = True
+            self._draw_atom(context, item, screen[item.atom_id], fade, label_font)
+        if not preview_drawn:
+            self._draw_drag_preview(context)
 
-    def _draw_bond(self, context, bond: SketchBond):
-        """One, two or three parallel lines -- or, for resonance, one solid
-        line with a dashed line beside it."""
-        sketch = self.controller.sketch
-        start = sketch.get_atom(bond.atom_i)
-        end = sketch.get_atom(bond.atom_j)
-        dx = end.x - start.x
-        dy = end.y - start.y
-        length = (dx * dx + dy * dy) ** 0.5
-        if length == 0.0:
+    def _draw_drag_preview(self, context):
+        if self.controller.drag_preview is None:
             return
+        from_x, from_y, to_x, to_y = self.controller.drag_preview
+        with context.Stroke(color=RUBBER_BAND_COLOR, line_width=1.5, line_dash=[4.0, 3.0]) as stroke:
+            stroke.move_to(from_x, from_y)
+            stroke.line_to(to_x, to_y)
+
+    def _atom_radius(self, fade: float) -> float:
+        return self.controller.ATOM_RADIUS * (1.0 - DEPTH_SHRINK * fade)
+
+    def _draw_atom(self, context, atom, position, fade: float, label_font):
+        """A disc that shrinks and fades towards the background with depth."""
+        sx, sy, _ = position
+        radius = self._atom_radius(fade)
+        tint = DEPTH_FADE * fade
+        color = ATOM_CANVAS_COLORS.get(atom.element, DEFAULT_ATOM_COLOR)
+        with context.Fill(color=blend_color(color, CANVAS_BACKGROUND, tint)) as fill:
+            fill.ellipse(sx, sy, radius, radius)
+        outline = blend_color(ATOM_OUTLINE_COLOR, CANVAS_BACKGROUND, tint)
+        with context.Stroke(color=outline, line_width=1.0) as stroke:
+            stroke.ellipse(sx, sy, radius, radius)
+        with context.Fill(color=blend_color(ATOM_LABEL_COLOR, CANVAS_BACKGROUND, tint)) as fill:
+            fill.write_text(
+                atom.element,
+                sx - 2.0 * len(atom.element) - 1.0,
+                sy,
+                label_font,
+                Baseline.MIDDLE,
+            )
+
+    def _draw_bond(self, context, bond: SketchBond, screen, radii, fade: float):
+        """One, two or three parallel lines -- or, for resonance, one solid
+        line with a dashed line beside it -- offset sideways on screen.
+
+        The lines run from disc edge to disc edge rather than centre to centre:
+        a bond shares an end with each of its atoms, so no painting order can
+        stop a centre-to-centre line crossing the disc of the atom it is
+        painted after.
+        """
+        centre_i = screen[bond.atom_i][:2]
+        centre_j = screen[bond.atom_j][:2]
+        dx = centre_j[0] - centre_i[0]
+        dy = centre_j[1] - centre_i[1]
+        length = (dx * dx + dy * dy) ** 0.5
+        radius_i = radii.get(bond.atom_i, self.controller.ATOM_RADIUS)
+        radius_j = radii.get(bond.atom_j, self.controller.ATOM_RADIUS)
+        if length <= radius_i + radius_j:
+            return  # seen (nearly) end-on: the atoms hide it
+        unit_x, unit_y = dx / length, dy / length
+        start = (centre_i[0] + unit_x * radius_i, centre_i[1] + unit_y * radius_i)
+        end = (centre_j[0] - unit_x * radius_j, centre_j[1] - unit_y * radius_j)
         # Unit normal, so parallel lines are offset sideways from the bond axis.
-        normal_x = -dy / length
-        normal_y = dx / length
+        normal_x = -unit_y
+        normal_y = unit_x
         offset = self.controller.BOND_LINE_OFFSET
+        color = blend_color(BOND_COLOR, CANVAS_BACKGROUND, DEPTH_FADE * fade)
 
         if bond.is_resonance:
-            self._stroke_line(context, start, end, normal_x, normal_y, -offset, dashed=False)
-            self._stroke_line(context, start, end, normal_x, normal_y, offset, dashed=True)
+            self._stroke_line(context, start, end, normal_x, normal_y, -offset, False, color)
+            self._stroke_line(context, start, end, normal_x, normal_y, offset, True, color)
             return
 
         offsets = {
@@ -744,11 +1044,11 @@ class DesignCanvasWindow:
             3: (-2.0 * offset, 0.0, 2.0 * offset),
         }.get(int(bond.order), (0.0,))
         for line_offset in offsets:
-            self._stroke_line(context, start, end, normal_x, normal_y, line_offset, dashed=False)
+            self._stroke_line(context, start, end, normal_x, normal_y, line_offset, False, color)
 
     @staticmethod
-    def _stroke_line(context, start, end, normal_x, normal_y, offset, dashed: bool):
+    def _stroke_line(context, start, end, normal_x, normal_y, offset, dashed: bool, color: str):
         dash = [5.0, 4.0] if dashed else None
-        with context.Stroke(color=BOND_COLOR, line_width=1.8, line_dash=dash) as stroke:
-            stroke.move_to(start.x + normal_x * offset, start.y + normal_y * offset)
-            stroke.line_to(end.x + normal_x * offset, end.y + normal_y * offset)
+        with context.Stroke(color=color, line_width=1.8, line_dash=dash) as stroke:
+            stroke.move_to(start[0] + normal_x * offset, start[1] + normal_y * offset)
+            stroke.line_to(end[0] + normal_x * offset, end[1] + normal_y * offset)

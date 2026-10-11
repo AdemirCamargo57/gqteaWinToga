@@ -267,6 +267,137 @@ def test_bond_at_returns_none_far_from_the_bond_axis():
 
 
 # ------------------------------------------------------------------
+# Hit-testing through a projected (rotated) view
+# ------------------------------------------------------------------
+def test_atom_at_uses_projected_screen_positions_when_given():
+    sketch = MoleculeSketch()
+    atom = sketch.add_atom("C", 0.0, 0.0)
+    screen = {atom.atom_id: (300.0, 200.0, 0.0)}
+
+    assert sketch.atom_at(300.0, 200.0, screen).atom_id == atom.atom_id
+    assert sketch.atom_at(0.0, 0.0, screen) is None
+
+
+def test_atom_at_prefers_the_atom_in_front_when_two_overlap_on_screen():
+    """After a rotation two atoms can sit on top of each other; the one drawn
+    in front is the one the user sees, so it is the one a click selects."""
+    sketch = MoleculeSketch()
+    back = sketch.add_atom("C", 0.0, 0.0, 50.0)
+    front = sketch.add_atom("O", 0.0, 0.0, -50.0)
+    screen = {
+        back.atom_id: (100.0, 100.0, 50.0),
+        front.atom_id: (103.0, 100.0, -50.0),
+    }
+
+    assert sketch.atom_at(101.0, 100.0, screen).atom_id == front.atom_id
+
+
+def test_atom_at_still_prefers_a_disc_hit_over_a_nearer_depth_near_miss():
+    """An atom the click is inside beats one merely within the tolerance,
+    whatever their depths."""
+    sketch = MoleculeSketch()
+    clicked = sketch.add_atom("C", 0.0, 0.0, 50.0)
+    nearby = sketch.add_atom("O", 0.0, 0.0, -50.0)
+    screen = {
+        clicked.atom_id: (100.0, 100.0, 50.0),
+        nearby.atom_id: (113.0, 100.0, -50.0),
+    }
+
+    assert sketch.atom_at(100.0, 100.0, screen).atom_id == clicked.atom_id
+
+
+def test_bond_at_uses_projected_screen_positions_when_given():
+    sketch = MoleculeSketch()
+    a = sketch.add_atom("C", 0.0, 0.0)
+    b = sketch.add_atom("C", 100.0, 0.0)
+    bond = sketch.add_bond(a.atom_id, b.atom_id)
+    screen = {a.atom_id: (0.0, 300.0, 0.0), b.atom_id: (0.0, 400.0, 0.0)}
+
+    assert sketch.bond_at(1.0, 350.0, screen) is bond
+    assert sketch.bond_at(50.0, 0.0, screen) is None
+
+
+# ------------------------------------------------------------------
+# 3D positions
+# ------------------------------------------------------------------
+def test_atoms_default_to_depth_zero():
+    assert MoleculeSketch().add_atom("C", 1.0, 2.0).z == 0.0
+
+
+def test_add_atom_accepts_a_depth():
+    assert MoleculeSketch().add_atom("C", 1.0, 2.0, -7.5).z == -7.5
+
+
+def test_positions_are_returned_in_atom_order():
+    sketch = MoleculeSketch()
+    sketch.add_atom("C", 1.0, 2.0, 3.0)
+    sketch.add_atom("O", 4.0, 5.0, 6.0)
+
+    assert sketch.positions().tolist() == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+
+
+def test_positions_of_an_empty_sketch_have_three_columns():
+    assert MoleculeSketch().positions().shape == (0, 3)
+
+
+def test_update_positions_writes_back_in_atom_order_and_keeps_ids():
+    sketch = _water()
+    ids_before = sketch.ordered_atom_ids()
+    new = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+
+    sketch.update_positions(new)
+
+    assert sketch.positions().tolist() == new
+    assert sketch.ordered_atom_ids() == ids_before
+    assert sketch.bond_count == 2
+
+
+def test_update_positions_survives_a_deleted_atom():
+    """Ids are not positions: writing back after a deletion must follow the
+    current atom order, not the ids."""
+    sketch = _water()
+    sketch.remove_atom(sketch.ordered_atom_ids()[1])
+
+    sketch.update_positions([[0.0, 0.0, 0.0], [9.0, 9.0, 9.0]])
+
+    assert sketch.atoms[1].element == "H"
+    assert (sketch.atoms[1].x, sketch.atoms[1].y, sketch.atoms[1].z) == (9.0, 9.0, 9.0)
+
+
+def test_update_positions_rejects_the_wrong_atom_count():
+    with pytest.raises(ValueError, match="3 atoms"):
+        _water().update_positions([[0.0, 0.0, 0.0]])
+
+
+def test_update_positions_rejects_non_finite_values():
+    with pytest.raises(ValueError, match="finite"):
+        _water().update_positions([[0.0, 0.0, 0.0], [1.0, float("nan"), 0.0], [2.0, 0.0, 0.0]])
+
+
+def test_a_copy_is_independent_of_the_original():
+    sketch = _water()
+    duplicate = sketch.copy()
+
+    duplicate.update_positions([[0.0, 0.0, 0.0]] * 3)
+    duplicate.add_atom("C", 0.0, 0.0)
+
+    assert sketch.atom_count == 3
+    assert sketch.positions()[0].tolist() == [100.0, 100.0, 0.0]
+    assert duplicate.ordered_atom_ids()[:3] == sketch.ordered_atom_ids()
+
+
+def test_undo_snapshots_keep_the_depth():
+    sketch = MoleculeSketch()
+    sketch.add_atom("C", 1.0, 2.0, 3.0)
+    state = sketch.snapshot()
+    sketch.update_positions([[0.0, 0.0, 0.0]])
+
+    sketch.restore(state)
+
+    assert sketch.atoms[0].z == 3.0
+
+
+# ------------------------------------------------------------------
 # Validation
 # ------------------------------------------------------------------
 def test_a_well_formed_molecule_has_no_errors_and_no_warnings():

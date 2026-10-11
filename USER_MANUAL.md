@@ -1465,6 +1465,12 @@ To create a bond, **press the left mouse button on one atom, drag to a second
 atom, and release**. A dashed guide line follows the pointer while you drag. A
 new bond is always a single bond.
 
+To **grow** the molecule, press on an atom, drag to **empty space** and
+release: a new atom of the selected element is added, already bonded to the
+one you started from. It is placed in the direction you dragged, at the typical
+single-bond length for the two elements (1.52 Å for C–C), so the drawing starts
+out close to its relaxed geometry.
+
 To change a bond, **click it**. Each click steps to the next bond type:
 
 ```
@@ -1499,15 +1505,44 @@ relaxes to a length between a single and a double bond. Draw benzene as six
 carbons in a ring with six resonance bonds, and it optimizes to six equal
 1.40 Å bonds in a flat ring.
 
-To **delete** a bond, right-click it. To delete an atom, right-click the atom —
-every bond attached to it goes too. **Undo** steps back through the last 50
-edits, including **Clear**.
+To **delete** a bond, right-click it (without dragging). To delete an atom,
+right-click the atom — every bond attached to it goes too. **Undo** steps back
+through the last 50 edits, including **Clear**.
+
+###### Rotating, panning and zooming: building in 3D
+
+The canvas is three-dimensional: every atom has a depth, and you can turn and
+move the view at any point while you build.
+
+| Action | Gesture |
+|--------|---------|
+| Rotate the molecule about its centre | Right-drag anywhere on the canvas |
+| Pan | Left-drag an empty part of the canvas |
+| Zoom in / out | **Zoom +** / **Zoom −** (zooms about the canvas centre) |
+| Back to the original view | **Reset view** |
+
+Atoms further away are drawn smaller and paler, and bonds and atoms in front
+are painted over those behind. Rotating, panning and zooming **only change how
+you look at the molecule**: they are not edits, they are not on the Undo list,
+and they do not discard an optimized geometry.
+
+Where new atoms go in depth:
+
+- A **clicked** atom is placed on the screen-facing plane through the centre
+  of the molecule.
+- A **grown** atom is placed at the same depth as the atom it grows from.
+
+So, to build out of the drawing plane — a tetrahedral carbon, a substituent
+above a ring — **rotate the view first**, then grow the new atom from the side
+you can now see. When two atoms overlap on screen, a click picks the one in
+front.
 
 ###### Running the pre-optimization
 
-**Pre-optimize geometry** turns the drawing into a three-dimensional structure.
-The 2D positions become the starting x and y coordinates, the structure is
-lifted slightly off the plane, and the geometry is relaxed with a compact force
+**Pre-optimize geometry** relaxes the drawing into a realistic three-dimensional
+structure. The drawn positions are the starting point: a drawing that is still
+flat is first lifted slightly off its plane, while one you have already built
+in 3D starts exactly as drawn. The geometry is relaxed with a compact force
 field: harmonic bond stretching with reference lengths from the covalent radii
 adjusted for each bond type; angle bending at the VSEPR angle for each atom,
 counting lone pairs, which is what makes water come out bent rather than
@@ -1519,6 +1554,16 @@ When the run finishes, a dialog reports the final energy, the gradient norm,
 the iteration count and any warnings. A run that does not converge is reported
 with the minimizer's own message, and its partially relaxed structure is still
 available to send on.
+
+**The canvas is updated with the optimized geometry.** The molecule relaxes in
+place, without moving or turning, so you can rotate the view to inspect the
+result right away. The update counts as one edit: **Undo** brings your
+original drawing back. Further edits build on the relaxed structure, and
+pre-optimizing again starts from it, which makes it easy to refine a molecule
+in steps: draw, optimize, add more atoms, optimize again. If you change the
+drawing while an optimization is still running, that result is discarded
+rather than overwriting your edit, and the status line tells you to run it
+again.
 
 This is a **pre-optimizer**: it produces a reasonable starting geometry for a
 real CPMD, cp.x or ORCA calculation, not a converged result. The energies it
@@ -1543,8 +1588,9 @@ a start that takes too long — a dialog reports the reason. The structure has
 still been transferred, so **Display Molecule/Trajectory** and **Save Current
 Frame XYZ** remain available.
 
-Editing the drawing again discards the previous geometry, so the structure you
-send is always the one you last optimized.
+Editing the drawing again discards the previous optimization, so the structure
+you send is always the one you last optimized. Rotating, panning or zooming the
+view does not.
 
 ###### Validation messages
 
