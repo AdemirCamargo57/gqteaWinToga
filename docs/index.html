@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gqteaWinToga</title>
+<meta name="description" content="gqteaWinToga is a free Windows toolkit for preparing, visualizing and analyzing molecular dynamics and electronic-structure simulations (CPMD, Quantum ESPRESSO cp.x, ORCA, surface hopping).">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=STIX+Two+Text:ital,wght@0,400;0,600;0,700;1,400&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap header-row">
+    <a class="brand" href="#top" aria-label="gqteaWinToga home">
+      <img src="icon.png" alt="" width="36" height="36">
+      <span>gqteaWinToga</span>
+    </a>
+    <nav aria-label="Main">
+      <a href="#tools">Tools</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md">Manual</a>
+      <a href="https://github.com/AdemirCamargo57/gqteaWinToga">Source code</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-text">
+        <h1>gqteaWinToga</h1>
+        <p class="lede">A Windows toolkit for preparing, visualizing and analyzing molecular simulations.</p>
+        <p>Build inputs for CPMD, Quantum ESPRESSO <code>cp.x</code>, ORCA and surface hopping runs, then turn the trajectories they produce into bond distributions, radial distribution functions, residence times, power spectra and rate constants, all from one window.</p>
+
+        <div class="download">
+          <a id="download-btn" class="btn-download" href="https://github.com/AdemirCamargo57/gqteaWinToga/releases/latest">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 20h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="download-label">Download for Windows</span>
+          </a>
+          <p class="download-meta" id="download-meta">Free and open source, MIT license. Windows 10 or 11, 64-bit.</p>
+          <p class="download-links"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/releases">Release notes and earlier versions</a></p>
+        </div>
+      </div>
+
+      <figure class="hero-figure">
+        <canvas id="molecule" width="560" height="520" role="img" aria-label="Ball-and-stick model of glycine hydrogen-bonded to two water molecules, slowly rotating"></canvas>
+        <figcaption>Glycine with two hydrogen-bonded waters. Drag to rotate.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="tools" class="section">
+    <div class="wrap">
+      <h2>What's inside</h2>
+      <p class="section-intro">The program's main window groups its tools into five tabs. Each tool opens its own window: choose your files, enter the parameters, and run.</p>
+
+      <div class="tabs" data-tabs>
+        <div class="tab-list" role="tablist" aria-label="Program tabs">
+          <button role="tab" id="tab-geometry" aria-controls="panel-geometry" aria-selected="true">Geometry</button>
+          <button role="tab" id="tab-inputs" aria-controls="panel-inputs" aria-selected="false" tabindex="-1">Inputs</button>
+          <button role="tab" id="tab-structural" aria-controls="panel-structural" aria-selected="false" tabindex="-1">Structural</button>
+          <button role="tab" id="tab-thermo" aria-controls="panel-thermo" aria-selected="false" tabindex="-1">Thermo</button>
+          <button role="tab" id="tab-tools" aria-controls="panel-tools" aria-selected="false" tabindex="-1">Tools</button>
+        </div>
+
+        <div role="tabpanel" id="panel-geometry" aria-labelledby="tab-geometry" class="tab-panel">
+          <p class="panel-lead">Measure geometry along a trajectory, usually a CPMD <code>TRAJEC.xyz</code>, and get averages, distributions and free-energy profiles.</p>
+          <ul class="tool-list">
+            <li>Bond length analysis</li>
+            <li>All bond distances at once, solute only or the whole system</li>
+            <li>Bond angle and all bond angles</li>
+            <li>Dihedral angle and all dihedral angles</li>
+            <li>Hydrogen bond analysis</li>
+            <li>Comparison of geometric parameters between two runs, for example isolated versus solvated, with MAE and RMSD</li>
+          </ul>
+        </div>
+
+        <div role="tabpanel" id="panel-inputs" aria-labelledby="tab-inputs" class="tab-panel" hidden>
+          <p class="panel-lead">Generate input decks from an XYZ geometry, ready to edit and run in the simulation program.</p>
+          <ul class="tool-list">
+            <li>CPMD inputs for wavefunction optimization, equilibration and production runs</li>
+            <li>Surface hopping input builder</li>
+            <li>Molecular collision setup</li>
+            <li>Quantum ESPRESSO <code>cp.x</code> input builder</li>
+            <li>ORCA input builder</li>
+            <li>gqteaMD input builder</li>
+            <li>Vanderbilt <code>runatom.x</code> input builder</li>
+          </ul>
+        </div>
+
+        <div role="tabpanel" id="panel-structural" aria-labelledby="tab-structural" class="tab-panel" hidden>
+          <p class="panel-lead">Analyze solvation structure and dynamics, and build the boxes to simulate them in.</p>
+          <ul class="tool-list">
+            <li>Radial distribution function</li>
+            <li>Mean residence time, with the legacy workflow still available</li>
+            <li>Velocity autocorrelation function and power spectrum</li>
+            <li>Single-solute solvent box</li>
+            <li>Mixture of two solvents</li>
+            <li>Shared-wall double solvent box</li>
+          </ul>
+        </div>
+
+        <div role="tabpanel" id="panel-thermo" aria-labelledby="tab-thermo" class="tab-panel" hidden>
+          <p class="panel-lead">Kinetics from simulation data.</p>
+          <ul class="tool-list">
+            <li>Classical rate constant</li>
+          </ul>
+        </div>
+
+        <div role="tabpanel" id="panel-tools" aria-labelledby="tab-tools" class="tab-panel" hidden>
+          <p class="panel-lead">Visualization, plotting and the many small conversions a simulation project needs.</p>
+          <ul class="tool-list">
+            <li>3D molecular viewer with trajectory playback and measurements</li>
+            <li>Molecular design: sketch a molecule, pre-optimize it and send it to the viewer</li>
+            <li>CPMD energy plots and multi-column data plots</li>
+            <li>Molecular axis alignment</li>
+            <li>Frame selection, including by interatomic distance range</li>
+            <li>Surface hopping geometry analyzer: separate frames by electronic state</li>
+            <li>CPMD input to XYZ, and <code>cp.x</code> <code>.pos</code> to <code>trajec.xyz</code></li>
+            <li>Forces from <code>cp.x</code> <code>.for</code> files</li>
+            <li>Coordinate, Ångström-to-Bohr and unit converters</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install" class="section section-alt">
+    <div class="wrap install-grid">
+      <div>
+        <h2>Install</h2>
+        <ol class="steps">
+          <li>
+            <h3>Download the installer</h3>
+            <p>Use the download button above. You get a zip file named like <code>gqteaWinToga-0.7.0-INSTALLER.zip</code>.</p>
+          </li>
+          <li>
+            <h3>Extract it</h3>
+            <p>Right-click the zip, choose <b>Extract All</b>, and open the extracted folder.</p>
+          </li>
+          <li>
+            <h3>Run the installer</h3>
+            <p>Double-click <code>gqteaWinToga-…-INSTALLER.exe</code>. It installs for your user account, so administrator rights are not needed. If Windows shows “Windows protected your PC”, choose <b>More info</b>, then <b>Run anyway</b>. The warning appears because the program isn't signed with a commercial certificate.</p>
+          </li>
+          <li>
+            <h3>Start the program</h3>
+            <p>Open gqteaWinToga from the Start menu, or from the desktop shortcut if you chose to create one.</p>
+          </li>
+        </ol>
+      </div>
+
+      <aside class="requirements" aria-labelledby="req-title">
+        <h3 id="req-title">Requirements</h3>
+        <ul>
+          <li>Windows 10 or 11, 64-bit</li>
+          <li>The graphics driver from your card's maker (Intel, NVIDIA or AMD). The 3D viewer needs OpenGL, which Windows' basic display driver doesn't provide.</li>
+          <li>The simulation programs themselves (CPMD, Quantum ESPRESSO, ORCA and so on) are installed separately. gqteaWinToga prepares and analyzes their files.</li>
+        </ul>
+
+        <details class="source-install">
+          <summary>Run from the source code instead</summary>
+          <p>Requires Python 3.10 or newer (tested on 3.13) with the tcl/tk component. In PowerShell:</p>
+<pre><code>git clone https://github.com/AdemirCamargo57/gqteaWinToga.git
+cd gqteaWinToga
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r installation_requirements.txt
+python gqteaWinToga.py</code></pre>
+          <p>Details are in the <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#installation-and-requirements">user manual</a>.</p>
+        </details>
+      </aside>
+    </div>
+  </section>
+
+  <section id="docs" class="section">
+    <div class="wrap docs-grid">
+      <div>
+        <h2>Learn to use it</h2>
+        <p>The <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md">user manual</a> describes every tool, its input files and outputs, with worked examples such as finding a bond-length free-energy minimum, preparing a CPMD collision restart and grouping surface hopping frames by electronic state.</p>
+        <p>Found a bug or have a request? <a href="https://github.com/AdemirCamargo57/gqteaWinToga/issues">Open an issue on GitHub</a>.</p>
+      </div>
+      <div>
+        <h2>Who makes it</h2>
+        <p>gqteaWinToga is developed by the <span lang="pt-BR">Grupo de Química Teórica e Estrutural de Anápolis</span> (gQTEA) at the State University of Goiás (UEG), Brazil, for research and graduate teaching in computational chemistry.</p>
+        <ul class="team">
+          <li>Ademir J. Camargo</li>
+          <li>Valter H. C. Silva</li>
+          <li>Solemar S. Oliveira</li>
+          <li>Hamilton B. Napolitano</li>
+          <li>Luciano Ribeiro</li>
+          <li>Flavio O. Sanches</li>
+        </ul>
+        <p>Contact: <a href="mailto:ajc@ueg.br">ajc@ueg.br</a></p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>gqteaWinToga is free software released under the <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/LICENSE.txt">MIT License</a>. © 2026 the gqteaWinToga core development team, State University of Goiás.</p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
