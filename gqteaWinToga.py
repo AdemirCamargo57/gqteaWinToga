@@ -53,6 +53,7 @@ from cpx_input_builder import CPInputBuilderUI
 from orca_input_builder import ORCAInputBuilderUI
 from gqteaMDinputBuilder import GqteaMDInputBuilderUI
 from MolGeomComparator import MolGeomComparatorUI
+from electrostaticSurfacePotential import ElectrostaticSurfacePotentialUI
 
 class gqteaWin(toga.App):
     def startup(self):
@@ -129,6 +130,7 @@ class gqteaWin(toga.App):
 
         general_tools = [
             ("3D Molecular Viewer", MolecularViewerUI),
+            ("Electrostatic Surface Potential (ESP)", ElectrostaticSurfacePotentialUI),
             ("Plots", PlotterUI),
             ("Molecular Axis Alignment", MolecularAxisAlignmentUI),
             ("Select Frames", SelectFramesUI),

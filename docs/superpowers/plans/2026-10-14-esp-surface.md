@@ -2386,7 +2386,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `SurfaceResult(isovalue, mesh, esp, extrema)` with `half_range`; `ESPResults(fchk_path, wavefunction, spacing, engine, surfaces, notes, elapsed)`
   - `ElectrostaticSurfacePotentialUI(*args, **kwargs)` with `layout_main_window`, async `workflow`, async `show_surface`, `clear_output`, `closeTopLevel`
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_electrostaticSurfacePotential.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_electrostaticSurfacePotential.py`:
 
 ```python
 """Tests for the ESP surface analyser, the extrema file and the UI plumbing."""
@@ -2609,12 +2609,12 @@ class TestUI:
         assert ui.errors[-1][0] == "No Results"
 ```
 
-- [ ] **Step 2: Run them to confirm they fail**
+- [x] **Step 2: Run them to confirm they fail**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_electrostaticSurfacePotential.py -q`
 Expected: `AttributeError`/`ImportError` failures — the stub has no `parse_isovalues`, `ESPSurfaceAnalyser`, …
 
-- [ ] **Step 3: Implement** — replace the whole of `electrostaticSurfacePotential.py` with:
+- [x] **Step 3: Implement** — replace the whole of `electrostaticSurfacePotential.py` with:
 
 ```python
 """Electrostatic surface potential (ESP) mapped on electron-density isosurfaces.
@@ -3222,17 +3222,17 @@ class ElectrostaticSurfacePotentialUI:
         self.window.close()
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_electrostaticSurfacePotential.py -q`
 Expected: `25 passed` (with `C:\G09W\cubegen.exe` present; on a machine without Gaussian `24 passed, 1 skipped`).
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `..\Scripts\python.exe -m pytest tests/ -q`
 Expected: only the 4 pre-existing failures listed in Global Constraints; every new test passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add electrostaticSurfacePotential.py gqteaWinToga.py tests/test_electrostaticSurfacePotential.py
