@@ -7,7 +7,7 @@ anything marked *[assumption]* or *[proposed]* has not been verified.
 
 | # | Decision |
 |---|---|
-| D1 | Reference input: `C:\AJCamargo\QCMM_2sem_2026\2026_10_08\Eteno.fch` (ethylene, RB3LYP/6-31G, opt; 6 atoms, 26 basis functions, s/p/SP shells only; has `Total SCF Density`, **no** `Dipole Moment` section). Visual reference: the GaussView 6.1 screenshot `Eteno_ESP.png` in the same folder (**not** the TIF). |
+| D1 | Reference input: `C:\AJCamargo\QCMM_2sem_2026\2026_10_08\Eteno.fch` (ethylene, RB3LYP/6-31G, opt; 6 atoms, 26 basis functions, s/p/SP shells only; has `Total SCF Density` and a (zero, centrosymmetric) `Dipole Moment`). Visual reference: the GaussView 6.1 screenshot `Eteno_ESP.png` in the same folder (**not** the TIF). |
 | D2 | Visualisation: subclass of the existing GLFW/OpenGL `MolecularViewer` (§4.4). |
 | D3 | Extrema: copy Multiwfn exactly — strict 1st+2nd-ring rule, no automatic merge, vertex positions (§2, §6). |
 | D4 | Colour bar: GaussView defaults (§3). |
@@ -105,8 +105,7 @@ electrostaticSurfacePotential.py  (UI + analyser orchestration + ESPSurfaceViewe
   `Nuclear charges`, `Current cartesian coordinates` (bohr), `Shell types`,
   `Number of primitives per shell`, `Shell to atom map`, `Primitive exponents`,
   `Contraction coefficients`, `P(S=P) Contraction coefficients`, `Total SCF Density`
-  (lower-triangular; D5), and `Dipole Moment` when present (validation only — Eteno.fch,
-  an optimisation, has none).
+  (lower-triangular; D5), and `Dipole Moment` when present (validation only).
   Accepts `.fchk` and `.fch`. Every failure is a `ValueError` naming the missing/short section.
 - `BasisSet`: shells → Cartesian primitives with per-component normalisation (Multiwfn
   convention above), SP split, pure→Cartesian transformation `T` per shell so that
@@ -129,9 +128,9 @@ electrostaticSurfacePotential.py  (UI + analyser orchestration + ESPSurfaceViewe
   `@njit(parallel=True)` twin selected at import time (`try: import numba`); both paths are
   run by the tests when numba is present and must agree to 1e-12.
 - **cubegen engine (D7) — verified working:** `cubegen 0 potential=SCF Eteno.fch out.cub -5 h
-  < points` with `GAUSS_EXEDIR=C:\G09W` reads free-format x y z points **in bohr** from stdin
+  < points` with `GAUSS_EXEDIR=C:\G09W` reads free-format x y z points **in Angstrom** from stdin (corrected by the spike: a point typed 0.1173 lands on the water O at 0.1173 A)
   and writes `x y z V` lines after the atom block; 20 000 points on Eteno took 0.5 s
-  (e.g. V(4,0,0 bohr) = −0.004575585872 a.u., above the π plane). This is the route Multiwfn
+  (e.g. V at (4,0,0) = −0.004575585872 a.u., above the π plane). This is the route Multiwfn
   uses (surfana.f90:880-905). UI: "ESP engine: Built-in exact / Gaussian cubegen" + path
   field, auto-detected from `GAUSS_EXEDIR`, `PATH` and `C:\G09W`; on any cubegen failure
   (e.g. a G16 fchk that G09's cubegen cannot read) the run falls back to the built-in engine
@@ -167,7 +166,7 @@ electrostaticSurfacePotential.py  (UI + analyser orchestration + ESPSurfaceViewe
     density is always `Total SCF Density` (D5), shown read-only.
   - **Mapped property — ESP V(r) (a.u. = Hartree/e):** colour-range mode, colour-bar units
     (a.u. / kcal/mol), optional manual min/max.
-  - Run / Show surface / Export / Clear; output folder (blank → next to the fchk);
+  - Run / Show surface / Clear / Close; the extrema file is written automatically after every Run (no separate Export button); output folder (blank → next to the fchk);
     `MultilineTextInput` summary; help text `HelpGqteaWin.help_esp_surface`.
 - `ESPSurfaceViewer(MolecularViewer)`: loads the molecule as a single-frame trajectory (same
   trick as `load_designed_molecule`), draws the active surface with vertex arrays
@@ -277,3 +276,20 @@ once with `scope=global`. Column names never use "isovalue" for an ESP quantity.
    their cubegen ρ/ESP reference values under `tests/data/`.
 
 Spec approved by the user on 2026-10-14.
+
+## 11. Spike results (2026-10-14, throwaway code in the session scratchpad)
+
+Measured, not estimated — these supersede R1 and the assumptions above:
+
+- **ESP vs Gaussian 09 cubegen**, 300 points 0.5-8 bohr from the nuclei: max |dV| <= 3.7e-7 a.u.
+  on all seven fixtures (5D, 6D, pure f, pure g, Cartesian 10F, SP shells, open shell).
+- **tr(P S) = N_electrons** to 1e-8 and every fchk basis function normalised to 1e-8.
+- **Density vs cubegen**: <= 2.5e-4 relative for 1e-5 < rho < 1e-2. cubegen's density is
+  screened near nuclei (12.8 vs 290 a.u. at the water O nucleus); irrelevant for surfaces.
+- **Eteno, rho = 0.0004**: 6655 vertices, V+F-E = 2, |rho - iso| <= 1.2e-6; 2 pi minima
+  -0.020967 a.u. (-13.16 kcal/mol), 4 H maxima +0.01166 a.u.; max|V| = 2.097e-2 vs GaussView's
+  bar 2.072e-2 (GaussView interpolates from a coarse cube) — R = max|V| confirmed (R6). ~1 s total.
+- **Timing, benzene B3LYP/6-31G(d)** (102 bf), 20 000 points: numpy 19.6 s single thread,
+  4.0-4.7 s with 12 threads, **0.9 s with the numba kernel** (agrees with numpy to 1e-11).
+- numba 0.68.0 supports the venv's numpy 2.4.2 (no downgrade).
+- The GL viewer renders the GaussView look (screenshot checked against `Eteno_ESP.png`).
