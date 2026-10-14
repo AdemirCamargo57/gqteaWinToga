@@ -1289,7 +1289,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `SurfaceMesh(vertices, triangles, neighbours, isovalue, spacing)` with `n_edges`, `euler_characteristic()`, `component_labels()`, `component_euler_characteristics()`, `area()`, `vertex_normals()`
   - `SurfaceExtremum(vertex, kind, scope, value, position)`; `find_surface_extrema(values, vertices, neighbours) -> List[SurfaceExtremum]` ordered: minima (global first, then by value ascending), then maxima (global first, then descending); `second_ring(csr)`
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_molecularSurface.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_molecularSurface.py`:
 
 ```python
 """Tests for isosurface extraction and Multiwfn-style surface extrema."""
@@ -1452,12 +1452,12 @@ def test_numerical_modules_do_not_import_toga():
     assert subprocess.run([sys.executable, "-c", code], env=env, cwd=src).returncode == 0
 ```
 
-- [ ] **Step 2: Run them to confirm they fail**
+- [x] **Step 2: Run them to confirm they fail**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_molecularSurface.py -q`
 Expected: `ModuleNotFoundError: No module named 'molecularSurface'`.
 
-- [ ] **Step 3: Implement** — `molecularSurface.py`:
+- [x] **Step 3: Implement** — `molecularSurface.py`:
 
 ```python
 """Isosurface extraction (marching tetrahedra) and surface extrema.
@@ -1806,12 +1806,12 @@ def find_surface_extrema(values: np.ndarray, vertices: np.ndarray,
     return out
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_molecularSurface.py -q`
 Expected: `14 passed`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add molecularSurface.py tests/test_molecularSurface.py
