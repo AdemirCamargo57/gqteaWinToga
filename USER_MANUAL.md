@@ -79,6 +79,7 @@
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
+- [Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
   - ["Please input a valid value for ..."](#please-input-a-valid-value-for-)
@@ -92,6 +93,7 @@
   - [Missing `SH_STATE.dat` or `TRAJEC.xyz`](#missing-sh_statedat-or-trajecxyz)
   - [Plot windows do not appear](#plot-windows-do-not-appear)
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
+  - [ESP tool messages](#esp-tool-messages)
   - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
 - [Version, Contributors, and License](#version-contributors-and-license)
 
@@ -132,10 +134,10 @@ The file installs these packages:
 |---------|----------|
 | `toga-winforms` | The GUI framework and its Windows backend. Also installs `toga-core`, `pythonnet` and `pillow`. |
 | `numpy` | Trajectory parsing, geometry and statistics, used by most analysis tools. |
-| `scipy` | The autocorrelation FFT, the molecular pre-optimizer, and the solvent-box builders. |
+| `scipy` | The autocorrelation FFT, the molecular pre-optimizer, the solvent-box builders, and the ESP tool (Boys function, surface-mesh adjacency). |
 | `matplotlib` | All plotting, in both the main window and the separate interactive plot viewer. |
-| `glfw` | Windowing and mouse input for the 3D molecular viewer. |
-| `PyOpenGL` | OpenGL bindings for the 3D molecular viewer. |
+| `glfw` | Windowing and mouse input for the 3D molecular viewer and the ESP surface viewer. |
+| `PyOpenGL` | OpenGL bindings for the 3D molecular viewer and the ESP surface viewer. |
 | `PyOpenGL-accelerate` | Optional speedups for `PyOpenGL`. The toolkit runs correctly without it, only more slowly in the 3D viewer. |
 | `PyMuPDF` | Renders `cpx_input_description.pdf` inside the `cp.x` input builder's help viewer. Without it, only the in-app PDF help is lost. |
 
@@ -188,7 +190,18 @@ stripped-down or Server Core installation may not include it.
 
 #### Optional packages
 
-Neither is needed to run the toolkit.
+None of these is needed to run the toolkit.
+
+To make the ESP calculation of the
+[Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
+tool about five times faster (identical results):
+
+```powershell
+python -m pip install numba
+```
+
+It is picked up automatically when installed (verified with `numba` 0.68.0 /
+`llvmlite` 0.50.0, which accept `numpy` 2.4.2 without downgrading it).
 
 To run the automated test suite:
 
@@ -203,7 +216,7 @@ To build the standalone Windows executable:
 python -m pip install auto-py-to-exe
 ```
 
-Both are listed as commented entries in `installation_requirements.txt`.
+All three are listed as commented entries in `installation_requirements.txt`.
 
 #### External simulation programs
 
@@ -211,6 +224,11 @@ Some workflows also require files produced by external chemistry programs, such
 as CPMD, Quantum ESPRESSO `cp.x`, ORCA, Gaussian, or Vanderbilt `runatom.x`.
 gqteaWinToga prepares and analyzes files for these programs, but it does not
 replace the external simulation engines.
+
+The Electrostatic Surface Potential tool reads Gaussian formatted checkpoints
+(`.fchk`/`.fch`), made with Gaussian's `formchk` utility. It does not need
+Gaussian itself; if Gaussian's `cubegen` is installed it can optionally be used
+as the ESP engine.
 
 ### Install from Source
 
@@ -1619,70 +1637,193 @@ underlying cause and leave the structure available.
 
 #### Electrostatic Surface Potential (ESP)
 
-Use **Tools > Electrostatic Surface Potential (ESP)** to map the molecular
-electrostatic potential onto an electron-density isosurface, view it
-colour-coded in 3D (GaussView 6 style) and list the surface maxima and
-minima, following Multiwfn's quantitative molecular surface analysis.
+Use **Tools > Electrostatic Surface Potential (ESP)** to compute the molecular
+electrostatic potential of a Gaussian wavefunction on one or more
+electron-density isosurfaces, view it colour-coded in 3D the way GaussView 6
+draws a mapped ESP, and list the maxima and minima of the potential on each
+surface, following the quantitative molecular surface analysis of Multiwfn.
+The equations and algorithms are documented in
+[Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool).
 
-**Input.** A Gaussian formatted checkpoint (`.fchk` or `.fch`), made from the
-`.chk` with `formchk name.chk name.fchk`. The `Total SCF Density` stored in the
-file is used for both the surface and the potential; open-shell files work.
+**What it is for.** The ESP on a molecular surface shows where an approaching
+charge feels the molecule as positive (blue: electron-poor regions such as acidic
+H atoms or σ-holes) or negative (red: lone pairs, π clouds). Its surface maxima
+and minima are the standard descriptors of hydrogen- and halogen-bond donor and
+acceptor sites and of electrophilic/nucleophilic attack.
 
-**Two different quantities.**
+**Input.** A Gaussian formatted checkpoint, `.fchk` or `.fch`, made from the
+binary checkpoint with Gaussian's `formchk` utility:
+
+```powershell
+formchk name.chk name.fchk
+```
+
+The file must contain the basis set and the `Total SCF Density` section, which
+every Gaussian SCF job writes. That one density is used for both the surface
+and the potential. Open-shell (unrestricted) files are accepted: the ESP depends
+only on the total (α + β) density.
+
+**Two different quantities.** Keep them apart when reading the results:
 
 | Quantity | What it is | Unit |
 |---|---|---|
-| Electron-density isovalue | Defines *where* the surface is: the surface is the set of points where ρ(r) equals this value. | a.u. = e/bohr³ |
-| ESP V(r) | The property *mapped onto* that surface: the colours and the extrema. | a.u. = Hartree/e, or kcal/mol |
+| Electron-density **isovalue** ρ<sub>iso</sub> | Defines *where* the surface is: the surface is the set of points where ρ(**r**) = ρ<sub>iso</sub>. | a.u. = e/bohr³ |
+| **ESP** V(**r**) | The property *mapped onto* that surface: the colours, the extrema and every value in the output. | a.u. = Hartree/e, or kcal/mol |
 
-**Steps.**
+The window, the results text, the colour bar and the output file all name the
+isovalue as "rho … (electron density isovalue)" and the potential as "ESP".
 
-1. **Browse** to the `.fchk`/`.fch` file. Optionally choose an output folder
-   (blank = the folder of the `.fchk`).
-2. *Setup* tab, **Surface definition**: type one or several isovalues
-   (`0.0004, 0.001, 0.002`); blank uses **0.000400 a.u.** Leave the grid
-   spacing blank for 0.25 bohr (smaller is smoother and slower).
-3. **Mapped property**: keep **Built-in exact**, or choose **Gaussian cubegen**
-   and give its path (found automatically in `C:\G09W` or `%GAUSS_EXEDIR%`).
-   If cubegen fails, the built-in engine runs and the summary says so.
-4. Press **Run**. The *Results* tab lists, for every surface, its area, the
-   ESP range and every extremum; the file `<name>_ESP_extrema.txt` is written.
-5. Press **Show surface** for the 3D window. Choose the **Surface shown**
-   when several isovalues were computed, the **Colour-bar unit** (a.u. or
-   kcal/mol), opaque or transparent, and whether to show the extrema markers.
-   Rotate with the left mouse button, zoom with the wheel.
+##### Window layout
 
-**The 3D window.** The colour bar runs across the top: red is the most
-negative ESP, green zero, blue the most positive, over the symmetric range
-±max|V| of the shown surface, labelled like GaussView (`-2.097e-2 … 2.097e-2`).
-The caption repeats the unit and the density isovalue of the surface.
-Cyan spheres are minima, orange spheres maxima (larger = global); the number
-beside each is its row in the extrema file.
+The top of the window holds the input file, the output folder and the buttons
+**Run**, **Show surface**, **Clear** and **Close**; below them are two tabs and a
+status line with a progress bar.
 
-**How extrema are found.** A surface point is a *local minimum* when its ESP is
-strictly lower than at every neighbouring surface point **and** every
-neighbour of those neighbours; a *local maximum* likewise, strictly higher.
-Equal values give no extremum, and nearby extrema are not merged. The *global*
-minimum/maximum is the lowest/highest point of that surface. Before this test
-the surface points closer than half the grid spacing are merged and points
-with only two or three neighbours are removed — Multiwfn's procedure.
+**Setup tab**
 
-**Output file** `<name>_ESP_extrema.txt`: a commented header (source file,
-density, engine, grid spacing, criteria, conversion factor, one `# surface`
-line per isovalue with its area and ESP range), then one row per extremum:
+| Control | Meaning | Default / range |
+|---|---|---|
+| Formatted checkpoint | The `.fchk`/`.fch` file (**Browse** filters on both extensions). | required |
+| Output folder | Where the extrema file is written. | blank = the folder of the `.fchk` |
+| Isovalue(s) ρ (a.u. = e/bohr³) | One or several density isovalues, separated by commas, semicolons or spaces, e.g. `0.0004, 0.001, 0.002`. Order is kept, duplicates are dropped. | blank = **0.000400** (GaussView's default); each value must lie in (0, 1) |
+| Grid spacing (bohr) | Spacing of the cubic density grid the surfaces are built from. Smaller gives smoother surfaces and more surface points, and takes longer. | blank = **0.25** (Multiwfn's default for the ESP); 0.05–0.6 |
+| Density | Read-only: always `Total SCF Density`. | — |
+| ESP engine | **Built-in exact** (analytic integrals in this program) or **Gaussian cubegen** (Gaussian's own program). | Built-in exact |
+| cubegen executable | Path of `cubegen.exe`; pre-filled when one is found in `%GAUSS_EXEDIR%`, on `PATH`, in `C:\G09W` or in `C:\G16W`. Used only by the cubegen engine. | auto-detected |
+
+**Results tab**
+
+| Control | Meaning |
+|---|---|
+| Surface shown | Which isovalue's surface the 3D window displays (filled after a run). |
+| Colour-bar unit | `a.u.` or `kcal/mol` for the colour-bar labels. |
+| Surface | `Opaque` or `Transparent (50 %)`; **Show extrema markers** on/off. |
+| Text box | The help text before a run; the results summary after it. |
+
+Changing any Results-tab control updates an open 3D window immediately.
+
+##### Steps
+
+1. **Browse** to the `.fchk`/`.fch` file. Optionally choose an output folder.
+2. On the *Setup* tab, type the isovalue(s) or leave the field blank for
+   0.000400; leave the grid spacing blank unless you need a finer surface.
+3. Keep **Built-in exact**, or choose **Gaussian cubegen** if Gaussian is
+   installed. If cubegen is missing or fails, the built-in engine is used for
+   the rest of the run and the summary says so in a `NOTE:` line.
+4. Press **Run**. The work runs in the background; the progress bar and status
+   line report each stage (reading, density grid, and for each isovalue: surface,
+   ESP, extrema). When it finishes the *Results* tab opens with the summary, and
+   the extrema file is written automatically.
+5. Press **Show surface** to open the 3D window (pressing it again brings the
+   window to the front). Rotate with the left mouse button, zoom with the
+   wheel. Pick the surface, unit, opacity and markers on the *Results* tab.
+6. **Clear** discards the results and restores the help text; **Close** closes
+   the tool and its 3D window.
+
+##### Results summary
+
+For every surface the summary lists the number of surface points (vertices),
+the surface area in Å², the minimum and maximum ESP on that surface in a.u. and
+kcal/mol, and a table of every extremum: row number, minimum/maximum,
+global/local, ESP in a.u. and kcal/mol, x y z in Å and the nearest atom. The
+header repeats the file, the molecule (atoms, electrons, charge, multiplicity),
+the density, the ESP engine, the grid spacing and the run time.
+
+##### Output file
+
+`<name>_ESP_extrema.txt` (for `Eteno.fch`: `Eteno_ESP_extrema.txt`), one file
+for all isovalues of a run, overwritten by the next run. A commented header
+records the source file, density, surface definition, mapped property, ESP
+engine, grid spacing, vertex-merge distance, extremum criterion, the
+Hartree→kcal/mol factor, the coordinate unit, the molecule, and one
+`# surface …` line per isovalue (vertices, triangles, area in Å², minimum and
+maximum ESP in a.u.). Then one row per extremum:
 
 ```text
 # row rho_isovalue_au type scope esp_au esp_kcal_mol x_A y_A z_A nearest_atom
-1 0.000400 minimum global -0.02096700 -13.1570 -2.245500 -0.062900 0.009700 C4
+1 0.000400 minimum global -0.02096722 -13.1571 -2.245522 -0.062908 0.009717 C1
+3 0.000400 maximum global 0.01166272 7.3185 -0.010724 -2.212172 -2.112729 H5
 ```
 
-1 a.u. = 627.5094740631 kcal/mol (CODATA 2018); coordinates in Å.
+| Column | Meaning |
+|---|---|
+| `row` | Running number over the whole file; the same number labels the marker in the 3D window. |
+| `rho_isovalue_au` | Density isovalue of the surface the extremum lies on (a.u.). |
+| `type` | `minimum` or `maximum`. |
+| `scope` | `global` (lowest/highest point of that surface) or `local`. Each surface has exactly one global minimum and one global maximum. |
+| `esp_au`, `esp_kcal_mol` | ESP at the extremum, in Hartree/e and kcal/mol (1 a.u. = 627.5094740631 kcal/mol). |
+| `x_A y_A z_A` | Position in Å, in the coordinate frame stored in the `.fchk` (`Current cartesian coordinates`). |
+| `nearest_atom` | Element and 1-based number of the closest nucleus. |
 
-**Limits.** Basis functions up to g (l = 4). With an effective core potential
-the stored density lacks the core electrons and the nuclear charges are the
-effective ones (as in Multiwfn) — fine on a molecular surface, which lies far
-outside the core. Installing the optional `numba` package makes the built-in
-ESP about five times faster.
+Within a surface, minima are listed first (global, then local from lowest to
+highest), then maxima (global, then local from highest to lowest). Load the
+numeric columns with `numpy.loadtxt(..., comments="#", usecols=(0, 1, 4, 5, 6, 7, 8))`.
+
+##### The 3D window
+
+The colour bar runs across the top, as in GaussView: red is the most negative
+ESP, green zero, blue the most positive, on a linear hue scale over the
+symmetric range ±max|V| of the surface shown. The end labels use GaussView's
+style (`-2.097e-2 … 2.097e-2`; `-1.316e1 … 1.316e1` in kcal/mol), and the caption
+underneath states the unit and the density isovalue of the surface. The surface
+is drawn opaque with a specular highlight on a black background. Cyan spheres
+mark minima and orange spheres maxima (the larger sphere is the global one), each
+labelled with its row number in the extrema file. The window is built on the
+project's 3D molecular viewer and uses the same mouse controls.
+
+##### Example: ethylene (B3LYP/6-31G)
+
+| ρ<sub>iso</sub> (a.u.) | Surface points | Area (Å²) | Minima (π cloud, above and below the plane) | Maxima (one by each H) |
+|---|---|---|---|---|
+| 0.000400 | 6655 | 88.84 | −0.020967 a.u. (−13.16 kcal/mol) | +0.01166 a.u. (+7.32 kcal/mol) |
+| 0.001000 | 5587 | 74.67 | −0.025772 a.u. (−16.17 kcal/mol) | +0.01755 a.u. (+11.02 kcal/mol) |
+
+GaussView 6.1 shows a colour bar of ±2.072e-2 a.u. for the same file at 0.0004;
+this tool shows ±2.097e-2. GaussView interpolates the ESP from a coarse cube
+grid, while this tool evaluates it exactly at every surface point. The built-in
+and cubegen engines agree to better than 2×10⁻⁷ a.u. at every point. Each run
+takes about 1.5 s.
+
+##### Implemented capabilities and limitations
+
+Implemented:
+
+- Gaussian `.fchk`/`.fch` with s, p, SP, d, f and g shells, Cartesian (6D/10F)
+  or spherical (5D/7F/9G) — verified against Gaussian 09 `cubegen` for each kind.
+- Closed- and open-shell SCF wavefunctions (HF or DFT); effective core
+  potentials (see below).
+- Several isovalues in one run, each with its own surface, extrema and range.
+- Exact ESP (built-in) or Gaussian `cubegen`, with automatic fallback.
+- Optional `numba` acceleration of the built-in engine (about 5× faster;
+  identical results), used automatically when installed.
+
+Limitations:
+
+- **Density:** only `Total SCF Density` is used. For MP2, CI, CC or TD-DFT jobs
+  the correlated or excited-state density is *not* read; the surface and ESP are
+  those of the SCF reference.
+- **Basis:** functions above g (l > 4) are rejected with a message.
+- **Effective core potentials:** the stored density lacks the core electrons and
+  the nuclear charges are the effective ones, exactly as in Multiwfn. This is a
+  good approximation on a molecular surface, far outside the core, but not close
+  to the heavy nucleus.
+- **No periodic boundary conditions**; isolated molecules or clusters only.
+- **Extremum positions** are surface-point positions, not interpolated or
+  refined, so their precision is about one grid spacing (0.25 bohr ≈ 0.13 Å by
+  default). Symmetry-equivalent extrema can differ by ~10⁻⁵ a.u. for the same
+  reason (ethylene at 0.001: −0.025772 vs −0.025753 a.u.).
+- **Colour range** is always the symmetric ±max|V| of the shown surface; a
+  fixed or user-set range is not available, so colours are not directly
+  comparable between molecules.
+- **Marker labels** hidden behind the opaque surface are not drawn; rotate the
+  molecule or switch to *Transparent* to read them.
+- **Memory and time** grow with molecule size: the whole density grid is kept in
+  memory, and vertex elimination is a pure-Python loop, the slowest step for
+  very large surfaces.
+- Not implemented (possible future additions): Multiwfn's surface statistics
+  (positive/negative areas, average and variance of V, Π, ν), export of the
+  coloured surface (e.g. `.pqr`/`.cube`), interpolation of extremum positions,
+  a user-defined colour range, and h functions.
 
 #### Energy Plots
 
@@ -2955,6 +3096,395 @@ $$
   residual times: Estimators based on residence times from discrete time
   processes", *Commun. Nonlinear Sci. Numer. Simul.* (2024).
 
+## Formulas and Methods (Electrostatic Surface Potential tool)
+
+This section documents the theory and every algorithm implemented by the
+[Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
+tool, in the order the tool evaluates them. The code is split by
+responsibility: [gaussianWavefunction.py](gaussianWavefunction.py) (file,
+basis set, density), [espIntegrals.py](espIntegrals.py) (the potential;
+[espNumba.py](espNumba.py) is its optional compiled twin),
+[molecularSurface.py](molecularSurface.py) (surface and extrema) and
+[espViewer.py](espViewer.py) (colours). None of the first four uses the GUI, and
+all are exercised headlessly by the `tests/test_gaussianWavefunction.py`,
+`test_espIntegrals.py`, `test_molecularSurface.py`, `test_espViewer.py` and
+`test_electrostaticSurfacePotential.py` suites against Gaussian 09 `cubegen`
+reference values.
+
+**Units.** All quantities are computed in Hartree atomic units
+($\hbar = m_e = e = 4\pi\varepsilon_0 = 1$): lengths in bohr, charges in units of
+the elementary charge, the electron density in e/bohr³ and the potential in
+Hartree/e. Conversion to Å and kcal/mol happens only when results are reported
+(equation 12).
+
+**Symbols used throughout.**
+
+| Symbol | Meaning |
+| --- | --- |
+| $\mathbf{r}$ | a point in space |
+| $\mathbf{R}_A,\ Z_A$ | position and charge of nucleus $A$ (the fchk `Nuclear charges`) |
+| $\rho(\mathbf{r})$ | total electron density (α + β) |
+| $\chi_\mu(\mathbf{r})$ | basis function $\mu$ |
+| $P_{\mu\nu}$ | total density matrix (fchk `Total SCF Density`) |
+| $V(\mathbf{r})$ | molecular electrostatic potential |
+| $\rho_\text{iso}$ | density isovalue that defines the surface |
+| $h$ | grid spacing (bohr) |
+| $p,\ \mathbf{P}$ | exponent and centre of a Gaussian product (equation 4) |
+| $F_n(T)$ | Boys function of order $n$ (equation 6) |
+
+### 1. The molecular electrostatic potential
+
+$$
+V(\mathbf{r}) \;=\; \sum_{A} \frac{Z_A}{\lvert \mathbf{r}-\mathbf{R}_A\rvert}
+\;-\; \int \frac{\rho(\mathbf{r}')}{\lvert \mathbf{r}-\mathbf{r}'\rvert}\, d^3 r'
+$$
+
+- **Represents:** the electrostatic potential created at $\mathbf{r}$ by the
+  molecule's nuclei (positive term) and electrons (negative term). Equivalently,
+  $V(\mathbf{r})$ is the interaction energy of a unit positive point charge
+  placed at $\mathbf{r}$ with the molecule, so in kcal/mol it reads as kcal/mol
+  per elementary charge. $V>0$ where the nuclei dominate (regions attractive to
+  nucleophiles and to the negative end of a partner), $V<0$ where the electrons
+  dominate (lone pairs, π clouds; attractive to electrophiles).
+- **Assumptions:** (i) Born–Oppenheimer clamped nuclei, treated as point
+  charges; (ii) the potential of the *unperturbed* molecule — the test charge
+  does not polarise it, which is what makes $V$ a property of the molecule
+  alone; (iii) $\rho$ is the SCF (Hartree–Fock or Kohn–Sham) total density
+  stored in the file; (iv) the potential is evaluated in vacuum: if the
+  Gaussian job used an implicit solvent (SCRF/PCM), the stored density is the
+  solvent-polarised one, but the reaction-field potential of the continuum is
+  **not** added; (v) with an effective core potential, $Z_A$ is the effective
+  nuclear charge (atomic number minus core electrons) and $\rho$ lacks the core
+  electrons — a frozen-core point-charge model that is accurate on the
+  molecular surface, far from the core, and is also Multiwfn's choice.
+- **Where/how used:** `espIntegrals.electrostatic_potential` returns
+  `nuclear_potential − electronic_potential`. The nuclear term is the explicit
+  sum; the electronic term is evaluated analytically (equations 2–6).
+- **References:** J. S. Murray and P. Politzer, "The electrostatic potential:
+  an overview", *WIREs Comput. Mol. Sci.* **1**, 153–163 (2011);
+  P. Politzer and D. G. Truhlar (eds.), *Chemical Applications of Atomic and
+  Molecular Electrostatic Potentials*, Plenum (1981).
+
+### 2. Electron density from the density matrix
+
+$$
+\rho(\mathbf{r}) = \sum_{\mu\nu} P_{\mu\nu}\,\chi_\mu(\mathbf{r})\,\chi_\nu(\mathbf{r}),
+\qquad
+P_{\mu\nu} = P^{\alpha}_{\mu\nu} + P^{\beta}_{\mu\nu}
+$$
+
+so that the electronic term of equation 1 becomes
+
+$$
+\int \frac{\rho(\mathbf{r}')}{\lvert \mathbf{r}-\mathbf{r}'\rvert}\, d^3 r'
+= \sum_{\mu\nu} P_{\mu\nu}
+  \int \frac{\chi_\mu(\mathbf{r}')\,\chi_\nu(\mathbf{r}')}{\lvert \mathbf{r}-\mathbf{r}'\rvert}\, d^3 r' .
+$$
+
+- **Represents:** the density as a quadratic form in the basis functions.
+  Using the total density matrix makes closed- and open-shell files identical
+  to handle; the spin density is not needed for the ESP.
+- **Where/how used:** `gaussianWavefunction.read_fchk` reads
+  `Total SCF Density` (lower triangle, row by row) and symmetrises it;
+  `electron_density` evaluates $\rho$ on points in chunks of 20 000 as
+  $\sum_i (\boldsymbol{\chi}^\mathsf{T}\mathbf{P})_i\,\chi_i$. Check:
+  $\operatorname{tr}(\mathbf{P}\mathbf{S}) = N_\text{electrons}$ with the
+  analytic overlap matrix $\mathbf{S}$ (`overlap_matrix`), satisfied to 10⁻⁸
+  for every test file.
+- **References:** A. Szabo and N. S. Ostlund, *Modern Quantum Chemistry*,
+  Dover (1996), chapter 3.
+
+### 3. Gaussian basis functions
+
+A contracted Cartesian Gaussian centred on $\mathbf{A}$, with
+$\mathbf{r}_A = \mathbf{r}-\mathbf{A} = (x_A, y_A, z_A)$:
+
+$$
+\chi(\mathbf{r}) = \sum_{k} d_k\, N(\alpha_k; i,j,l)\;
+x_A^{\,i}\, y_A^{\,j}\, z_A^{\,l}\; e^{-\alpha_k r_A^2},
+\qquad
+N(\alpha; i,j,l) = \left(\frac{2\alpha}{\pi}\right)^{3/4}
+\frac{(4\alpha)^{L/2}}{\sqrt{(2i-1)!!\,(2j-1)!!\,(2l-1)!!}}
+$$
+
+with $L = i+j+l$, contraction coefficients $d_k$ and exponents $\alpha_k$
+taken from the fchk. A spherical (pure) function is a fixed combination of the
+Cartesian components of the same shell,
+
+$$
+\chi_{L m} = \sum_{c} T_{m c}\,\chi_c ,
+\qquad
+\mathbf{P}^\text{Cart} = \mathbf{T}^\mathsf{T}\,\mathbf{P}\,\mathbf{T},
+$$
+
+so every integral is done once, in the Cartesian basis.
+
+- **Represents:** the basis exactly as Gaussian defines it. Each Cartesian
+  primitive is normalised on its own and the fchk contraction coefficients are
+  applied as written (the contracted functions then come out normalised, which
+  `test_trace_ps_is_the_electron_count` confirms to 10⁻⁷). An `SP` shell is an s
+  and a p shell sharing exponents, the p part using the
+  `P(S=P) Contraction coefficients`.
+- **Where/how used:** `primitive_norm`, `component_angular_norm`,
+  `pure_to_cartesian` (real solid harmonics, rows renormalised numerically;
+  Gaussian's pure order $0, +1, -1, +2, -2, \dots$) and `basis_transform`. The
+  Cartesian component order follows the fchk (`FCHK_CARTESIAN_ORDER`); for f
+  shells it is XXX, YYY, ZZZ, XYY, XXY, XXZ, XZZ, YZZ, YYZ, XYZ, which differs
+  from the `.wfn` order. s to g shells (l ≤ 4) are supported.
+- **References:** T. Helgaker, P. Jørgensen and J. Olsen, *Molecular
+  Electronic-Structure Theory*, Wiley (2000), chapter 6 (real solid
+  harmonics); T. Lu and F. Chen, Multiwfn source `fileIO.f90` (fch reader).
+
+### 4. Gaussian product theorem and Hermite expansion
+
+$$
+e^{-\alpha r_A^2}\, e^{-\beta r_B^2} = K_{AB}\, e^{-p\, r_P^2},
+\qquad
+p = \alpha+\beta,\quad
+\mathbf{P} = \frac{\alpha\mathbf{A}+\beta\mathbf{B}}{p},\quad
+K_{AB} = e^{-\frac{\alpha\beta}{p}\lvert\mathbf{A}-\mathbf{B}\rvert^2}
+$$
+
+The Cartesian factors are expanded in Hermite Gaussians, one direction at a
+time, with the coefficients $E^{ij}_t$ obtained by recursion
+($X_{PA} = P_x - A_x$, $X_{PB} = P_x - B_x$, $E^{00}_0 = 1$):
+
+$$
+E^{i+1,j}_{t} = \frac{1}{2p}E^{ij}_{t-1} + X_{PA}E^{ij}_{t} + (t+1)E^{ij}_{t+1},
+\qquad
+E^{i,j+1}_{t} = \frac{1}{2p}E^{ij}_{t-1} + X_{PB}E^{ij}_{t} + (t+1)E^{ij}_{t+1}
+$$
+
+- **Represents:** the product of two primitives as a single Gaussian at
+  $\mathbf{P}$ times Hermite polynomials — the step that makes the
+  three-dimensional integral of equation 2 analytic.
+- **Where/how used:** `hermite_coefficients` (vectorised over all primitive
+  pairs of a shell pair); `_primitive_pairs` forms $p$, $\mathbf{P}$ and
+  $K_{AB}$. The same coefficients give the overlap matrix
+  ($S = K_{AB}(\pi/p)^{3/2}E^{x}_0E^{y}_0E^{z}_0$) used as a check.
+- **References:** L. E. McMurchie and E. R. Davidson, "One- and two-electron
+  integrals over Cartesian Gaussian functions", *J. Comput. Phys.* **26**,
+  218–231 (1978); Helgaker, Jørgensen and Olsen (2000), chapter 9.
+
+### 5. Electronic potential by the McMurchie–Davidson scheme
+
+$$
+\int \frac{G_a(\mathbf{r}')\,G_b(\mathbf{r}')}{\lvert\mathbf{r}'-\mathbf{C}\rvert}\,d^3r'
+= \frac{2\pi}{p}\,K_{AB}\sum_{tuv} E^{ij}_t\,E^{kl}_u\,E^{mn}_v\;R_{tuv}(p,\mathbf{P}-\mathbf{C})
+$$
+
+$$
+R^{n}_{000} = (-2p)^n F_n\!\left(p\,\lvert\mathbf{P}-\mathbf{C}\rvert^2\right),
+\qquad
+R^{n}_{t+1,u,v} = t\,R^{n+1}_{t-1,u,v} + X_{PC}\,R^{n+1}_{t,u,v}
+$$
+
+(and likewise in $u$ with $Y_{PC}$, in $v$ with $Z_{PC}$); $R_{tuv} = R^{0}_{tuv}$.
+Contracting the density matrix into the Hermite coefficients **once**,
+
+$$
+D^{(ab)}_{tuv} = \frac{2\pi}{p}\,K_{AB}\,c_a c_b
+\sum_{\text{components}} P^\text{Cart}_{ab}\,E^{ij}_t E^{kl}_u E^{mn}_v,
+\qquad
+\int \frac{\rho(\mathbf{r}')}{\lvert\mathbf{r}'-\mathbf{C}\rvert}\,d^3r'
+= \sum_{\text{pairs}}\ \sum_{tuv} D^{(ab)}_{tuv}\,R_{tuv}(p,\mathbf{P}-\mathbf{C})
+$$
+
+- **Represents:** the exact (analytic) electronic potential. $D_{tuv}$ does
+  not depend on the evaluation point $\mathbf{C}$, so for $N$ surface points
+  the work is $N \times$ (number of primitive pairs) $\times$ (number of
+  $tuv$), with no grid or interpolation error.
+- **Where/how used:** `build_hermite_batches` computes $D_{tuv}$ for the shell
+  pairs $a \ge b$ (off-diagonal pairs doubled), drops a primitive pair when
+  $\lvert \text{prefactor}\rvert \cdot \max\lvert P\rvert < 10^{-14}$
+  (`PAIR_SCREEN`), and groups pairs by $L_a+L_b$; `hermite_integrals` runs the
+  $R$ recursion keeping two levels of $n$ alive; `electronic_potential`
+  evaluates blocks of at most 2×10⁶ pair–point elements; `electrostatic_potential`
+  spreads point chunks over up to 12 threads. When `numba` is installed,
+  `espNumba.electronic_potential` performs the same sum in one compiled loop
+  (agreement 10⁻¹⁰ a.u.; about 5× faster: 20 000 points on benzene/6-31G(d)
+  take 0.9 s instead of 4.7 s).
+- **Validation:** against Gaussian 09 `cubegen` at 300 points 0.5–8 bohr from
+  the nuclei, the largest difference is below 4×10⁻⁷ a.u. for 5D and 6D d,
+  pure f and g, Cartesian f, SP shells and an open-shell file. Far from a
+  neutral molecule $V$ tends to $\boldsymbol{\mu}\cdot\mathbf{r}/r^3$ with the
+  fchk dipole, which is also tested.
+- **References:** McMurchie and Davidson (1978); Helgaker, Jørgensen and Olsen
+  (2000), chapter 9 (Coulomb integrals).
+
+### 6. Boys function
+
+$$
+F_n(T) = \int_0^1 u^{2n}\, e^{-T u^2}\, du
+= \frac{\gamma\!\left(n+\tfrac12,\,T\right)}{2\,T^{\,n+1/2}},
+\qquad
+F_{n-1}(T) = \frac{2T\,F_n(T) + e^{-T}}{2n-1}
+$$
+
+- **Represents:** the one-dimensional integral left after the angular
+  integration of the Coulomb operator; $\gamma$ is the lower incomplete gamma
+  function. The downward recursion is numerically stable.
+- **Where/how used:** `espIntegrals.boys` computes the highest order from
+  `scipy.special.gammainc`/`gamma` (with the series $1/(2n+1) - T/(2n+3)$ for
+  $T < 10^{-10}$) and recurses downward. `espNumba._boys_into` uses the power
+  series $F_n(T) = e^{-T}\sum_k (2T)^k / [(2n+1)(2n+3)\cdots(2n+2k+1)]$ for
+  $T < 60$ and the asymptotic form $F_n(T) \approx \frac{(2n-1)!!}{2^{n+1}}\sqrt{\pi/T^{2n+1}}$
+  above (at $T = 30$ the asymptotic $F_8$ is still 10⁻⁶ off, hence the limit of
+  60). Both agree with numerical quadrature to 10⁻¹⁰ relative and with each
+  other to 10⁻¹⁴.
+- **References:** S. F. Boys, *Proc. R. Soc. Lond. A* **200**, 542–554 (1950);
+  Helgaker, Jørgensen and Olsen (2000), chapter 9.
+
+### 7. The molecular surface and its grid
+
+$$
+S(\rho_\text{iso}) = \{\, \mathbf{r} : \rho(\mathbf{r}) = \rho_\text{iso} \,\}
+$$
+
+- **Represents:** the molecular surface as an electron-density contour. The
+  isovalue is a convention, not a physical constant: 0.001 a.u. is the
+  classic van der Waals surface of Bader et al., 0.002 a.u. is also common,
+  and 0.0004 a.u. (this tool's default) is GaussView's. Lower isovalues give
+  larger surfaces further from the nuclei, where $\lvert V\rvert$ is smaller
+  (ethylene: minimum −0.0258 a.u. at 0.001, −0.0210 a.u. at 0.0004). Compare
+  ESP values only between surfaces of the same isovalue.
+- **Where/how used:** $\rho$ is evaluated on a cubic grid of spacing $h$
+  (`grid_points`). `grid_box` starts from the atoms ± 1.7 van der Waals
+  radii (Multiwfn's choice; Bondi/Mantina radii in `help.AtomicData.vdw_radii`,
+  2.0 Å when missing) and pushes any face whose largest density is still
+  $\ge \rho_\text{iso}/10$ out by 1 bohr, up to 30 rounds — necessary because
+  Multiwfn's 1.7 factor is sized for 0.001 a.u. and is too small for 0.0004.
+  Several isovalues share one grid, sized for the smallest.
+- **References:** R. F. W. Bader, M. T. Carroll, J. R. Cheeseman and C. Chang,
+  "Properties of atoms in molecules: atomic volumes", *J. Am. Chem. Soc.*
+  **109**, 7968–7979 (1987); A. Bondi, *J. Phys. Chem.* **68**, 441 (1964);
+  M. Mantina et al., *J. Phys. Chem. A* **113**, 5806 (2009).
+
+### 8. Isosurface triangulation (marching tetrahedra)
+
+Each grid cube is split into six tetrahedra sharing the main diagonal; a grid
+point is *inside* when $\rho \ge \rho_\text{iso}$. In a tetrahedron with one or
+three inside corners the surface is one triangle, with two it is two
+triangles. On every cut edge from an inside point $\mathbf{r}_a$ to an outside
+point $\mathbf{r}_b$ the bracket is first halved three times using the
+**exact** density, then the vertex is placed by linear interpolation:
+
+$$
+\mathbf{r}_\text{v} = \mathbf{r}_a + \frac{\rho_a - \rho_\text{iso}}{\rho_a - \rho_b}\,(\mathbf{r}_b - \mathbf{r}_a)
+$$
+
+- **Represents:** a closed triangulated approximation of $S(\rho_\text{iso})$.
+  After the bisections the vertices lie on the isosurface to
+  $\lvert\rho - \rho_\text{iso}\rvert \approx 10^{-6}$ a.u. (ethylene).
+- **Where/how used:** `marching_tetrahedra`. Vertices are identified by the
+  grid edge they lie on, so neighbouring triangles share vertices and the mesh
+  is connected — which the extremum test needs. Triangles are oriented so their
+  normals point outward, along $-\nabla\rho$ (central differences, step
+  10⁻³ bohr; `density_outward`, `orient_triangles`).
+- **References:** A. Doi and A. Koide, "An efficient method of triangulating
+  equi-valued surfaces by using tetrahedral cells", *IEICE Trans.* **E74**,
+  214–224 (1991); T. Lu and F. Chen, *J. Mol. Graph. Model.* **38**, 314–323
+  (2012).
+
+### 9. Vertex merging and elimination; surface topology
+
+Two edge-connected vertices closer than half a grid spacing are merged into
+their midpoint,
+
+$$
+\lvert \mathbf{r}_i - \mathbf{r}_j \rvert < 0.5\,h
+\;\Rightarrow\;
+\mathbf{r}_i \leftarrow \tfrac12(\mathbf{r}_i + \mathbf{r}_j),
+$$
+
+after which vertices with exactly two neighbours, then those with exactly
+three (their hole is re-capped by one triangle), are removed. Each closed
+surface component must then satisfy Euler's relation
+
+$$
+\chi = V - E + F = 2 .
+$$
+
+- **Represents:** Multiwfn's clean-up of the uneven marching-tetrahedra mesh:
+  it removes the very short edges and sparse vertices that would otherwise
+  create spurious surface extrema. On ethylene it removes 71 % of the
+  vertices, leaving a mean edge length of 0.248 bohr at $h = 0.25$ bohr.
+- **Where/how used:** `eliminate_redundant_vertices` (sequential, in vertex
+  order, exactly as Multiwfn; no minimum spacing is guaranteed afterwards,
+  because each merge moves the survivor). `SurfaceMesh.component_euler_characteristics`
+  checks every component; a value other than 2 adds a `NOTE:` to the results
+  suggesting a smaller grid spacing. The surface area is
+  $A = \sum_\triangle \tfrac12\lvert(\mathbf{b}-\mathbf{a})\times(\mathbf{c}-\mathbf{a})\rvert$
+  (`SurfaceMesh.area`); vertex normals for shading are the normalised sum of the
+  incident triangle normals (`vertex_normals`).
+- **References:** Lu and Chen (2012), and Multiwfn `surfana.f90`.
+
+### 10. Surface extrema
+
+Let $\mathcal{N}_1(i)$ be the vertices joined to vertex $i$ by an edge and
+$\mathcal{N}_2(i) = \bigl(\bigcup_{j\in\mathcal{N}_1(i)}\mathcal{N}_1(j)\bigr)\setminus\{i\}$
+its second ring. With $V_i = V(\mathbf{r}_i)$:
+
+$$
+i \text{ is a local minimum} \iff V_i < V_k \;\; \forall\, k \in \mathcal{N}_1(i)\cup\mathcal{N}_2(i),
+\qquad
+i \text{ is a local maximum} \iff V_i > V_k \;\; \forall\, k \in \mathcal{N}_1(i)\cup\mathcal{N}_2(i)
+$$
+
+$$
+i_\text{global min} = \arg\min_i V_i, \qquad i_\text{global max} = \arg\max_i V_i
+$$
+
+- **Represents:** Multiwfn's definition of surface extrema, copied without
+  change. The inequality is **strict**, so equal values (a plateau) give no
+  extremum, and requiring the second ring as well as the first suppresses
+  shallow ripples one edge wide. Two extrema of the same kind are therefore
+  always at least three edges apart (about 0.4 Å at the default spacing,
+  where the mean edge is 0.248 bohr). There
+  is **no** value tolerance and **no** automatic merging of nearby extrema; the
+  position reported is the vertex position, not an interpolated one. The
+  global extremum is always reported, as `global`, even when a tie keeps it out
+  of the strict local test.
+- **Where/how used:** `molecularSurface.find_surface_extrema` builds the
+  $\mathcal{N}_1\cup\mathcal{N}_2$ pattern as a sparse matrix (`second_ring`) and
+  compares each vertex with the row minimum/maximum. The nearest atom is the
+  nucleus closest to the extremum.
+- **References:** Lu and Chen (2012); T. Lu and F. Chen, "Multiwfn: A
+  multifunctional wavefunction analyzer", *J. Comput. Chem.* **33**, 580–592
+  (2012), and Multiwfn `surfana.f90`.
+
+### 11. Colour mapping
+
+$$
+R = \max_i \lvert V_i\rvert,
+\qquad
+f_i = \operatorname{clip}\!\left(\frac{V_i + R}{2R},\,0,\,1\right),
+\qquad
+\text{hue}_i = 240^\circ \times f_i
+$$
+
+- **Represents:** GaussView's default appearance: a symmetric range about
+  zero, red ($V=-R$) → yellow → green ($V=0$) → cyan → blue ($V=+R$), at full
+  saturation and brightness. Because $R$ comes from the surface shown, the same
+  colour means different potentials on different molecules or isovalues; read
+  the bar labels.
+- **Where/how used:** `espViewer.symmetric_range`, `esp_colours`, `hue_colours`;
+  labels by `gaussview_label` (`-2.097e-2` style), converted to kcal/mol on
+  request.
+
+### 12. Units and conversion factors
+
+| Quantity | Internal unit | Reported as | Factor |
+|---|---|---|---|
+| Length | bohr ($a_0$) | Å | $1\,a_0 = 0.529177210544$ Å (CODATA 2022; `coordinateConverter.BOHR_RADIUS_ANGSTROM`) |
+| Electron density | e/bohr³ | e/bohr³ (a.u.) | $1$ e/bohr³ $= 6.7483$ e/Å³; 0.0004 a.u. = 0.0027 e/Å³ |
+| Potential | Hartree/e | a.u. and kcal/mol | $1\,E_h = 627.5094740631$ kcal/mol (CODATA 2018 $E_h\,N_A/4184$ J kcal⁻¹; `HARTREE_TO_KCAL_MOL`) |
+| Area | bohr² | Å² | $a_0^2 = 0.280028520$ Å² |
+
+Multiwfn prints kcal/mol with the rounded factor 627.51 (relative difference
+8×10⁻⁷, invisible at the printed precision). 1 a.u. of potential is also
+27.211 V, which is not reported.
+
 ## Troubleshooting
 
 ### "No file was selected!"
@@ -3053,6 +3583,24 @@ The viewer depends on OpenGL and GLFW. Work through these in order:
 
 If the window still does not open, the failure reason is reported in a dialog
 and in the status line at the bottom of the Molecular Viewer window.
+
+### ESP tool messages
+
+Errors from the Electrostatic Surface Potential tool appear in a dialog; notes
+appear as `NOTE:` lines at the end of the results summary.
+
+| Message | Cause | What to do |
+|---|---|---|
+| `… is missing fchk section(s): …` | The file is not a complete formatted checkpoint (or is a `.log`/`.chk`). | Re-create it with `formchk name.chk name.fchk`. |
+| `Section '…' declares N values but holds M; the file looks truncated.` | The `.fchk` was cut short (copy or disk problem). | Re-run `formchk`. |
+| `basis functions with l = 5 are not supported (highest supported is g, l = 4).` | The basis contains h (or higher) functions. | Use a basis set without h functions. |
+| `Isovalue … is outside (0, 1) a.u. It is an electron-density value …` | An ESP-like or negative number was typed as isovalue. | Type a density value, e.g. `0.0004` or `0.001`. |
+| `No isosurface at rho = … a.u. inside the grid.` | The isovalue is larger than the density anywhere on the grid. | Use a smaller isovalue. |
+| `Could not enclose the isosurface: density stays above … on the grid boundary.` | The isovalue is so small that the surface keeps growing (very diffuse basis, anions). | Use a larger isovalue. |
+| `NOTE: rho = …: surface components with V+F-E = [...] (2 expected …)` | A surface component is not a closed sphere-like surface — usually a grid too coarse for a thin neck between fragments. | Repeat with a smaller grid spacing (e.g. 0.15). |
+| `NOTE: cubegen was not found; …` / `NOTE: cubegen failed: …` | The cubegen engine was chosen but cubegen is missing, or it failed on this file (for example a file written by a newer Gaussian than the cubegen). | Nothing required: the built-in engine was used. Fix the cubegen path to use cubegen. |
+| `Could not write …` | The output folder is read-only or missing. | Choose another output folder. |
+| `The 3D viewer could not be opened` | OpenGL/GLFW problem, as for the 3D molecular viewer. | See [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view). |
 
 ### Packaged Windows executable cannot find GLFW
 

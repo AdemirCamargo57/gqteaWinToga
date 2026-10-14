@@ -22,6 +22,8 @@
 #     toga-winforms 0.5.3      numpy 2.4.2         scipy 1.17.0
 #     matplotlib 3.10.8        glfw 2.10.0         PyOpenGL 3.1.10
 #     PyOpenGL-accelerate 3.1.10                   PyMuPDF 1.27.2.2
+# Optional, also verified: numba 0.68.0 (with llvmlite 0.50.0), which
+# accepts numpy 2.4.2 without downgrading it.
 # ======================================================================
 
 # ----------------------------------------------------------------------
@@ -37,22 +39,24 @@ toga-winforms
 # most analysis modules.
 numpy
 
-# Used by the autocorrelation FFT, the molecular pre-optimizer (L-BFGS-B)
-# and the solvent-box builders.
+# Used by the autocorrelation FFT, the molecular pre-optimizer (L-BFGS-B),
+# the solvent-box builders, and the ESP surface tool (Boys function via
+# scipy.special, sparse mesh adjacency via scipy.sparse).
 scipy
 
 # All plotting, in both the main process (Agg) and the separate
 # interactive plot-viewer process (TkAgg - see the system note below).
 matplotlib
 
-# Windowing and input for the 3D molecular viewer. The wheel bundles
-# glfw3.dll, so no separate GLFW install is needed for a pip install.
+# Windowing and input for the 3D molecular viewer and the ESP surface
+# viewer (espViewer.py, built on it). The wheel bundles glfw3.dll, so no
+# separate GLFW install is needed for a pip install.
 # (A packaged .exe build is different - see readme.md.)
 glfw
 
-# OpenGL bindings for the 3D molecular viewer. The Windows wheel bundles
-# freeglut, which the viewer's on-canvas text labels need, so freeglut
-# does not have to be installed separately either.
+# OpenGL bindings for the 3D molecular viewer and the ESP surface viewer.
+# The Windows wheel bundles freeglut, which the viewers' on-canvas text
+# labels need, so freeglut does not have to be installed separately either.
 PyOpenGL
 
 # Optional C speedups that PyOpenGL picks up automatically when present.
@@ -68,16 +72,26 @@ PyOpenGL-accelerate
 # runs without it - only in-app PDF help is lost.
 PyMuPDF
 
-# Optional. Compiles the electrostatic-potential kernel of the ESP surface
-# tool (espNumba.py), about 5x faster on benzene. Without it the tool uses
-# its numpy code path and gives the same numbers. Leave it out of packaged
-# builds unless llvmlite is bundled too.
+# ----------------------------------------------------------------------
+# Optional: faster ESP surface tool
+#
+python -m pip install numba
+#
+# Compiles the electrostatic-potential kernel (espNumba.py); espIntegrals
+# uses it automatically whenever "import numba" succeeds. Same numbers as
+# the numpy path (agreement 1e-10 a.u.), about 5x faster (benzene,
+# 20 000 surface points: 0.9 s instead of 4.7 s). The very first run
+# spends a few seconds compiling; later runs load the compiled kernel
+# from __pycache__. Installs llvmlite as a dependency. Leave it out of
+# packaged .exe builds unless llvmlite is bundled too - the tool then
+# simply runs its numpy path.
+# ----------------------------------------------------------------------
 # numba
 
 # ----------------------------------------------------------------------
 # Optional: running the test suite
 #
-#     python -m pip install pytest
+# python -m pip install pytest
 #
 # Not needed to run the application. Required only for the headless
 # tests under tests/, run from this directory with:
@@ -126,4 +140,12 @@ PyMuPDF
 #    toga-winforms runs on WinForms through pythonnet. Windows 10 and 11
 #    ship a suitable .NET Framework, so no action is normally needed;
 #    a stripped-down or Server Core installation may not.
+#
+# 4. Gaussian (optional, for the ESP surface tool only)
+#    The tool reads Gaussian formatted checkpoints (.fchk / .fch), made
+#    from a .chk with Gaussian's formchk utility - on any machine where
+#    Gaussian is installed. Gaussian is not needed to run the tool.
+#    Its "Gaussian cubegen" ESP engine additionally needs cubegen.exe
+#    (found via GAUSS_EXEDIR, PATH, C:\G09W or C:\G16W, or typed in the
+#    tool); without it the built-in exact engine is used.
 # ======================================================================
