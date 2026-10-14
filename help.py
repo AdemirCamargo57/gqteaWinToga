@@ -209,6 +209,29 @@ class AtomicData:
         "O": 2, "S": 2, "Se": 2, "Te": 2,
     }
 
+    # Van der Waals radii in Angstrom: Bondi, J. Phys. Chem. 1964, 68, 441,
+    # completed for main-group elements by Mantina et al., J. Phys. Chem. A
+    # 2009, 113, 5806. The ESP surface tool uses them only to start its grid
+    # box (atoms +/- 1.7 r_vdW, as Multiwfn does); the box then grows until
+    # the density on every face is below a tenth of the isovalue, so a rough
+    # or missing radius costs time, never accuracy. Absent elements use
+    # DEFAULT_VDW_RADIUS.
+    vdw_radii = {
+        "H": 1.20, "He": 1.40,
+        "Li": 1.82, "Be": 1.53, "B": 1.92, "C": 1.70, "N": 1.55, "O": 1.52,
+        "F": 1.47, "Ne": 1.54,
+        "Na": 2.27, "Mg": 1.73, "Al": 1.84, "Si": 2.10, "P": 1.80, "S": 1.80,
+        "Cl": 1.75, "Ar": 1.88,
+        "K": 2.75, "Ca": 2.31, "Ni": 1.63, "Cu": 1.40, "Zn": 1.39,
+        "Ga": 1.87, "Ge": 2.11, "As": 1.85, "Se": 1.90, "Br": 1.85, "Kr": 2.02,
+        "Rb": 3.03, "Sr": 2.49, "Pd": 1.63, "Ag": 1.72, "Cd": 1.58,
+        "In": 1.93, "Sn": 2.17, "Sb": 2.06, "Te": 2.06, "I": 1.98, "Xe": 2.16,
+        "Cs": 3.43, "Ba": 2.68, "Pt": 1.72, "Au": 1.66, "Hg": 1.55,
+        "Tl": 1.96, "Pb": 2.02, "Bi": 2.07, "Po": 1.97, "At": 2.02, "Rn": 2.20,
+        "Fr": 3.48, "Ra": 2.83, "U": 1.86,
+    }
+    DEFAULT_VDW_RADIUS = 2.00
+
 class Fonts:
     font_1 = {'color':  'darkred','weight': 'normal','size': 16}
     font_2 = {'color':  'darkred','weight': 'normal','size': 12}
@@ -1568,4 +1591,66 @@ a dialog reports the reason. The structure has still been transferred, so
 Editing the drawing again discards the previous optimization, so the structure
 you send is always the one you last optimized. Rotating or panning the view
 does not.
+"""
+
+    help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)
+
+Maps the molecular electrostatic potential V(r) onto an electron-density
+isosurface, shows it colour-coded in a 3D window and lists the surface
+maxima and minima - the quantitative molecular surface analysis of
+Multiwfn (Lu & Chen, J. Mol. Graph. Model. 2012, 38, 314), drawn the way
+GaussView 6 draws a mapped ESP.
+
+INPUT
+  A Gaussian formatted checkpoint, .fchk or .fch (formchk name.chk name.fchk).
+  The 'Total SCF Density' stored in it is the density used, for both the
+  surface and the potential. Open-shell files work: the total density is
+  what the ESP needs.
+
+TWO DIFFERENT QUANTITIES - do not confuse them
+  Surface definition : electron density rho(r), in a.u. (e/bohr^3). The
+                       isovalue picks WHERE the surface is. Default 0.000400
+                       (GaussView's default); 0.001 is the classic
+                       Bader van der Waals surface.
+  Mapped property    : electrostatic potential V(r), in a.u. (Hartree/e)
+                       or kcal/mol. It is evaluated ON that surface and
+                       is what the colours and the extrema report.
+
+SETUP
+  Isovalue(s)     One or several, separated by commas or spaces
+                  (e.g. 0.0004, 0.001, 0.002). Blank = 0.000400.
+  Grid spacing    Spacing of the density grid the surface is built from,
+                  in bohr. Blank = 0.25 (Multiwfn's default for the ESP).
+                  Smaller is smoother and slower.
+  ESP engine      Built-in exact: analytic integrals in this program.
+                  Gaussian cubegen: Gaussian's own program, if installed
+                  (give its path). If cubegen fails the built-in engine is
+                  used and the summary says so.
+
+HOW THE SURFACE AND THE EXTREMA ARE FOUND (Multiwfn's procedure)
+  1. rho is computed on a cubic grid that encloses the whole surface.
+  2. The isosurface is triangulated by marching tetrahedra; each surface
+     point is refined by 3 bisections of the exact density.
+  3. Surface points closer than half the grid spacing are merged, and
+     points joined to only 2 or 3 neighbours are removed.
+  4. V(r) is computed exactly at every remaining surface point.
+  5. A point is a LOCAL MINIMUM when its V is strictly lower than at every
+     neighbouring point AND every neighbour of those neighbours (two rings);
+     a LOCAL MAXIMUM likewise, strictly higher. Equal values give no
+     extremum, and nearby extrema are never merged automatically.
+     The GLOBAL minimum/maximum is the lowest/highest point of the surface.
+  Extremum positions are surface-point positions (not interpolated).
+
+OUTPUT  (next to the .fchk unless another folder is chosen)
+  <name>_ESP_extrema.txt  every extremum of every surface: rho isovalue,
+  minimum/maximum, global/local, V in a.u. and kcal/mol, x y z in Angstrom
+  and the nearest atom. 1 a.u. = 627.5094740631 kcal/mol (CODATA 2018);
+  Multiwfn prints with 627.51, a difference below 1e-6.
+
+3D WINDOW
+  Colour bar across the top, GaussView style: red = most negative,
+  green = zero, blue = most positive, over a symmetric range +/- max|V|
+  of the shown surface. Rotate with the left mouse button, zoom with the
+  wheel. Markers: cyan = minimum, orange = maximum (larger = global); the
+  number is the row in the extrema file.
 """

@@ -238,6 +238,9 @@ class MolecularViewer:
         # UI-loop pointer (set by subclass)
         self.loop = None
 
+        # GLFW window title; subclasses that reuse the viewer set their own.
+        self.window_title = "3D Molecular Viewer"
+
     # ------------------------------------------------------------------
     # State helpers
     # ------------------------------------------------------------------
@@ -435,7 +438,7 @@ class MolecularViewer:
             raise RuntimeError("GLFW initialization failed")
 
         self.window = glfw.create_window(
-            self.display[0], self.display[1], "3D Molecular Viewer", None, None
+            self.display[0], self.display[1], self.window_title, None, None
         )
         if not self.window:
             glfw.terminate()
@@ -1608,6 +1611,21 @@ class MolecularViewer:
                     label_pos, str(atom_index + 1), color=self.pick_label_color
                 )
 
+    def render_scene_extras(self):
+        """Hook: extra geometry in the molecule's own frame (Angstrom).
+
+        Called by main_loop on the render thread, inside the same matrix the
+        atoms are drawn in, after the atoms, bonds and box. No-op here;
+        espViewer.ESPSurfaceViewer draws its mapped surface from it.
+        """
+
+    def draw_screen_overlay(self):
+        """Hook: 2D overlay drawn after the scene (e.g. a colour bar).
+
+        Called on the render thread once per frame, after the axis triad.
+        No-op here.
+        """
+
     def main_loop(self):
         try:
             self.init_glfw()
@@ -1676,10 +1694,12 @@ class MolecularViewer:
                     self.render_frame(frame_data, bonds)
                     if self.show_box and not self.fast_playback_mode:
                         self.draw_box(frame_data)
+                    self.render_scene_extras()
                     glPopMatrix()
 
                 if not self.fast_playback_mode:
                     self.draw_cartesian_axes_overlay()
+                self.draw_screen_overlay()
 
                 glfw.swap_buffers(self.window)
                 glfw.poll_events()

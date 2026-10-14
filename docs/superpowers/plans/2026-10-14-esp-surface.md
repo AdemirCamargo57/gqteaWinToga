@@ -1841,7 +1841,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `AtomicData.vdw_radii` (Å), `AtomicData.DEFAULT_VDW_RADIUS = 2.00`, `HelpGqteaWin.help_esp_surface`
   - `espViewer`: `UNIT_AU`, `UNIT_KCAL`, `COLOUR_UNITS`, `hue_colours`, `symmetric_range`, `esp_colours`, `gaussview_label`, `unit_factor`, `colour_bar_text`, `SurfaceMarker(position, kind, scope, label)`, `ESPSurfaceViewer` with `set_molecule(symbols, coords_A)`, `set_surface(vertices_A, triangles, normals, values_au, isovalue, markers=(), half_range=None)`, `clear_surface()`, `set_display_options(unit=None, opacity=None, show_extrema=None)`, `get_surface()`, `colour_bar_text()`, `request_close()`
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_espViewer.py`:
+- [x] **Step 1: Write the failing tests** — `tests/test_espViewer.py`:
 
 ```python
 """Headless tests for the ESP viewer: colour maths and surface state (no GL window)."""
@@ -1914,12 +1914,12 @@ class TestViewerState:
         assert viewer.get_surface() is None and viewer.colour_bar_text() is None
 ```
 
-- [ ] **Step 2: Run them to confirm they fail**
+- [x] **Step 2: Run them to confirm they fail**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_espViewer.py -q`
 Expected: `ModuleNotFoundError: No module named 'espViewer'`.
 
-- [ ] **Step 3: Add the viewer hooks** — four edits in `molecularViewer.py`:
+- [x] **Step 3: Add the viewer hooks** — four edits in `molecularViewer.py`:
 
 (a) at the end of `MolecularViewer.__init__`, after `self.loop = None`:
 
@@ -1973,7 +1973,7 @@ Expected: `ModuleNotFoundError: No module named 'espViewer'`.
                 self.draw_screen_overlay()              # + new
 ```
 
-- [ ] **Step 4: Extend `help.py`**
+- [x] **Step 4: Extend `help.py`**
 
 (a) In `class AtomicData`, directly after the closing `}` of `max_bond_order`:
 
@@ -2068,7 +2068,7 @@ OUTPUT  (next to the .fchk unless another folder is chosen)
 """
 ```
 
-- [ ] **Step 5: Implement** — `espViewer.py`:
+- [x] **Step 5: Implement** — `espViewer.py`:
 
 ```python
 """3D window for an ESP-mapped molecular surface, GaussView 6 style.
@@ -2350,12 +2350,12 @@ class ESPSurfaceViewer(MolecularViewer):
             glMatrixMode(GL_MODELVIEW)
 ```
 
-- [ ] **Step 6: Run the new and the affected existing tests**
+- [x] **Step 6: Run the new and the affected existing tests**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_espViewer.py tests/test_molecularViewer.py tests/test_molecularDesign.py -q`
 Expected: all pass (`13` new + `149` existing = `162 passed`).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add molecularViewer.py help.py espViewer.py tests/test_espViewer.py
