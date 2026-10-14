@@ -883,6 +883,162 @@ def test_an_edit_made_while_optimizing_discards_the_stale_result(monkeypatch):
 
 
 # ------------------------------------------------------------------
+# Saving the displayed structure
+# ------------------------------------------------------------------
+class _StubDialogWindow:
+    """Answers a SaveFileDialog with ``save_path``; records every dialog."""
+
+    def __init__(self, save_path=None):
+        self.save_path = save_path
+        self.dialogs = []
+
+    async def dialog(self, dialog):
+        self.dialogs.append(dialog)
+        if dialog.__class__.__name__ == "SaveFileDialog":
+            return self.save_path
+        return None
+
+
+def _parse_xyz(text):
+    lines = text.splitlines()
+    count = int(lines[0])
+    atoms = [line.split() for line in lines[2:2 + count]]
+    elements = [atom[0] for atom in atoms]
+    coordinates = np.array([[float(value) for value in atom[1:4]] for atom in atoms])
+    return count, lines[1], elements, coordinates
+
+
+def test_the_frame_is_exported_as_elements_and_angstrom_coordinates():
+    controller = _controller()
+    controller.select_element("O")
+    _click(controller, 100.0, 100.0)
+    controller.select_element("C")
+    _click(controller, 200.0, 100.0)  # 100 px = 2.5 A to the right
+
+    count, comment, elements, coordinates = _parse_xyz(controller.frame_xyz_text())
+
+    assert count == 2
+    assert "Angstrom" in comment
+    assert elements == ["O", "C"]
+    assert np.allclose(coordinates, [[-1.25, 0.0, 0.0], [1.25, 0.0, 0.0]])
+
+
+def test_the_exported_frame_keeps_the_drawing_handedness():
+    controller = _controller()
+    # The second atom is one Angstrom down the screen and one away from the viewer.
+    _click(controller, 100.0, 100.0)
+    _click(controller, 100.0, 140.0)
+    controller.sketch.update_positions([[100.0, 100.0, 0.0], [100.0, 140.0, 40.0]])
+
+    _, _, _, coordinates = _parse_xyz(controller.frame_xyz_text())
+
+    # Same axes as the pre-optimizer: y up and z towards the viewer.
+    assert coordinates[1, 1] - coordinates[0, 1] == pytest.approx(-1.0)
+    assert coordinates[1, 2] - coordinates[0, 2] == pytest.approx(-1.0)
+
+
+def test_the_exported_frame_is_the_optimized_geometry_after_pre_optimizing():
+    controller = _controller()
+    _two_bonded_carbons(controller)  # drawn 2.5 A apart
+
+    asyncio.run(controller.pre_optimize(None))
+    _, comment, _, coordinates = _parse_xyz(controller.frame_xyz_text())
+
+    assert "pre-optimized" in comment
+    assert np.linalg.norm(coordinates[1] - coordinates[0]) == pytest.approx(
+        reference_bond_length("C", "C"), rel=0.02
+    )
+    assert np.allclose(coordinates, controller.last_result.coordinates, atol=1e-6)
+
+
+def test_the_exported_frame_ignores_the_view_rotation():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    before = controller.frame_xyz_text()
+
+    _right_drag(controller, 100.0, 300.0, 300.0, 200.0)
+
+    assert controller.frame_xyz_text() == before
+
+
+def test_writing_the_frame_creates_an_xyz_file(tmp_path):
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    output = tmp_path / "frame.xyz"
+
+    saved, message = controller.write_frame(str(output))
+
+    assert saved
+    assert str(output) in message
+    assert output.read_text(encoding="utf-8") == controller.frame_xyz_text()
+
+
+def test_writing_an_empty_canvas_is_refused(tmp_path):
+    controller = _controller()
+    output = tmp_path / "frame.xyz"
+
+    saved, message = controller.write_frame(str(output))
+
+    assert not saved
+    assert "Draw a structure" in message
+    assert not output.exists()
+
+
+def test_a_write_failure_is_reported_not_raised(tmp_path):
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    saved, message = controller.write_frame(str(tmp_path / "missing" / "frame.xyz"))
+
+    assert not saved
+    assert "could not be saved" in message
+
+
+def test_saving_is_not_an_edit(tmp_path):
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.apply_optimization_result(_write_back_result([[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]]))
+    undo_depth = len(controller.undo_stack)
+
+    controller.write_frame(str(tmp_path / "frame.xyz"))
+
+    assert controller.last_result is not None
+    assert len(controller.undo_stack) == undo_depth
+
+
+def test_the_save_frame_button_writes_the_chosen_file(tmp_path):
+    viewer = _StubViewer()
+    output = tmp_path / "chosen.xyz"
+    viewer.main_window = _StubDialogWindow(save_path=output)
+    controller = _controller(viewer=viewer)
+    _two_bonded_carbons(controller)
+
+    assert asyncio.run(controller.save_frame(None)) is True
+
+    assert output.read_text(encoding="utf-8") == controller.frame_xyz_text()
+    assert "saved" in controller.status_message
+
+
+def test_cancelling_the_save_dialog_writes_nothing(tmp_path):
+    viewer = _StubViewer()
+    viewer.main_window = _StubDialogWindow(save_path=None)
+    controller = _controller(viewer=viewer)
+    _two_bonded_carbons(controller)
+
+    assert asyncio.run(controller.save_frame(None)) is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_saving_an_empty_canvas_never_opens_the_file_dialog():
+    viewer = _StubViewer()
+    viewer.main_window = _StubDialogWindow(save_path="unused.xyz")
+    controller = _controller(viewer=viewer)
+
+    assert asyncio.run(controller.save_frame(None)) is False
+    assert [type(d).__name__ for d in viewer.main_window.dialogs] == ["ErrorDialog"]
+
+
+# ------------------------------------------------------------------
 # Drawing helpers
 # ------------------------------------------------------------------
 def test_drawing_order_paints_back_to_front():
