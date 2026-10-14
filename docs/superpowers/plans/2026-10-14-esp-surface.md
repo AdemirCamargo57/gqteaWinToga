@@ -3379,17 +3379,17 @@ numba is accepted as an **optional** dependency (spec D6). Measured on benzene B
 - Consumes: `espIntegrals.hermite_indices`, `HermiteBatch` objects.
 - Produces: `espNumba.electronic_potential(batches, points)`, `espNumba._boys_into(n_max, t, out)`, `espNumba.BOYS_SERIES_LIMIT = 60.0`. `espIntegrals` picks it up automatically through its guarded import.
 
-- [ ] **Step 1: Install numba into the venv** (numba 0.68.0 accepts numpy 2.4.2 — verified with `pip install --dry-run`, no downgrade)
+- [x] **Step 1: Install numba into the venv** (numba 0.68.0 accepts numpy 2.4.2 — verified with `pip install --dry-run`, no downgrade)
 
 Run: `..\Scripts\python.exe -m pip install numba==0.68.0`
 Expected: installs `numba-0.68.0` and `llvmlite-0.50.0`; numpy stays 2.4.2 (`..\Scripts\python.exe -c "import numpy; print(numpy.__version__)"` → `2.4.2`).
 
-- [ ] **Step 2: Run the numba tests to confirm they fail for the right reason**
+- [x] **Step 2: Run the numba tests to confirm they fail for the right reason**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_espIntegrals.py -q`
 Expected: `TestNumba` still **skipped** (8) because `espNumba` does not exist yet — `ei.numba_available()` is False.
 
-- [ ] **Step 3: Implement** — `espNumba.py`:
+- [x] **Step 3: Implement** — `espNumba.py`:
 
 ```python
 """Optional numba kernel for the electronic ESP (imported by espIntegrals).
@@ -3535,12 +3535,12 @@ def electronic_potential(batches, points: np.ndarray) -> np.ndarray:
     return out
 ```
 
-- [ ] **Step 4: Run the tests (first run compiles, ~10 s)**
+- [x] **Step 4: Run the tests (first run compiles, ~10 s)**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_espIntegrals.py tests/test_electrostaticSurfacePotential.py -q`
 Expected: `33 passed` for test_espIntegrals.py (no skips) and `25 passed` for test_electrostaticSurfacePotential.py.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add espNumba.py
