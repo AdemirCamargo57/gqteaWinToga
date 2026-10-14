@@ -8,6 +8,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The git repository lives in `venv/src/` (this directory), which is nested inside a Python `venv` created against Python 3.13. Run all commands from `venv/src/`.
 
+## In-progress work: ESP surface tool
+
+Resume here when continuing the electrostatic surface potential (ESP) feature — the `electrostaticSurfacePotential.py` tool on the **Tools** tab (Gaussian `.fchk`/`.fch` → electron-density isosurfaces → exact ESP → Multiwfn-style extrema → GaussView-style 3D view).
+
+- Branch: `feature/esp-surface`.
+- Plan: [docs/superpowers/plans/2026-10-14-esp-surface.md](docs/superpowers/plans/2026-10-14-esp-surface.md) — the **single source of truth** for code, tests, expected test counts and commit messages. Its `- [x]` / `- [ ]` checkboxes are the progress marker: resume at the first unticked step, and tick each step in the same commit that completes it.
+- Design and its reasons: [docs/superpowers/specs/2026-10-14-esp-surface-design.md](docs/superpowers/specs/2026-10-14-esp-surface-design.md) — §0 user decisions, §2 Multiwfn rules, §3 GaussView conventions, §11 measured spike results.
+- The plan's `$SCRATCH` folder belonged to one session and may be gone; the code reproduced in the plan is authoritative, and Task 1 explains how to rebuild the fixtures with `C:\G09W` (Gaussian 09W: `g09.exe`, `formchk.exe`, `cubegen.exe`).
+- Reference data: the user's file `C:\AJCamargo\QCMM_2sem_2026\2026_10_08\Eteno.fch` and its GaussView 6.1 screenshot `Eteno_ESP.png` (use the PNG, never the TIF).
+- Four test failures predate this work (`test_meanResidenceTime.py` imports the renamed `meanResidenceTime` module; three table-style tests in `test_plotter.py`); they are out of scope here.
+- When the plan is finished (Task 7 adds the permanent ESP bullet under *Tool-specific notes*), delete this section.
+
 ## Running & Development
 
 There is no build step or linter configured — this is a plain Python source tree launched directly.
