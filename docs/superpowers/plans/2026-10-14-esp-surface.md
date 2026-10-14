@@ -339,7 +339,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `electron_density(wfn, points (N,3) bohr, chunk=20000) -> (N,)`
   - `cartesian_components(l)`, `component_angular_norm(powers)`, `primitive_norm(alpha, l)`, `pure_to_cartesian(l)`, `read_fchk_sections(text)`, `DENSITY_SECTION = "Total SCF Density"`
 
-- [ ] **Step 1: Write the fixture helper** — `tests/esp_fixtures.py`:
+- [x] **Step 1: Write the fixture helper** — `tests/esp_fixtures.py`:
 
 ```python
 """Shared paths and loaders for the ESP test fixtures (not a test module)."""
@@ -374,7 +374,7 @@ def load_reference(name: str):
     return data[:, :3] / BOHR_RADIUS_ANGSTROM, data[:, 3], data[:, 4]
 ```
 
-- [ ] **Step 2: Write the failing tests** — `tests/test_gaussianWavefunction.py`:
+- [x] **Step 2: Write the failing tests** — `tests/test_gaussianWavefunction.py`:
 
 ```python
 """Tests for the fchk reader, basis expansion and electron density."""
@@ -481,12 +481,12 @@ class TestDensity:
         assert np.allclose(gw.electron_density(w, points, chunk=7), gw.electron_density(w, points))
 ```
 
-- [ ] **Step 3: Run them to confirm they fail**
+- [x] **Step 3: Run them to confirm they fail**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_gaussianWavefunction.py -q`
 Expected: collection error `ModuleNotFoundError: No module named 'gaussianWavefunction'`.
 
-- [ ] **Step 4: Implement** — `gaussianWavefunction.py`:
+- [x] **Step 4: Implement** — `gaussianWavefunction.py`:
 
 ```python
 """Gaussian formatted checkpoint (.fchk / .fch) reader, basis set and density.
@@ -827,12 +827,12 @@ def electron_density(wfn: FchkWavefunction, points: np.ndarray, chunk: int = 200
     return rho
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_gaussianWavefunction.py -q`
 Expected: `20 passed`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add gaussianWavefunction.py tests/esp_fixtures.py tests/test_gaussianWavefunction.py
