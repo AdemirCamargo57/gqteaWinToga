@@ -57,7 +57,7 @@
 
 What each fixture exercises: `eteno_b3lyp_631g` = the user's `C:\AJCamargo\QCMM_2sem_2026\2026_10_08\Eteno.fch` (RB3LYP/6-31G, SP shells); `water_631gd_6d` Cartesian d; `water_631gd_5d` pure d; `water_ccpvtz` pure f; `water_ccpvqz` pure g; `h2co_6311g2df_10f` Cartesian f (fch f order); `ch3_ub3lyp_631gd` open shell; `benzene_631gd` only for a manual timing check. Total ≈ 1 MB.
 
-- [ ] **Step 1: Copy the fixtures**
+- [x] **Step 1: Copy the fixtures**
 
 ```bash
 SCRATCH="/c/Users/ajc/AppData/Local/Temp/claude/c--AJCamargo-gqteaWinToga-venv-src/d12a792d-4775-412e-89f0-20172e75b918/scratchpad/final"
@@ -214,7 +214,7 @@ H  0.000000 -0.757200 -0.469200
 ```
 
 
-- [ ] **Step 2: Create the reference generator** — `tests/data/esp_reference/make_reference.py` (already copied; this is its content):
+- [x] **Step 2: Create the reference generator** — `tests/data/esp_reference/make_reference.py` (already copied; this is its content):
 
 ```python
 """Regenerate the cubegen reference values used by the ESP tests.
@@ -303,12 +303,12 @@ if __name__ == "__main__":
     main(sys.argv[1] if len(sys.argv) > 1 else r"C:\G09W\cubegen.exe")
 ```
 
-- [ ] **Step 3: Check the reference data regenerates identically** (only possible with Gaussian installed; skip otherwise)
+- [x] **Step 3: Check the reference data regenerates identically** (only possible with Gaussian installed; skip otherwise)
 
 Run: `..\Scripts\python.exe tests/data/esp_reference/make_reference.py C:\G09W\cubegen.exe` then `git status --short tests/data/esp_reference`
 Expected: 8 `wrote …txt` lines; files byte-identical to the copied ones (git shows them only as untracked, no diff after a second run).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/data/fchk tests/data/esp_reference
