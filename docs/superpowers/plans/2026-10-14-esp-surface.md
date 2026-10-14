@@ -862,7 +862,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `HARTREE_TO_KCAL_MOL = 627.5094740631`
   - module attribute `espNumba` (None until Task 8 adds `espNumba.py`)
 
-- [ ] **Step 1: Write the failing tests** — `tests/test_espIntegrals.py` (the `TestNumba` class is skipped until Task 8):
+- [x] **Step 1: Write the failing tests** — `tests/test_espIntegrals.py` (the `TestNumba` class is skipped until Task 8):
 
 ```python
 """Tests for the exact ESP integrals."""
@@ -966,12 +966,12 @@ def test_forcing_numba_without_it_is_an_error(monkeypatch):
         ei.electrostatic_potential(w, np.zeros((1, 3)) + 5.0, use_numba=True)
 ```
 
-- [ ] **Step 2: Run them to confirm they fail**
+- [x] **Step 2: Run them to confirm they fail**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_espIntegrals.py -q`
 Expected: `ModuleNotFoundError: No module named 'espIntegrals'`.
 
-- [ ] **Step 3: Implement** — `espIntegrals.py`:
+- [x] **Step 3: Implement** — `espIntegrals.py`:
 
 ```python
 """Exact molecular electrostatic potential of a Gaussian-basis wavefunction.
@@ -1253,12 +1253,12 @@ def overlap_matrix(wfn: FchkWavefunction) -> np.ndarray:
 HARTREE_TO_KCAL_MOL = 627.5094740631
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `..\Scripts\python.exe -m pytest tests/test_espIntegrals.py -q`
 Expected: `25 passed, 8 skipped` (the skips are `TestNumba`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add espIntegrals.py tests/test_espIntegrals.py
