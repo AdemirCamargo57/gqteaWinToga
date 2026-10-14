@@ -41,7 +41,7 @@
 | `electrostaticSurfacePotential.py` | replace stub | `ESPSurfaceAnalyser`, cubegen engine, extrema file, `ElectrostaticSurfacePotentialUI` |
 | `espNumba.py` | create (optional task) | compiled ESP kernel |
 | `USER_MANUAL.md`, `readme.md`, `CLAUDE.md`, `installation_requirements.txt` | modify | documentation |
-| `gqteaWinToga.py` | **unchanged** | already imports and registers `ElectrostaticSurfacePotentialUI` |
+| `gqteaWinToga.py` | commit user's edit | already imports and registers `ElectrostaticSurfacePotentialUI` (uncommitted user change; committed in Task 6) |
 
 ---
 
@@ -2374,7 +2374,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `tests/test_electrostaticSurfacePotential.py`
-- Replace: `electrostaticSurfacePotential.py` (currently a 5-line stub; `gqteaWinToga.py` already imports `ElectrostaticSurfacePotentialUI` and lists it on the Tools tab — no change there)
+- Replace: `electrostaticSurfacePotential.py` (currently a 5-line stub, **untracked** in git)
+- Commit as-is: `gqteaWinToga.py` — the user's own uncommitted edit (2 lines: the import and the `("Electrostatic Surface Potential (ESP)", ElectrostaticSurfacePotentialUI)` entry in `general_tools`). Do not change it; just include it in this task's commit so the tool is reachable from the committed branch.
 
 **Interfaces:**
 - Consumes: everything produced by Tasks 2–5; `coordinateConverter.BOHR_RADIUS_ANGSTROM`.
@@ -3234,7 +3235,7 @@ Expected: only the 4 pre-existing failures listed in Global Constraints; every n
 - [ ] **Step 6: Commit**
 
 ```bash
-git add electrostaticSurfacePotential.py tests/test_electrostaticSurfacePotential.py
+git add electrostaticSurfacePotential.py gqteaWinToga.py tests/test_electrostaticSurfacePotential.py
 git commit -m "Implement the ESP surface tool: analyser, extrema file and UI
 
 Replaces the stub. Runs fchk -> density grid -> isosurfaces -> exact or
