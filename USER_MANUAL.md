@@ -65,7 +65,6 @@
     - [Convert cp.x .pos File to trajec.xyz](#convert-cpx-pos-file-to-trajecxyz)
     - [Compute Forces from cp.x .for File](#compute-forces-from-cpx-for-file)
     - [Coordinate Converter](#coordinate-converter)
-    - [Convert Coordinates from Angstrom to Bohr](#convert-coordinates-from-angstrom-to-bohr)
     - [Unit Converter](#unit-converter)
 - [Configuration](#configuration)
 - [Practical Examples](#practical-examples)
@@ -1815,30 +1814,29 @@ Click **Convert** to generate the converted force output.
 
 #### Coordinate Converter
 
-Use **Tools > Coordinate converter** to convert between molecular coordinate file formats.
+Use **Tools > Coordinate converter** to convert between molecular coordinate file formats and, in the same step, between Cartesian coordinates in **Angstrom (Å)** and **bohr** (atomic units of length), in either direction.
 
 Controls:
 
-- Input format selection.
-- Output format selection.
+- Input format selection, with its **Unit** (Angstrom or Bohr).
+- Output format selection, with its **Unit** (Angstrom or Bohr).
 - Browse for input file.
 - Choose output file.
 - **Convert**.
 
-Supported formats are determined by the converter UI and parser implementation. The converter writes a new file rather than modifying the original.
+Supported formats: XYZ, PDB, ENT, MOL, MOL2, Gaussian (`.gjf`/`.com`/`.gau`) and HIN. The converter writes a new file rather than modifying the original, and refuses an output path equal to the input path.
 
-#### Convert Coordinates from Angstrom to Bohr
+Angstrom ↔ bohr conversion:
 
-Use **Tools > Convert coordinates from A to Bohr** to convert XYZ coordinates from Angstrom to Bohr.
+- The factor is the CODATA 2022 Bohr radius, **1 bohr = 0.529177210544 Å** (1 Å ≈ 1.8897261259 bohr). Each coordinate is divided (Å → bohr) or multiplied (bohr → Å) by this value in double precision.
+- The output format can equal the input format, so **XYZ (Angstrom) → XYZ (Bohr)** is a pure unit conversion (this replaces the former *Convert coordinates from Å to Bohr* tool). Choosing the same format *and* the same unit is rejected, since there would be nothing to convert.
+- XYZ files do not record their unit, so set the input **Unit** to match your file. Converted XYZ files state it on the comment line, e.g. `Converted file (coordinates in bohr)`.
+- Gaussian inputs declare their unit in the route section. When the output unit is Bohr the converter writes `Units=Bohr` on the route line, and when a Gaussian input containing `Units=AU` or `Units=Bohr` is loaded, the input unit is set to Bohr automatically.
+- PDB, ENT, MOL, MOL2 and HIN are defined in Angstrom by their specifications, so their **Unit** selector is locked to Angstrom. To get one of these from a bohr file, select XYZ (or Gaussian) with Unit = Bohr as input and the Angstrom format as output.
+- Precision: XYZ, Gaussian and HIN coordinates are written with 10 decimal places, so a file with up to 8 decimals converts Å → bohr → Å (or bohr → Å → bohr) back to its original digits. PDB keeps 3 decimals and MOL/MOL2 keep 4, as their fixed-column formats require.
+- When the units change, the default output name gains the unit, e.g. `2criegee.xyz` → `2criegee_converted_bohr.xyz`.
 
-Inputs:
-
-- Input XYZ file.
-- Output filename.
-
-Action:
-
-- **Convert**.
+Example (`2criegee.xyz`, first atom): `C 1.99447596 0.39215795 -0.00041257` (Å) becomes `C 3.7690133291 0.7410711236 -0.0007796443` (bohr).
 
 #### Unit Converter
 

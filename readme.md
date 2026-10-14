@@ -59,8 +59,7 @@ distributions.
 - Surface hopping geometry analyzer
 - `*.pos` to `trajec.xyz` conversion
 - Force conversion from Quantum ESPRESSO `cp.x` `*.for` files
-- Coordinate conversion
-- XYZ Angstrom-to-Bohr conversion
+- Coordinate conversion (file formats, and Angstrom ↔ Bohr)
 - Unit conversion
 
 ## Repository Layout

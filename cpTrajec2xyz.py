@@ -29,15 +29,15 @@ class TrajectoryConverter:
             The selected file path or None if no file was selected.
         """
         try:
-            file_path = await self.main_window.open_file_dialog(title=title)
+            file_path = await self.main_window.dialog(toga.OpenFileDialog(title=title))
             if file_path:
-                target_input.value = file_path  # Update the UI with the selected file path
-                return file_path
+                target_input.value = str(file_path)  # Update the UI with the selected file path
+                return str(file_path)
             else:
-                await self.main_window.info_dialog("Warning", "No file was selected!")
+                await self.main_window.dialog(toga.InfoDialog("Warning", "No file was selected!"))
                 return None
         except Exception as e:
-            await self.main_window.error_dialog("Error", f"Failed to open file: {e}")
+            await self.main_window.dialog(toga.ErrorDialog("Error", f"Failed to open file: {e}"))
             return None
 
     async def select_cp_input_file(self, widget):
@@ -130,7 +130,7 @@ class TrajectoryConverter:
                     # Write the atomic label and its coordinates
                     f_out.write(f"{self.atom_labels[i]}  {x:>14.7f}  {y:>14.7f}  {z:>14.7}\n")
 
-    def perform_conversion(self, widget):
+    async def perform_conversion(self, widget):
         """
         Convert the cp.x *.pos trajectory file to XYZ format by:
             1. Reading the cp.x input file for metadata (number of atoms and atomic labels).
@@ -147,7 +147,7 @@ class TrajectoryConverter:
             self.output_file_label.text = f"Output File: {output_file}"
         except Exception as e:
             # Display an error dialog if conversion fails
-            self.main_window.error_dialog("Conversion Error", str(e))
+            await self.main_window.dialog(toga.ErrorDialog("Conversion Error", str(e)))
 
 class CPtraj2xyzUI(TrajectoryConverter):
     """

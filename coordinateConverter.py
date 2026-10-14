@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List, Dict, Optional
 
 import toga
@@ -8,12 +9,63 @@ from toga.style.pack import COLUMN, ROW
 
 Atom = Dict[str, float]
 
+# CODATA 2022 recommended value of the Bohr radius a0 (NIST, May 2024):
+# a0 = 0.529177210544(82) Angstrom, relative standard uncertainty 1.6e-10.
+BOHR_RADIUS_ANGSTROM = 0.529177210544
+
+UNIT_ANGSTROM = "Angstrom"
+UNIT_BOHR = "Bohr"
+COORDINATE_UNITS = (UNIT_ANGSTROM, UNIT_BOHR)
+
+# Decimal places written by the free-format writers (XYZ, Gaussian, HIN).
+# Ten places keep an 8-decimal input bit-recoverable after an Angstrom -> bohr
+# -> Angstrom (or bohr -> Angstrom -> bohr) round trip.
+FREE_FORMAT_DECIMALS = 10
+
+# Matches a Gaussian route "Units=AU", "Units=Bohr", "Units(AU,Deg)", ...
+_GAUSSIAN_UNITS_RE = re.compile(r"\bunits\s*(?:=\s*\(?|\()\s*([^)\s]*)", re.IGNORECASE)
+
+
+def convert_length(value: float, from_unit: str, to_unit: str) -> float:
+    """Convert one Cartesian coordinate between Angstrom and bohr.
+
+    A single correctly-rounded division (Angstrom -> bohr) or multiplication
+    (bohr -> Angstrom) by ``BOHR_RADIUS_ANGSTROM`` is used, never a stored
+    reciprocal, so the only rounding is the one the operation itself makes.
+    Equal units return the value untouched.
+    """
+    for unit in (from_unit, to_unit):
+        if unit not in COORDINATE_UNITS:
+            raise ValueError(f"Unsupported coordinate unit: {unit}")
+    value = float(value)
+    if from_unit == to_unit:
+        return value
+    if from_unit == UNIT_ANGSTROM:
+        return value / BOHR_RADIUS_ANGSTROM
+    return value * BOHR_RADIUS_ANGSTROM
+
+
+def convert_atom_units(atoms: List[Atom], from_unit: str, to_unit: str) -> List[Atom]:
+    """Return a new atom list with x/y/z converted; the input list is not modified."""
+    converted = []
+    for atom in atoms:
+        new_atom = dict(atom)
+        for axis in ("x", "y", "z"):
+            new_atom[axis] = convert_length(atom[axis], from_unit, to_unit)
+        converted.append(new_atom)
+    return converted
+
 
 class CoordinateConverter:
     """Coordinate file converter based on a normalized atom list.
 
     Supported formats:
         XYZ, PDB, MOL, MOL2, Gaussian, ENT, HIN
+
+    Supported coordinate units:
+        Angstrom and bohr (atomic units), in both directions. PDB, ENT, MOL,
+        MOL2 and HIN fix Angstrom in their specification, so bohr is only
+        accepted on the XYZ and Gaussian side of a conversion.
 
     Notes:
         * Only atom labels and Cartesian coordinates are preserved.
@@ -44,9 +96,14 @@ class CoordinateConverter:
         "HIN": "hin",
     }
 
+    # Formats whose specification defines coordinates in Angstrom.
+    ANGSTROM_ONLY_FORMATS = ("PDB", "ENT", "MOL", "MOL2", "HIN")
+
     def __init__(self):
         self.input_format = "XYZ"
         self.output_format = "PDB"
+        self.input_unit = UNIT_ANGSTROM
+        self.output_unit = UNIT_ANGSTROM
         self.input_file = ""
         self.output_file = ""
         self.supported_formats = ["XYZ", "PDB", "MOL", "MOL2", "Gaussian", "ENT", "HIN"]
@@ -70,6 +127,12 @@ class CoordinateConverter:
         path_value = getattr(dialog_result, "path", dialog_result)
         return str(path_value)
 
+    async def _show_info(self, title: str, message: str):
+        await self.main_window.dialog(toga.InfoDialog(title, message))
+
+    async def _show_error(self, title: str, message: str):
+        await self.main_window.dialog(toga.ErrorDialog(title, message))
+
     def guess_input_format_from_filename(self, filename: str) -> Optional[str]:
         ext = os.path.splitext(filename)[1].lower()
         return self.EXTENSION_TO_FORMAT.get(ext)
@@ -79,10 +142,103 @@ class CoordinateConverter:
         guessed = self.guess_input_format_from_filename(filepath)
         if guessed and guessed in self.supported_formats:
             self.input_format = guessed
+        if self.input_format == "Gaussian":
+            # Gaussian declares its unit in the route section; XYZ declares none,
+            # so an XYZ keeps whatever unit the user selected.
+            declared = self.guess_gaussian_unit(filepath)
+            if declared:
+                self.input_unit = declared
+        if not self.unit_selectable(self.input_format):
+            self.input_unit = UNIT_ANGSTROM
+
+    def unit_selectable(self, fmt: str) -> bool:
+        """True when ``fmt`` may hold bohr coordinates (XYZ, Gaussian)."""
+        return fmt not in self.ANGSTROM_ONLY_FORMATS
+
+    @staticmethod
+    def guess_gaussian_unit(filepath: str) -> Optional[str]:
+        """Return the unit declared by a Gaussian route section, or None if unreadable.
+
+        ``Units=AU`` / ``Units=Bohr`` (also in the ``Units(AU,Deg)`` form) mean
+        bohr; a route without the keyword means Gaussian's default, Angstrom.
+        """
+        try:
+            with open(filepath, "r", encoding="utf-8") as file_handle:
+                lines = [line.strip() for line in file_handle]
+        except (OSError, UnicodeDecodeError):
+            return None
+
+        route_parts = []
+        in_route = False
+        for line in lines:
+            if line.startswith("#"):
+                in_route = True
+            if in_route:
+                if not line:
+                    break
+                route_parts.append(line)
+
+        for match in _GAUSSIAN_UNITS_RE.finditer(" ".join(route_parts)):
+            options = {option.strip().lower() for option in match.group(1).split(",")}
+            if options & {"au", "bohr"}:
+                return UNIT_BOHR
+        return UNIT_ANGSTROM
+
+    def default_output_path(self) -> str:
+        """``<input>_converted[_<unit>].<ext>``; the unit tag appears only when units change."""
+        if not self.input_file:
+            return ""
+        base, _ = os.path.splitext(self.input_file)
+        extension = self.FORMAT_TO_EXTENSION.get(self.output_format, self.output_format.lower())
+        suffix = "_converted"
+        if self.input_unit != self.output_unit:
+            suffix += f"_{self.output_unit.lower()}"
+        return f"{base}{suffix}.{extension}"
 
     def ensure_output_file(self):
         if not self.output_file:
-            self.update_output_filename()
+            self.output_file = self.default_output_path()
+
+    def validate_conversion(self):
+        """Raise ``ValueError`` describing the first problem with the current settings."""
+        if not self.input_file:
+            raise ValueError("Please select an input file.")
+        for label, unit in (("input", self.input_unit), ("output", self.output_unit)):
+            if unit not in COORDINATE_UNITS:
+                raise ValueError(f"Unsupported {label} coordinate unit: {unit}")
+        for label, fmt, unit in (
+            ("Input", self.input_format, self.input_unit),
+            ("Output", self.output_format, self.output_unit),
+        ):
+            if unit != UNIT_ANGSTROM and not self.unit_selectable(fmt):
+                raise ValueError(
+                    f"{label} format {fmt} stores coordinates in Angstrom by specification; "
+                    f"use XYZ or Gaussian for {unit} coordinates."
+                )
+        if self.input_format == self.output_format and self.input_unit == self.output_unit:
+            raise ValueError(
+                "Input and output formats and units are the same. "
+                "Please select a different format or a different unit."
+            )
+        self.ensure_output_file()
+        same_file = os.path.normcase(os.path.abspath(self.output_file)) == os.path.normcase(
+            os.path.abspath(self.input_file)
+        )
+        if same_file:
+            raise ValueError("The output file would overwrite the input file. Please choose another name.")
+
+    def convert_file(self) -> int:
+        """Read, convert units, write. Returns the number of atoms written.
+
+        Headless: touches no widget, raises ``ValueError`` on any failure.
+        """
+        self.validate_conversion()
+        atoms = self.read_atoms(self.input_format)
+        if not atoms:
+            raise ValueError("No atoms could be read from the input file.")
+        atoms = convert_atom_units(atoms, self.input_unit, self.output_unit)
+        self.write_atoms(atoms, self.output_format)
+        return len(atoms)
 
     async def select_input_file(self, widget):
         """Open a file dialog to select the input file."""
@@ -92,7 +248,7 @@ class CoordinateConverter:
             input_file = self._normalize_dialog_result(selected)
 
             if not input_file:
-                await self.main_window.info_dialog("Warning", "No file was selected.")
+                await self._show_info("Warning", "No file was selected.")
                 return
 
             self.set_input_file(input_file)
@@ -101,12 +257,12 @@ class CoordinateConverter:
             self.update_output_options()
             self.update_output_filename()
         except Exception as exc:
-            await self.main_window.error_dialog("Error", f"Failed to open file: {exc}")
+            await self._show_error("Error", f"Failed to open file: {exc}")
 
     async def select_output_file(self, widget):
         """Allow the user to override the automatically generated output filename."""
         if not self.input_file:
-            await self.main_window.error_dialog("Error", "Please select an input file first.")
+            await self._show_error("Error", "Please select an input file first.")
             return
 
         try:
@@ -118,45 +274,27 @@ class CoordinateConverter:
                 self.output_file = output_file
                 self.output_file_label.text = f"Output File: {self.output_file}"
         except Exception as exc:
-            await self.main_window.error_dialog("Error", f"Failed to select output file: {exc}")
+            await self._show_error("Error", f"Failed to select output file: {exc}")
 
     def update_output_filename(self):
         """Update the output filename from input file and selected output format."""
-        if not self.input_file:
-            self.output_file = ""
-            self.output_file_label.text = "Output File: "
-            return
-
-        base, _ = os.path.splitext(self.input_file)
-        extension = self.FORMAT_TO_EXTENSION.get(self.output_format, self.output_format.lower())
-        self.output_file = f"{base}_converted.{extension}"
+        self.output_file = self.default_output_path()
         self.output_file_label.text = f"Output File: {self.output_file}"
 
     async def perform_conversion(self, widget):
-        """Perform the file format conversion."""
-        if not self.input_file:
-            await self.main_window.error_dialog("Error", "Please select an input file.")
-            return
-
-        if self.input_format == self.output_format:
-            await self.main_window.error_dialog(
-                "Error",
-                "Input and output formats are the same. Please select different formats.",
-            )
-            return
-
+        """Perform the file format and coordinate unit conversion."""
         try:
-            self.ensure_output_file()
-            atoms = self.read_atoms(self.input_format)
-            if not atoms:
-                raise ValueError("No atoms could be read from the input file.")
-            self.write_atoms(atoms, self.output_format)
-            await self.main_window.info_dialog(
-                "Success",
-                f"File converted successfully and saved as:\n{self.output_file}",
-            )
+            atom_count = self.convert_file()
         except Exception as exc:
-            await self.main_window.error_dialog("Error", f"Conversion failed: {exc}")
+            await self._show_error("Error", f"Conversion failed: {exc}")
+            return
+
+        await self._show_info(
+            "Success",
+            f"Converted {atom_count} atoms from {self.input_format} ({self.input_unit}) "
+            f"to {self.output_format} ({self.output_unit}).\n\n"
+            f"Saved as:\n{self.output_file}",
+        )
 
     # ------------------------------------------------------------------
     # General conversion engine
@@ -358,11 +496,9 @@ class CoordinateConverter:
         try:
             with open(self.output_file, "w", encoding="utf-8") as file_handle:
                 file_handle.write(f"{len(atoms)}\n")
-                file_handle.write("Converted file\n")
+                file_handle.write(f"Converted file (coordinates in {self.output_unit.lower()})\n")
                 for atom in atoms:
-                    file_handle.write(
-                        f"{atom['symbol']:<2} {atom['x']:16.8f} {atom['y']:16.8f} {atom['z']:16.8f}\n"
-                    )
+                    file_handle.write(f"{atom['symbol']:<2} {self._free_format_xyz(atom)}\n")
         except Exception as exc:
             raise ValueError(f"Failed to write XYZ file: {exc}") from exc
 
@@ -389,7 +525,9 @@ class CoordinateConverter:
                 file_handle.write("mol 1 Converted file\n")
                 for index, atom in enumerate(atoms, start=1):
                     file_handle.write(
-                        f"atom {index:5d} {atom['symbol']:<2} 0 {atom['x']:.6f} {atom['y']:.6f} {atom['z']:.6f}\n"
+                        f"atom {index:5d} {atom['symbol']:<2} 0 "
+                        f"{atom['x']:.{FREE_FORMAT_DECIMALS}f} {atom['y']:.{FREE_FORMAT_DECIMALS}f} "
+                        f"{atom['z']:.{FREE_FORMAT_DECIMALS}f}\n"
                     )
                 file_handle.write("endmol 1\n")
         except Exception as exc:
@@ -434,23 +572,28 @@ class CoordinateConverter:
         try:
             with open(self.output_file, "w", encoding="utf-8") as file_handle:
                 file_handle.write("%chk=converted.chk\n")
-                file_handle.write("#p hf/3-21g\n\n")
+                # Gaussian reads Angstrom unless the route says otherwise.
+                units_keyword = " Units=Bohr" if self.output_unit == UNIT_BOHR else ""
+                file_handle.write(f"#p hf/3-21g{units_keyword}\n\n")
                 file_handle.write("Converted structure\n\n")
                 file_handle.write("0 1\n")
                 for atom in atoms:
-                    file_handle.write(
-                        f"{atom['symbol']:<2} {atom['x']:16.8f} {atom['y']:16.8f} {atom['z']:16.8f}\n"
-                    )
+                    file_handle.write(f"{atom['symbol']:<2} {self._free_format_xyz(atom)}\n")
                 file_handle.write("\n")
         except Exception as exc:
             raise ValueError(f"Failed to write Gaussian file: {exc}") from exc
+
+    @staticmethod
+    def _free_format_xyz(atom: Atom) -> str:
+        width = FREE_FORMAT_DECIMALS + 8
+        return " ".join(f"{atom[axis]:{width}.{FREE_FORMAT_DECIMALS}f}" for axis in ("x", "y", "z"))
 
 
 class CoordinateConverterUI(CoordinateConverter):
     def __init__(self, app):
         super().__init__()
         self.app = app
-        self.main_window = toga.Window(title="Coordinate Converter", size=(760, 320))
+        self.main_window = toga.Window(title="Coordinate Converter", size=(760, 360))
         self.layout_main_window()
         self.initialize_defaults()
         self.main_window.show()
@@ -459,13 +602,16 @@ class CoordinateConverterUI(CoordinateConverter):
         self.input_format_selection.value = self.input_format
         self.update_output_options()
         self.output_format_selection.value = self.output_format
+        self.sync_unit_controls()
         self.update_output_filename()
 
     def layout_main_window(self):
         main_box_style = Pack(direction=COLUMN, margin=10)
         box_style = Pack(direction=ROW, margin=5)
         label_style = Pack(width=130, margin=(0, 5))
+        unit_label_style = Pack(margin=(5, 5))
         input_style = Pack(flex=1, margin=(0, 5))
+        unit_style = Pack(width=120, margin=(0, 5))
         button_style = Pack(margin=5)
 
         input_format_box = toga.Box(style=box_style)
@@ -475,8 +621,15 @@ class CoordinateConverterUI(CoordinateConverter):
             style=input_style,
             on_change=self.on_input_format_change,
         )
+        self.input_unit_selection = toga.Selection(
+            items=list(COORDINATE_UNITS),
+            style=unit_style,
+            on_change=self.on_input_unit_change,
+        )
         input_format_box.add(input_format_label)
         input_format_box.add(self.input_format_selection)
+        input_format_box.add(toga.Label("Unit:", style=unit_label_style))
+        input_format_box.add(self.input_unit_selection)
 
         output_format_box = toga.Box(style=box_style)
         output_format_label = toga.Label("Output Format:", style=label_style)
@@ -485,8 +638,21 @@ class CoordinateConverterUI(CoordinateConverter):
             style=input_style,
             on_change=self.on_output_format_change,
         )
+        self.output_unit_selection = toga.Selection(
+            items=list(COORDINATE_UNITS),
+            style=unit_style,
+            on_change=self.on_output_unit_change,
+        )
         output_format_box.add(output_format_label)
         output_format_box.add(self.output_format_selection)
+        output_format_box.add(toga.Label("Unit:", style=unit_label_style))
+        output_format_box.add(self.output_unit_selection)
+
+        unit_hint = toga.Label(
+            f"1 bohr = {BOHR_RADIUS_ANGSTROM} Å (CODATA 2022). "
+            "PDB, ENT, MOL, MOL2 and HIN are always in Å; bohr is available for XYZ and Gaussian.",
+            style=Pack(margin=(0, 10), color="#555555"),
+        )
 
         input_file_box = toga.Box(style=box_style)
         input_file_label = toga.Label("Input File:", style=label_style)
@@ -519,6 +685,7 @@ class CoordinateConverterUI(CoordinateConverter):
         main_box = toga.Box(style=main_box_style)
         main_box.add(input_format_box)
         main_box.add(output_format_box)
+        main_box.add(unit_hint)
         main_box.add(input_file_box)
         main_box.add(output_file_box)
         main_box.add(button_row)
@@ -534,23 +701,54 @@ class CoordinateConverterUI(CoordinateConverter):
             self.input_format_selection.value = self.input_format
         except Exception:
             pass
+        self.sync_unit_controls()
+
+    def sync_unit_controls(self):
+        """Show the current units and lock Angstrom-only formats to Angstrom.
+
+        Setting ``.value`` fires ``on_*_unit_change``, which only stores the
+        same value back, so this cannot recurse.
+        """
+        for fmt, unit_attr, selection in (
+            (self.input_format, "input_unit", self.input_unit_selection),
+            (self.output_format, "output_unit", self.output_unit_selection),
+        ):
+            selectable = self.unit_selectable(fmt)
+            if not selectable:
+                setattr(self, unit_attr, UNIT_ANGSTROM)
+            selection.value = getattr(self, unit_attr)
+            selection.enabled = selectable
 
     def on_input_format_change(self, widget):
         selected = self._selection_value(widget)
         if selected:
             self.input_format = selected
         self.update_output_options()
+        self.sync_unit_controls()
         self.update_output_filename()
 
     def on_output_format_change(self, widget):
         selected = self._selection_value(widget)
         if selected:
             self.output_format = selected
+        self.sync_unit_controls()
+        self.update_output_filename()
+
+    def on_input_unit_change(self, widget):
+        selected = self._selection_value(widget)
+        if selected:
+            self.input_unit = selected
+        self.update_output_filename()
+
+    def on_output_unit_change(self, widget):
+        selected = self._selection_value(widget)
+        if selected:
+            self.output_unit = selected
         self.update_output_filename()
 
     def update_output_options(self):
-        formats = [fmt for fmt in self.supported_formats if fmt != self.input_format]
-        self.output_format_selection.items = formats
+        # Every format is a valid target: XYZ -> XYZ is a pure unit conversion.
+        formats = self.get_output_formats()
         if self.output_format not in formats and formats:
             self.output_format = formats[0]
         if formats:
@@ -560,4 +758,4 @@ class CoordinateConverterUI(CoordinateConverter):
                 pass
 
     def get_output_formats(self):
-        return [fmt for fmt in self.supported_formats if fmt != self.input_format]
+        return list(self.supported_formats)

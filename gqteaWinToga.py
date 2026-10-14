@@ -44,7 +44,6 @@ from coordinateConverter import CoordinateConverterUI
 from classicalRate import ClassicalRateUI
 from cpTrajec2xyz import CPtraj2xyzUI
 from cpxForces import CPforcesUI
-from xyz2bohrConverter import XYZ2BohrConverterUI
 from rangeFramesSelection import RangeFramesSelectionUI
 from sh_geom_analyzer import SHGeomAnalyzerUI
 from runatom_input_gen import RunatomGenerator
@@ -65,7 +64,7 @@ class gqteaWin(toga.App):
         # 2. Header Section
         header_box = toga.Box(style=Pack(direction=COLUMN, align_items=CENTER, margin_bottom=15))
         title_label = toga.Label(
-            "gQTEA-0.7.0 Molecular Analysis Toolkit",
+            "gQTEA-0.7.5 Molecular Analysis Toolkit",
             style=Pack(font_size=18, font_weight='bold', margin_bottom=5)
         )
         welcome_label = toga.Label(
@@ -139,7 +138,6 @@ class gqteaWin(toga.App):
             ("Convert *.pos file to trajec.xyz", CPtraj2xyzUI),
             ("Compute forces from cp.x *.for file", CPforcesUI),
             ("Coordinate converter", CoordinateConverterUI),
-            ("Convert coordinates from Å to Bohr", XYZ2BohrConverterUI),
             ("Unit Converter", UnitConvertUI),            
         ]
 

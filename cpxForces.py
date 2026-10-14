@@ -31,15 +31,15 @@ class ForceXYZtoForce:
             str or None: The selected file path, or None if no file was chosen.
         """
         try:
-            file_path = await self.main_window.open_file_dialog(title=title)
+            file_path = await self.main_window.dialog(toga.OpenFileDialog(title=title))
             if file_path:
-                target_input.value = file_path
-                return file_path
+                target_input.value = str(file_path)
+                return str(file_path)
             else:
-                await self.main_window.info_dialog("Warning", "No file was selected!")
+                await self.main_window.dialog(toga.InfoDialog("Warning", "No file was selected!"))
                 return None
         except Exception as e:
-            await self.main_window.error_dialog("Error", f"Failed to open file: {e}")
+            await self.main_window.dialog(toga.ErrorDialog("Error", f"Failed to open file: {e}"))
             return None
 
     async def select_cp_input_file(self, widget):
@@ -128,7 +128,7 @@ class ForceXYZtoForce:
                     force = np.hypot(np.hypot(x, y), z)
                     f_out.write(f"{self.atom_labels[i]}  {force:14.7f}\n")
 
-    def perform_conversion(self, widget):
+    async def perform_conversion(self, widget):
         """
         Executes the conversion process:
          1. Reads the cp.x input file to extract the number of atoms and labels.
@@ -142,7 +142,7 @@ class ForceXYZtoForce:
             output_file = os.path.join(output_dir, 'cp_force.for')
             self.output_file_label.text = f"Output File: {output_file}"
         except Exception as e:
-            self.main_window.error_dialog("Conversion Error", str(e))
+            await self.main_window.dialog(toga.ErrorDialog("Conversion Error", str(e)))
 
 
 class CPforcesUI(ForceXYZtoForce):

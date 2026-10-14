@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import json
 import math
@@ -461,7 +462,7 @@ class PlotterBase:
             )
 
             if not self.energy_file:
-                await self.main_window.info_dialog("Warning", "No file was selected!")
+                await self.main_window.dialog(toga.InfoDialog("Warning", "No file was selected!"))
                 return
 
             self.energy_file = str(self.energy_file)
@@ -499,13 +500,13 @@ class PlotterBase:
 
             time_step_str = self.text_input_time_step.value
             if not time_step_str:
-                await self.main_window.info_dialog("Error", "Simulation time step is required.")
+                await self.main_window.dialog(toga.InfoDialog("Error", "Simulation time step is required."))
                 return
 
             try:
                 time_step = float(time_step_str)
             except ValueError:
-                await self.main_window.info_dialog("Error", "Invalid format for simulation time step.")
+                await self.main_window.dialog(toga.InfoDialog("Error", "Invalid format for simulation time step."))
                 return
 
             self.compute_x_axis(time_step)
@@ -800,6 +801,21 @@ class PlotterBase:
                 toga.ErrorDialog("Plot Error", f"Could not draw the figures: {exc}")
             )
 
+    def _show_info_later(self, title: str, message: str):
+        """Show an InfoDialog from sync code without blocking it.
+
+        ``Window.dialog`` is a coroutine, so the sync plotting helpers cannot
+        await it; this schedules it on the running Toga loop, matching the
+        non-blocking behaviour of the deprecated ``info_dialog``. The task is
+        kept referenced until it finishes so it cannot be garbage-collected.
+        """
+        task = asyncio.get_running_loop().create_task(
+            self.main_window.dialog(toga.InfoDialog(title, message))
+        )
+        pending = self.__dict__.setdefault("_pending_dialogs", set())
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
     def compute_x_axis(self, time_step: float):
         x_values = [float(row[0]) for row in self.data]
 
@@ -811,7 +827,7 @@ class PlotterBase:
         elif unit == "ps":
             self.x_axis = [(x * time_step * 0.024188) / 1000.0 for x in x_values]
         else:
-            self.main_window.info_dialog("Error", "Unsupported x-axis unit selected.")
+            self._show_info_later("Error", "Unsupported x-axis unit selected.")
             self.x_axis = []
 
     def display_plot(self, plot_title: str, x_label: str, y_label: str, lines: List[dict]):
@@ -822,7 +838,7 @@ class PlotterBase:
         ).name
 
         if not self.x_axis:
-            self.main_window.info_dialog("Error", "X-axis data is not available.")
+            self._show_info_later("Error", "X-axis data is not available.")
             return
 
         plt.figure(figsize=(8, 6))
@@ -971,7 +987,7 @@ class PlotterBase:
 
     async def gqtea_energy_plot(self):
         if not self.gqtea_rows:
-            await self.main_window.info_dialog("Error", "No gqteaMD data available. Please load a valid data file.")
+            await self.main_window.dialog(toga.InfoDialog("Error", "No gqteaMD data available. Please load a valid data file."))
             return
 
         x_column = self.gqtea_x_axis_selection.value
@@ -982,11 +998,11 @@ class PlotterBase:
         ]
 
         if not x_column:
-            await self.main_window.info_dialog("Info", "Please select an x-axis column.")
+            await self.main_window.dialog(toga.InfoDialog("Info", "Please select an x-axis column."))
             return
 
         if not y_columns:
-            await self.main_window.info_dialog("Info", "Please select at least one y-axis column.")
+            await self.main_window.dialog(toga.InfoDialog("Info", "Please select at least one y-axis column."))
             return
 
         self.x_axis = [row[x_column] for row in self.gqtea_rows]
@@ -1273,7 +1289,7 @@ class PlotterUI(PlotterBase):
             return
 
         if not self.data:
-            await self.main_window.info_dialog("Error", "No data available. Please load a valid ENERGY file.")
+            await self.main_window.dialog(toga.InfoDialog("Error", "No data available. Please load a valid ENERGY file."))
             return
 
         if self.is_gqtea_plot_type():
@@ -1288,7 +1304,7 @@ class PlotterUI(PlotterBase):
             self.switch_total_energy.value,
             self.switch_cpu_time.value
         ]):
-            await self.main_window.info_dialog("Info", "Please select at least one plot option.")
+            await self.main_window.dialog(toga.InfoDialog("Info", "Please select at least one plot option."))
             return
 
         if self.switch_fictitious_ionic.value:
