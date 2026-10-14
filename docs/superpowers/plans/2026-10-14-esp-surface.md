@@ -3558,23 +3558,23 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:** none (verification only).
 
-- [ ] **Step 1: Full suite**
+- [x] **Step 1: Full suite**
 
 Run: `..\Scripts\python.exe -m pytest tests/ -q`
 Expected: only the 4 pre-existing failures from Global Constraints.
 
-- [ ] **Step 2: Launch the app and run the user's file**
+- [x] **Step 2: Launch the app and run the user's file**
 
 Run: `..\Scripts\python.exe gqteaWinToga.py` → **Tools > Electrostatic Surface Potential (ESP)** → Browse to `C:\AJCamargo\QCMM_2sem_2026\2026_10_08\Eteno.fch`, isovalue blank, **Run**.
 Expected: *Results* tab shows `SURFACE rho = 0.000400 a.u.` with 2 minima ≈ −0.0210 a.u. (≈ −13.16 kcal/mol, nearest atom C) and 4 maxima ≈ +0.0117 a.u. (nearest H); `Eteno_ESP_extrema.txt` appears next to the `.fch`.
 
-- [ ] **Step 3: Compare with GaussView**
+- [x] **Step 3: Compare with GaussView**
 
 Press **Show surface**, rotate to look onto the π face, and compare with `C:\AJCamargo\QCMM_2sem_2026\2026_10_08\Eteno_ESP.png`.
 Expected: same shape and colour sweep (red over the C=C π cloud, green body, cyan/blue toward the H atoms), colour bar across the top labelled `-2.097e-2 … 2.097e-2` (GaussView: ±2.072e-2 — it interpolates from a coarse cube), caption `ESP (a.u.) mapped on electron density isosurface rho = 0.000400 a.u.`, cyan marker on the π minimum, orange markers by the H atoms. Switch the unit to kcal/mol: labels become `-1.316e1 … 1.316e1`. Close the tool window: the GL window closes too.
 
-- [ ] **Step 4: Several isovalues and the cubegen engine**
+- [x] **Step 4: Several isovalues and the cubegen engine**
 
 Isovalues `0.0004, 0.001`, engine **Gaussian cubegen**, Run. Expected: two `SURFACE` blocks, `ESP engine : Gaussian cubegen`, values equal to the built-in run to ~1e-6; the *Surface shown* selector switches the 3D surface.
 
-- [ ] **Step 5: Report** — no commit; report the observed numbers and any visual difference from GaussView to the user.
+- [x] **Step 5: Report** — no commit; report the observed numbers and any visual difference from GaussView to the user.
