@@ -51,6 +51,7 @@
     - [Classical Rate Constant](#classical-rate-constant)
   - [General Tools](#general-tools)
     - [3D Molecular Viewer](#3d-molecular-viewer)
+    - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
       - [Molecular Design](#molecular-design)
         - [Opening and using the two windows](#opening-and-using-the-two-windows)
         - [Creating and modifying bonds](#creating-and-modifying-bonds)
@@ -1615,6 +1616,73 @@ because there is no sensible geometry to produce; others are only reported.
 Other failures are reported in a dialog as they happen: an optimization that
 hits its iteration limit, or a 3D viewer that cannot open, both name the
 underlying cause and leave the structure available.
+
+#### Electrostatic Surface Potential (ESP)
+
+Use **Tools > Electrostatic Surface Potential (ESP)** to map the molecular
+electrostatic potential onto an electron-density isosurface, view it
+colour-coded in 3D (GaussView 6 style) and list the surface maxima and
+minima, following Multiwfn's quantitative molecular surface analysis.
+
+**Input.** A Gaussian formatted checkpoint (`.fchk` or `.fch`), made from the
+`.chk` with `formchk name.chk name.fchk`. The `Total SCF Density` stored in the
+file is used for both the surface and the potential; open-shell files work.
+
+**Two different quantities.**
+
+| Quantity | What it is | Unit |
+|---|---|---|
+| Electron-density isovalue | Defines *where* the surface is: the surface is the set of points where ρ(r) equals this value. | a.u. = e/bohr³ |
+| ESP V(r) | The property *mapped onto* that surface: the colours and the extrema. | a.u. = Hartree/e, or kcal/mol |
+
+**Steps.**
+
+1. **Browse** to the `.fchk`/`.fch` file. Optionally choose an output folder
+   (blank = the folder of the `.fchk`).
+2. *Setup* tab, **Surface definition**: type one or several isovalues
+   (`0.0004, 0.001, 0.002`); blank uses **0.000400 a.u.** Leave the grid
+   spacing blank for 0.25 bohr (smaller is smoother and slower).
+3. **Mapped property**: keep **Built-in exact**, or choose **Gaussian cubegen**
+   and give its path (found automatically in `C:\G09W` or `%GAUSS_EXEDIR%`).
+   If cubegen fails, the built-in engine runs and the summary says so.
+4. Press **Run**. The *Results* tab lists, for every surface, its area, the
+   ESP range and every extremum; the file `<name>_ESP_extrema.txt` is written.
+5. Press **Show surface** for the 3D window. Choose the **Surface shown**
+   when several isovalues were computed, the **Colour-bar unit** (a.u. or
+   kcal/mol), opaque or transparent, and whether to show the extrema markers.
+   Rotate with the left mouse button, zoom with the wheel.
+
+**The 3D window.** The colour bar runs across the top: red is the most
+negative ESP, green zero, blue the most positive, over the symmetric range
+±max|V| of the shown surface, labelled like GaussView (`-2.097e-2 … 2.097e-2`).
+The caption repeats the unit and the density isovalue of the surface.
+Cyan spheres are minima, orange spheres maxima (larger = global); the number
+beside each is its row in the extrema file.
+
+**How extrema are found.** A surface point is a *local minimum* when its ESP is
+strictly lower than at every neighbouring surface point **and** every
+neighbour of those neighbours; a *local maximum* likewise, strictly higher.
+Equal values give no extremum, and nearby extrema are not merged. The *global*
+minimum/maximum is the lowest/highest point of that surface. Before this test
+the surface points closer than half the grid spacing are merged and points
+with only two or three neighbours are removed — Multiwfn's procedure.
+
+**Output file** `<name>_ESP_extrema.txt`: a commented header (source file,
+density, engine, grid spacing, criteria, conversion factor, one `# surface`
+line per isovalue with its area and ESP range), then one row per extremum:
+
+```text
+# row rho_isovalue_au type scope esp_au esp_kcal_mol x_A y_A z_A nearest_atom
+1 0.000400 minimum global -0.02096700 -13.1570 -2.245500 -0.062900 0.009700 C4
+```
+
+1 a.u. = 627.5094740631 kcal/mol (CODATA 2018); coordinates in Å.
+
+**Limits.** Basis functions up to g (l = 4). With an effective core potential
+the stored density lacks the core electrons and the nuclear charges are the
+effective ones (as in Multiwfn) — fine on a molecular surface, which lies far
+outside the core. Installing the optional `numba` package makes the built-in
+ESP about five times faster.
 
 #### Energy Plots
 

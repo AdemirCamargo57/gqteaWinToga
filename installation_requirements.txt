@@ -68,6 +68,12 @@ PyOpenGL-accelerate
 # runs without it - only in-app PDF help is lost.
 PyMuPDF
 
+# Optional. Compiles the electrostatic-potential kernel of the ESP surface
+# tool (espNumba.py), about 5x faster on benzene. Without it the tool uses
+# its numpy code path and gives the same numbers. Leave it out of packaged
+# builds unless llvmlite is bundled too.
+# numba
+
 # ----------------------------------------------------------------------
 # Optional: running the test suite
 #

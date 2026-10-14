@@ -51,6 +51,7 @@ distributions.
 ### General Tools
 
 - 3D molecular viewer
+- Electrostatic surface potential (ESP) mapped on electron-density isosurfaces from Gaussian `.fchk`/`.fch`, with Multiwfn-style surface extrema
 - CPMD energy plotting
 - Molecular axis alignment
 - Frame selection
@@ -78,6 +79,7 @@ Each major tool is implemented in its own module, for example:
 - `cpmdInput.py`, `cpx_input_builder.py`, `orca_input_builder.py`, and
   `gqteaMDinptBuilder.py` for input generation
 - `molecularViewer.py` for OpenGL-based molecule visualization
+- `electrostaticSurfacePotential.py`, `gaussianWavefunction.py`, `espIntegrals.py`, `molecularSurface.py`, `espViewer.py` (and the optional `espNumba.py`) for the ESP surface tool
 - `plotter.py` and `displayPlots.py` for plotting
 - `help.py` for application help text and shared atomic data
 
@@ -97,6 +99,7 @@ Python package dependencies used by the application include:
 - `PyOpenGL`
 - `PyOpenGL-accelerate`
 - `PyMuPDF`
+- optional: `numba` (about 5x faster ESP in the ESP surface tool)
 
 The code also uses Python standard-library modules such as `asyncio`, `csv`,
 `dataclasses`, `decimal`, `html`, `http.server`, `math`, `os`, `pathlib`,
@@ -187,6 +190,7 @@ parameters, and run the calculation or conversion from the tool window.
 Common files used by the toolkit include:
 
 - `.xyz` molecular geometry and trajectory files
+- Gaussian formatted checkpoint files (`.fchk`, `.fch`) and the ESP extrema file `<name>_ESP_extrema.txt`
 - `TRAJEC.xyz` CPMD trajectory files
 - CPMD `GEOMETRY.xyz` files
 - CPMD energy files

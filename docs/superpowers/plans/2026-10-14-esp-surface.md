@@ -3255,13 +3255,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `installation_requirements.txt` (optional numba block)
 - Modify: `CLAUDE.md` (Tool-specific notes: new bullet after the molecular-design bullet, before `## Adding a new tool`)
 
-- [ ] **Step 1: USER_MANUAL.md — table of contents.** After the line `    - [3D Molecular Viewer](#3d-molecular-viewer)` insert:
+- [x] **Step 1: USER_MANUAL.md — table of contents.** After the line `    - [3D Molecular Viewer](#3d-molecular-viewer)` insert:
 
 ```markdown
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
 ```
 
-- [ ] **Step 2: USER_MANUAL.md — section.** Insert immediately before the line `#### Energy Plots`:
+- [x] **Step 2: USER_MANUAL.md — section.** Insert immediately before the line `#### Energy Plots`:
 
 ````markdown
 #### Electrostatic Surface Potential (ESP)
@@ -3332,13 +3332,13 @@ outside the core. Installing the optional `numba` package makes the built-in
 ESP about five times faster.
 ````
 
-- [ ] **Step 3: readme.md.**
+- [x] **Step 3: readme.md.**
   - In `### General Tools`, after `- 3D molecular viewer` add: `- Electrostatic surface potential (ESP) mapped on electron-density isosurfaces from Gaussian `.fchk`/`.fch`, with Multiwfn-style surface extrema`
   - In `## Repository Layout`, after the `molecularViewer.py` bullet add: `- `electrostaticSurfacePotential.py`, `gaussianWavefunction.py`, `espIntegrals.py`, `molecularSurface.py`, `espViewer.py` (and the optional `espNumba.py`) for the ESP surface tool`
   - In `## Requirements`, after the `PyMuPDF` bullet add: `- optional: `numba` (about 5x faster ESP in the ESP surface tool)`
   - In `## Supported Input and Output Files`, after the `.xyz` bullet add: `- Gaussian formatted checkpoint files (`.fchk`, `.fch`) and the ESP extrema file `<name>_ESP_extrema.txt``
 
-- [ ] **Step 4: installation_requirements.txt.** After the `PyMuPDF` block add:
+- [x] **Step 4: installation_requirements.txt.** After the `PyMuPDF` block add:
 
 ```text
 # Optional. Compiles the electrostatic-potential kernel of the ESP surface
@@ -3348,15 +3348,15 @@ ESP about five times faster.
 # numba
 ```
 
-- [ ] **Step 5: CLAUDE.md.** Delete the temporary `## In-progress work: ESP surface tool` section near the top (it only pointed at this plan), then insert this bullet as the last item of `## Tool-specific notes` (just before `## Adding a new tool`):
+- [x] **Step 5: CLAUDE.md.** Delete the temporary `## In-progress work: ESP surface tool` section near the top (it only pointed at this plan), then insert this bullet as the last item of `## Tool-specific notes` (just before `## Adding a new tool`):
 
 ````markdown
 - **[electrostaticSurfacePotential.py](electrostaticSurfacePotential.py) / [gaussianWavefunction.py](gaussianWavefunction.py) / [espIntegrals.py](espIntegrals.py) / [molecularSurface.py](molecularSurface.py) / [espViewer.py](espViewer.py) / [espNumba.py](espNumba.py)** — ESP mapped on electron-density isosurfaces from a Gaussian `.fchk`/`.fch` (Tools tab). One-way chain `electrostaticSurfacePotential → {espViewer → molecularViewer, molecularSurface, espIntegrals → gaussianWavefunction → help}`; **only `electrostaticSurfacePotential.py` and `espViewer.py` (via molecularViewer) import Toga/GL**, and a subprocess test keeps `toga` out of the other three. Spec: [docs/superpowers/specs/2026-10-14-esp-surface-design.md](docs/superpowers/specs/2026-10-14-esp-surface-design.md). **Two quantities, never conflated:** the surface is a `Total SCF Density` isovalue ρ (a.u. = e/bohr³, default `DEFAULT_ISOVALUE = 0.0004`); the mapped property is V (a.u. = Hartree/e, or kcal/mol via `HARTREE_TO_KCAL_MOL = 627.5094740631`). `gaussianWavefunction` reproduces Multiwfn's fch conventions — every Cartesian primitive normalised on its own, SP shells split with `P(S=P)` coefficients, pure shells mapped by `pure_to_cartesian` (Gaussian order 0,+1,−1,…), `FCHK_CARTESIAN_ORDER` with the fch f order (XXX,YYY,ZZZ,XYY,XXY,XXZ,XZZ,YZZ,YYZ,XYZ) — and is pinned by `tr(P S) = N` and by **Gaussian 09 cubegen reference values** in `tests/data/esp_reference/` (ESP agrees to < 1e-6 a.u. on 5D/6D, pure f/g, Cartesian 10F, SP and open-shell fixtures in `tests/data/fchk/`; regenerate with `make_reference.py`, never at test time). **cubegen reads `-5` stdin points in Å, not bohr** (verified) — `cubegen_potential` converts. cubegen's own *density* is screened near nuclei (12.8 vs 290 a.u. at a water O nucleus), so the density test only compares the 1e-5 < ρ < 1e-2 band. `espIntegrals` is McMurchie–Davidson with the density contracted once into point-independent Hermite coefficients (`build_hermite_batches`), threads over point chunks, and uses `espNumba` automatically when `numba` imports (~5× faster; `BOYS_SERIES_LIMIT = 60`, because at 30 the asymptotic F₈ is still 1e-6 off). `molecularSurface` copies Multiwfn `surfana.f90`: grid spacing 0.25 bohr; box from atoms ± 1.7 r_vdW (`AtomicData.vdw_radii`) **grown until every face has ρ < iso/10** (needed at 0.0004); Kuhn 6-tetrahedra marching tetrahedra with vertices shared by global edge id; 3 exact-ρ bisections; merge of edge-connected vertices closer than 0.5 h to their midpoint, then removal of 2- and 3-neighbour vertices (sequential, order-dependent, does **not** guarantee a minimum spacing afterwards — don't test for one). **Extrema = Multiwfn's strict 1st+2nd-ring rule** (`second_ring`), no tolerance, no automatic merging, vertex positions; the global min/max is argmin/argmax and is reported as `global` even when a tie keeps it out of the strict test. Output `<stem>_ESP_extrema.txt` (header + `row rho_isovalue_au type scope esp_au esp_kcal_mol x_A y_A z_A nearest_atom`). `espViewer.ESPSurfaceViewer` subclasses `MolecularViewer` through two **no-op hooks** added to the base main loop (`render_scene_extras` inside the molecule matrix, `draw_screen_overlay` after the axis triad) plus a `window_title` attribute; GaussView look verified against a GaussView 6.1 screenshot: top colour bar, symmetric ±max|V| (`symmetric_range`), `-2.072e-2` labels (`gaussview_label`), hue sweep red→green(0)→blue (`hue_colours`), opaque + specular, black background. The colour maths are pure functions tested headless; the GL calls are not. Eteno (ethylene B3LYP/6-31G) at 0.0004 gives 2 π minima −0.02097 a.u. and 4 H maxima +0.01166 a.u.; GaussView's bar reads ±2.072e-2 because it interpolates from a coarse cube.
 ````
 
-- [ ] **Step 6: Check the help text and manual agree** — open both; the defaults (0.000400, 0.25 bohr), the colours (cyan = minimum, orange = maximum) and the file name (`<name>_ESP_extrema.txt`) must match what `electrostaticSurfacePotential.py` and `espViewer.py` do.
+- [x] **Step 6: Check the help text and manual agree** — open both; the defaults (0.000400, 0.25 bohr), the colours (cyan = minimum, orange = maximum) and the file name (`<name>_ESP_extrema.txt`) must match what `electrostaticSurfacePotential.py` and `espViewer.py` do.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add USER_MANUAL.md readme.md installation_requirements.txt CLAUDE.md
