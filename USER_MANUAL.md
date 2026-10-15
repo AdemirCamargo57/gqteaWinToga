@@ -45,6 +45,8 @@
     - [Legacy Mean Residence Time](#legacy-mean-residence-time)
     - [Autocorrelation Function](#autocorrelation-function)
     - [Single Solute Solvent Box](#single-solute-solvent-box)
+      - [System properties](#system-properties)
+      - [Pre-optimization](#pre-optimization)
     - [Mixture of Two Solvent Box](#mixture-of-two-solvent-box)
     - [Shared-Wall Double Solvent Box](#shared-wall-double-solvent-box)
   - [Thermo Tools](#thermo-tools)
@@ -80,6 +82,7 @@
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
 - [Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool)
+- [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
   - ["Please input a valid value for ..."](#please-input-a-valid-value-for-)
@@ -90,6 +93,8 @@
   - ["The stop frame must be less than the total number of frames"](#the-stop-frame-must-be-less-than-the-total-number-of-frames)
   - [ENERGY file format errors](#energy-file-format-errors)
   - [Solvent box insertion warnings](#solvent-box-insertion-warnings)
+  - ["Pre-optimization not performed"](#pre-optimization-not-performed)
+  - ["Spin multiplicity" or "Check the spin multiplicity"](#spin-multiplicity-or-check-the-spin-multiplicity)
   - [Missing `SH_STATE.dat` or `TRAJEC.xyz`](#missing-sh_statedat-or-trajecxyz)
   - [Plot windows do not appear](#plot-windows-do-not-appear)
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
@@ -132,9 +137,9 @@ The file installs these packages:
 
 | Package | Used for |
 |---------|----------|
-| `toga-winforms` | The GUI framework and its Windows backend. Also installs `toga-core`, `pythonnet` and `pillow`. |
+| `toga-winforms` | The GUI framework and its Windows backend. Also installs `toga-core`, `pythonnet` and `pillow`; Pillow draws the live construction view of the solvent-box builders and saves 3D-viewer images. |
 | `numpy` | Trajectory parsing, geometry and statistics, used by most analysis tools. |
-| `scipy` | The autocorrelation FFT, the molecular pre-optimizer, the solvent-box builders, and the ESP tool (Boys function, surface-mesh adjacency). |
+| `scipy` | The autocorrelation FFT, the molecular pre-optimizer, the solvent-box builders and their periodic pre-optimization (L-BFGS-B, periodic neighbour search, random rotations), and the ESP tool (Boys function, surface-mesh adjacency). |
 | `matplotlib` | All plotting, in both the main window and the separate interactive plot viewer. |
 | `glfw` | Windowing and mouse input for the 3D molecular viewer and the ESP surface viewer. |
 | `PyOpenGL` | OpenGL bindings for the 3D molecular viewer and the ESP surface viewer. |
@@ -192,16 +197,26 @@ stripped-down or Server Core installation may not include it.
 
 None of these is needed to run the toolkit.
 
-To make the ESP calculation of the
-[Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
-tool about five times faster (identical results):
+To speed up two tools with compiled kernels (identical results):
 
 ```powershell
 python -m pip install numba
 ```
 
-It is picked up automatically when installed (verified with `numba` 0.68.0 /
-`llvmlite` 0.50.0, which accept `numpy` 2.4.2 without downgrading it).
+- The ESP calculation of the
+  [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
+  tool becomes about five times faster.
+- Solvent packing in the three solvation-box builders
+  ([Single Solute](#single-solute-solvent-box),
+  [Mixture](#mixture-of-two-solvent-box),
+  [Shared-Wall](#shared-wall-double-solvent-box)) becomes about 20–50 times
+  faster than the original insertion loop, and 3–5 times faster than their
+  NumPy engine; the box is identical for the same random seed.
+
+It is picked up automatically when installed (the solvent builders' *Automatic*
+packing engine uses it) and verified with `numba` 0.68.0 / `llvmlite` 0.50.0,
+which accept `numpy` 2.4.2 without downgrading it. The first run compiles the
+kernels for a few seconds; later runs reuse the compiled cache.
 
 To run the automated test suite:
 
@@ -3548,6 +3563,226 @@ Multiwfn prints kcal/mol with the rounded factor 627.51 (relative difference
 8×10⁻⁷, invisible at the printed precision). 1 a.u. of potential is also
 27.211 V, which is not reported.
 
+## Formulas and Methods (Solvation box builders)
+
+This section documents the equations used by the three solvation-box builders
+— [single_solute_solvent_box.py](single_solute_solvent_box.py),
+[mixtureSolventBox.py](mixtureSolventBox.py) and
+[sharedWallBox.py](sharedWallBox.py) — and by the modules they share:
+[solventPacking.py](solventPacking.py) (packing),
+[periodicPreOptimizer.py](periodicPreOptimizer.py) (pre-optimization) and
+[systemProperties.py](systemProperties.py) (electrons and multiplicity).
+They are exercised headlessly by the `tests/test_*` files of the same names.
+
+**Symbols used throughout.**
+
+| Symbol | Meaning |
+| --- | --- |
+| $\mathbf{L}=(a,b,c)$ | orthorhombic cell edges, Å (shared wall: $c = c_1 + c_2$) |
+| $\rho$ | target density, g/cm³ |
+| $m_u$ | atomic mass unit, $1.66053906660\times10^{-24}$ g |
+| $M_X$ | molar mass of species $X$ (sum of atomic masses) |
+| $r_i$ | van der Waals radius of atom $i$ |
+| $s$ | packing vdW scale (the *vdW scale* field) |
+| $s_c$ | target contact scale of the pre-optimization |
+| $\delta$ | extra solute clearance (*Extra solute clearance* / *Solute gap*) |
+| $\mathbf{d}_{ij}$ | minimum-image vector between atoms $i$ and $j$ |
+
+### 1. Target number of solvent molecules
+
+$$
+N_\text{single} = \left\lfloor \frac{\rho V / m_u - M_\text{solute}}{M_\text{solvent}} \right\rfloor,
+\qquad
+N_\text{mixture} = \operatorname{round}\!\left( \frac{\rho V / m_u - M_\text{solute}}{x_A M_A + x_B M_B} \right),
+\qquad V = abc \times 10^{-24}\ \text{cm}^3
+$$
+
+- **Represents:** how many solvent molecules bring the cell to the target density.
+- **Where/how used:** `estimate_target_num_solvent_molecules` (single, rounds
+  down) and `estimate_target_molecule_count` (mixture and each shared-wall
+  region with its own slab volume $a\,b\,c_k$; rounds to nearest). The two
+  rounding rules are historical and are kept so that seeded boxes do not
+  change. $x_A, x_B$ are the composition fractions.
+
+### 2. Minimum image
+
+$$
+\mathbf{d}_{ij} = \Delta\mathbf{r} - \mathbf{L} \odot \operatorname{round}(\Delta\mathbf{r} \oslash \mathbf{L}),
+\qquad \Delta\mathbf{r} = \mathbf{r}_i - \mathbf{r}_j
+$$
+
+- **Represents:** the shortest separation between two atoms over all periodic
+  images, component by component; exact for separations below half the
+  smallest cell edge. `round` rounds half to even.
+- **Where/how used:** every clash test while packing (when *Periodic
+  minimum-image clash detection* is on) and every intermolecular distance in the
+  pre-optimization. With the switch off, $\mathbf{d}_{ij} = \Delta\mathbf{r}$.
+
+### 3. Packing acceptance
+
+A randomly placed (and optionally randomly rotated) candidate is accepted only
+if every atom pair with the solute and with molecules already accepted
+satisfies
+
+$$
+|\mathbf{d}_{ij}| \ge s\,(r_i + r_j) \;(+\,\delta \text{ for solvent–solute pairs}),
+$$
+
+and every candidate atom lies inside the box (minus the wall padding; in the
+shared-wall box, inside its own slab, with padding on the outer faces only).
+Molecules whose centres are further apart than
+$R_\text{cand} + R_m + 2.5$ Å are not compared atom by atom, where $R$ is the
+molecule's bounding radius (single: including the atoms' vdW radii; mixture
+and shared wall: geometric only).
+
+- **Where/how used:** the *Legacy* engine evaluates it with the original Python
+  loops; the *NumPy* and *Numba* engines evaluate the **same** inequality with a
+  cell list and vectorised or compiled kernels, in the same floating-point
+  order, so all engines accept and reject exactly the same candidates and a
+  fixed seed gives the same box.
+- **Mixture composition:** the next molecule is solvent A with probability
+  $p_A = n_A / (n_A + n_B)$, $n_X = \max(0,\, x_X - f_X)$, where $f_X$ is the
+  fraction of $X$ placed so far. The first molecule, and any molecule placed
+  while both needs are zero, is A with probability $x_A$. The shared-wall
+  builder skips the random draw entirely when a region's composition is 0 %
+  or 100 %.
+
+### 4. Final density
+
+$$
+\rho_\text{final} = \frac{m_u \sum_{i} m_i}{V}
+$$
+
+over all placed atoms (per region for the shared-wall box).
+
+### 5. Pre-optimization: overlap penalty
+
+$$
+E_\text{overlap} = K \sum_{\substack{i<j \\ \text{different molecules} \\ |\mathbf{d}_{ij}| < \sigma_{ij}}}
+\left( |\mathbf{d}_{ij}|^2 - \sigma_{ij}^2 \right)^2,
+\qquad
+\sigma_{ij} = s_c\,(r_i + r_j) \;(+\,\delta \text{ for solute–solvent pairs}),
+\qquad K = 1
+$$
+
+$$
+\frac{\partial E_\text{overlap}}{\partial \mathbf{r}_i} =
+\sum_j 4K \left( |\mathbf{d}_{ij}|^2 - \sigma_{ij}^2 \right) \mathbf{d}_{ij}
+$$
+
+- **Represents:** a penalty that is exactly zero once no intermolecular pair is
+  closer than $\sigma$ — the same form of criterion as packing, with the larger
+  target contact scale $s_c$ (default $\max(0.90, s)$; packing already
+  guarantees $s$, so relaxing to $s$ itself would do nothing).
+- **Where/how used:** `OverlapPenalty`. Pairs come from a periodic k-d tree
+  (`scipy.spatial.cKDTree` with `boxsize = L`), which requires
+  $\max \sigma < \tfrac12 \min(a,b,c)$. Atoms of the same molecule never
+  interact here. The minimizer works with $\sigma(1 + 0.01)$ so that contacts
+  settle just outside $\sigma$; the reported penalty, clash count
+  ($|\mathbf{d}_{ij}| < \sigma_{ij}$) and closest contact use $\sigma$ itself.
+
+### 6. Pre-optimization: walls and regions
+
+Without periodicity a harmonic wall keeps atoms inside the box:
+
+$$
+E_\text{wall} = K_w \sum_{i,\alpha} \left[ \min(x_{i\alpha} - \ell_{i\alpha},\, 0)^2 + \max(x_{i\alpha} - h_{i\alpha},\, 0)^2 \right],
+\qquad K_w = 10
+$$
+
+with $\ell = $ padding and $h = L - $ padding (shared wall: per box on the x/y
+faces, and in z only on the outer faces, never at the interface).
+
+In the shared-wall box a flat-bottom restraint keeps the centre of mass $Z_m$ of
+each molecule in the region it was packed into, $[z^\text{lo}_m, z^\text{hi}_m]$
+= $[0, c_1]$ or $[c_1, c_1 + c_2]$:
+
+$$
+E_\text{slab} = K_w \sum_m \left[ \min(Z_m - z^\text{lo}_m,\, 0)^2 + \max(Z_m - z^\text{hi}_m,\, 0)^2 \right],
+\qquad Z_m = \frac{\sum_{i \in m} m_i z_i}{\sum_{i \in m} m_i}
+$$
+
+### 7. Pre-optimization: rigid molecules
+
+Each molecule $m$ has a translation $\mathbf{t}_m$ and a rotation vector
+$\boldsymbol{\omega}_m$; its atoms are
+$\mathbf{x}_i = \mathbf{R}(\boldsymbol{\omega}_m)\,\mathbf{b}_i + \mathbf{t}_m$,
+with $\mathbf{b}_i$ the atom's offset from the molecule's centroid in the packed
+box. With $\mathbf{g}_i = \partial E / \partial \mathbf{x}_i$:
+
+$$
+\frac{\partial E}{\partial \mathbf{t}_m} = \sum_{i \in m} \mathbf{g}_i,
+\qquad
+\frac{\partial E}{\partial \boldsymbol{\omega}_m} =
+\boldsymbol{\tau} - A\,\boldsymbol{\omega} \times \boldsymbol{\tau}
++ B\,\boldsymbol{\omega} \times (\boldsymbol{\omega} \times \boldsymbol{\tau}),
+\qquad
+\boldsymbol{\tau} = \sum_{i \in m} (\mathbf{x}_i - \mathbf{t}_m) \times \mathbf{g}_i
+$$
+
+$$
+A = \frac{1 - \cos\theta}{\theta^2}, \qquad B = \frac{\theta - \sin\theta}{\theta^3}, \qquad \theta = |\boldsymbol{\omega}|
+$$
+
+(Taylor series $A \approx \tfrac12 - \theta^2/24$, $B \approx \tfrac16 - \theta^2/120$
+below $\theta = 10^{-3}$.) This is the transposed left Jacobian of SO(3) applied
+to the torque. Bond lengths and angles are preserved to round-off.
+
+### 8. Pre-optimization: flexible molecules
+
+Every atom moves. Within each molecule, bonds are detected once on the input
+geometry ($r \le r^\text{cov}_i + r^\text{cov}_j + 0.45$ Å), and the input
+geometry itself is the minimum:
+
+$$
+E_\text{bond} = 300 \sum (r - r_0)^2, \qquad
+E_\text{angle} = 150 \sum (\cos\theta - \cos\theta_0)^2 \;\; \text{or} \;\; 80 \sum (1 + \cos\theta) \text{ if } \theta_0 \ge 175^\circ,
+$$
+
+$$
+E_\text{1-5} = 0.1 \sum \left( \frac{\sigma_{ij}}{r_{ij}} \right)^{12},
+\qquad \sigma_{ij} = \min\!\left(1.8\,(r^\text{cov}_i + r^\text{cov}_j),\; 0.8\, r^\text{input}_{ij}\right)
+$$
+
+for pairs at least four bonds apart; $r_0$, $\theta_0$ and $r^\text{input}$
+are taken from the input structure. There are no torsion terms. These are the
+terms of the molecular-design pre-optimizer, built by
+`ForceField.from_geometry` instead of from bond orders.
+
+### 9. Minimization and wrapping
+
+$E = E_\text{overlap} + E_\text{wall} + E_\text{slab}$ (+ the flexible terms)
+is minimized with L-BFGS-B (`scipy.optimize.minimize`) up to the *Max
+iterations* limit; reaching the limit is reported, not treated as an error.
+Afterwards every molecule is translated as a whole:
+
+$$
+\mathbf{x}_i \leftarrow \mathbf{x}_i - \mathbf{L} \odot \left\lfloor \mathbf{X}_m \oslash \mathbf{L} \right\rfloor
+\quad (i \in m),
+$$
+
+where $\mathbf{X}_m$ is the molecule's centre of mass, so that every centre of
+mass lies in $[0, \mathbf{L})$ and no molecule is split across a face.
+
+### 10. Electrons and spin multiplicity
+
+$$
+N_e = \sum_i Z_i - Q, \qquad
+Q = q_\text{solute} + N_A\,q_A + N_B\,q_B
+$$
+
+(single solute: one solvent species; shared wall: summed over both regions),
+where $q$ are the charges per molecule and $N_A, N_B$ the numbers of molecules
+actually inserted. A multiplicity $M = 2S + 1$ is accepted when
+
+$$
+N_e \ge 0, \qquad (N_e + M) \text{ is odd}, \qquad 1 \le M \le N_e + 1 .
+$$
+
+$M$ is never derived from $N_e$: an even $N_e$ is compatible with
+$M = 1, 3, 5, \ldots$ and an odd one with $M = 2, 4, 6, \ldots$, so the user's
+value is checked and an impossible one is reported, not replaced.
+
 ## Troubleshooting
 
 ### "No file was selected!"
@@ -3595,6 +3830,43 @@ If the solvent box builder cannot insert all requested molecules, the target den
 - Lower the target density.
 - Reduce the minimum distance or van der Waals scaling factor.
 - Increase the maximum number of insertion attempts.
+
+Random insertion becomes slow as the box fills, because most late attempts are
+rejected. With `numba` installed the *Automatic* packing engine is 20–50 times
+faster than the original loop, so a larger number of attempts is affordable;
+every engine produces the same box for the same random seed. The
+pre-optimization cannot add molecules — it only relaxes the ones that were
+placed.
+
+### "Pre-optimization not performed"
+
+The packed box was written, but the optional pre-optimization was skipped. The
+dialog states the reason. The usual one is:
+
+*The contact range (… A) must be shorter than half the smallest cell length.*
+Under periodic boundaries every distance uses the minimum image, which is only
+valid for contacts shorter than half the smallest cell edge. The contact range
+is the largest `target contact scale × (r_i + r_j)` (plus the solute clearance).
+Use a larger box, or a smaller target contact scale.
+
+If the summary instead reports clashing pairs left after the pre-optimization,
+the box is too dense for the requested contact scale: lower the density or the
+target contact scale, or switch from *Rigid* to *Flexible* molecules.
+
+### "Spin multiplicity" or "Check the spin multiplicity"
+
+The total spin multiplicity (2S + 1) is required and is never guessed from the
+electron count.
+
+- **Missing or not a positive integer** (before the build): the Setup tab opens
+  with the cursor in **Total spin multiplicity**. In the single-solute and
+  mixture builders it is in the **Charge and spin** section; in the
+  shared-wall builder it is at the top, in **Shared geometry**.
+- **Impossible for this box** (after the build): an even electron count allows
+  1, 3, 5, …; an odd one allows 2, 4, 6, …; and the value cannot exceed the
+  number of electrons + 1. The message lists the allowed values. Correct the
+  field (or the charges) and press **Update properties** on the Summary tab —
+  the summary file is rewritten and the box is not rebuilt.
 
 ### Missing `SH_STATE.dat` or `TRAJEC.xyz`
 

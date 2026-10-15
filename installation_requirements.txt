@@ -23,7 +23,8 @@
 #     matplotlib 3.10.8        glfw 2.10.0         PyOpenGL 3.1.10
 #     PyOpenGL-accelerate 3.1.10                   PyMuPDF 1.27.2.2
 # Optional, also verified: numba 0.68.0 (with llvmlite 0.50.0), which
-# accepts numpy 2.4.2 without downgrading it.
+# accepts numpy 2.4.2 without downgrading it; it speeds up the ESP tool and
+# the solvent-box packing (see the optional block below).
 # ======================================================================
 
 # ----------------------------------------------------------------------
@@ -32,7 +33,9 @@
 
 # GUI framework and its WinForms backend. Used by every tool window.
 # Installs toga-core, pythonnet and pillow as dependencies, so none of
-# those need to be listed here.
+# those need to be listed here. Pillow is also imported directly: it draws
+# the solvent-box builders' live construction view (boxConstructionView.py)
+# and saves 3D-viewer images (matplotlib depends on it as well).
 toga-winforms
 
 # Numerical core: trajectory parsing, geometry, statistics. Imported by
@@ -40,7 +43,9 @@ toga-winforms
 numpy
 
 # Used by the autocorrelation FFT, the molecular pre-optimizer (L-BFGS-B),
-# the solvent-box builders, and the ESP surface tool (Boys function via
+# the solvent-box builders (random rotations) and their periodic
+# pre-optimization (L-BFGS-B, periodic neighbour search via
+# scipy.spatial.cKDTree), and the ESP surface tool (Boys function via
 # scipy.special, sparse mesh adjacency via scipy.sparse).
 scipy
 
@@ -73,18 +78,25 @@ PyOpenGL-accelerate
 PyMuPDF
 
 # ----------------------------------------------------------------------
-# Optional: faster ESP surface tool
+# Optional: faster ESP surface tool and solvent-box packing
 #
-python -m pip install numba
+#     python -m pip install numba
 #
-# Compiles the electrostatic-potential kernel (espNumba.py); espIntegrals
-# uses it automatically whenever "import numba" succeeds. Same numbers as
-# the numpy path (agreement 1e-10 a.u.), about 5x faster (benzene,
-# 20 000 surface points: 0.9 s instead of 4.7 s). The very first run
-# spends a few seconds compiling; later runs load the compiled kernel
-# from __pycache__. Installs llvmlite as a dependency. Leave it out of
-# packaged .exe builds unless llvmlite is bundled too - the tool then
-# simply runs its numpy path.
+# Compiles two optional kernels, each used automatically whenever
+# "import numba" succeeds; without numba both tools run their numpy path
+# and give the same results:
+#   - espNumba.py - the electrostatic-potential sum of the ESP surface
+#     tool. Agreement 1e-10 a.u., about 5x faster (benzene, 20 000 surface
+#     points: 0.9 s instead of 4.7 s).
+#   - solventPackingNumba.py - the clash test of the three solvation-box
+#     builders ("Automatic" packing engine). Bit-identical boxes for the
+#     same seed; 20-50x faster than the original insertion loop and 3-5x
+#     faster than the numpy engine (e.g. a 26 x 26 x 52 A shared-wall
+#     water/methanol box: 2.4 s instead of 114 s).
+# The very first run spends a few seconds compiling; later runs load the
+# compiled kernels from __pycache__. Installs llvmlite as a dependency.
+# Leave it out of packaged .exe builds unless llvmlite is bundled too -
+# the tools then simply run their numpy paths.
 # ----------------------------------------------------------------------
 # numba
 
