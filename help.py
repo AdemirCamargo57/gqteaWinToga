@@ -1653,4 +1653,11 @@ OUTPUT  (next to the .fchk unless another folder is chosen)
   of the shown surface. Rotate with the left mouse button, zoom with the
   wheel. Markers: cyan = minimum, orange = maximum (larger = global); the
   number is the row in the extrema file.
+  Canvas background (Results tab): Black (default), White, Dark grey or
+  Light grey, applied at once; the colour-bar text turns black on a light
+  background.
+  Export image... (Results tab) saves the 3D canvas exactly as shown - same
+  orientation, zoom, framing, colours and background, at the window's pixel
+  size, without the window frame. The view is not changed. Open the window
+  with Show surface first. Formats: PNG (default), TIFF, BMP (lossless).
 """

@@ -10,8 +10,10 @@ ethylene ESP at rho = 0.0004): horizontal colour bar across the top, a
 symmetric range +/-R with the min label at the left end and the max label at
 the right end written like ``-2.072e-2``, colours a linear hue sweep red ->
 orange -> yellow -> green (V = 0) -> cyan -> blue, opaque surface with a
-specular highlight on a black background. Unlike GaussView, the bar also
-prints the unit and the density isovalue that defines the surface.
+specular highlight on a black background (the default; the tool can switch
+the canvas to white or grey, and the bar's text then turns black so it stays
+readable). Unlike GaussView, the bar also prints the unit and the density
+isovalue that defines the surface.
 
 The colour maths are module-level pure functions, tested headless.
 """
@@ -83,6 +85,12 @@ def colour_bar_text(half_range_au: float, unit: str, isovalue: float) -> Tuple[s
     factor = unit_factor(unit)
     caption = f"ESP ({unit})   mapped on electron density isosurface  rho = {isovalue:.6f} a.u."
     return gaussview_label(-half_range_au * factor), gaussview_label(half_range_au * factor), caption
+
+
+def contrasting_text_colour(background) -> Tuple[float, float, float]:
+    """Black text on a light background, white on a dark one (Rec. 709 luma)."""
+    r, g, b = (float(c) for c in background)
+    return (0.0, 0.0, 0.0) if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 else (1.0, 1.0, 1.0)
 
 
 @dataclass
@@ -265,9 +273,10 @@ class ESPSurfaceViewer(MolecularViewer):
                 glVertex2f(x, y0)
                 glVertex2f(x, y1)
             glEnd()
-            self._draw_text_2d(6.0, y0 + 2.0, left)
-            self._draw_text_2d(x1 + 6.0, y0 + 2.0, right)
-            self._draw_text_2d(x0, y0 - 22.0, caption)
+            ink = contrasting_text_colour(self.background_color)
+            self._draw_text_2d(6.0, y0 + 2.0, left, color=ink)
+            self._draw_text_2d(x1 + 6.0, y0 + 2.0, right, color=ink)
+            self._draw_text_2d(x0, y0 - 22.0, caption, color=ink)
         finally:
             glEnable(GL_DEPTH_TEST)
             glEnable(GL_LIGHTING)

@@ -1698,9 +1698,22 @@ status line with a progress bar.
 | Surface shown | Which isovalue's surface the 3D window displays (filled after a run). |
 | Colour-bar unit | `a.u.` or `kcal/mol` for the colour-bar labels. |
 | Surface | `Opaque` or `Transparent (50 %)`; **Show extrema markers** on/off. |
+| Canvas background | `Black` (default), `White`, `Dark grey` or `Light grey`. On a light background the colour-bar labels and caption are drawn in black so they stay readable. |
+| Export image... | Saves the 3D canvas as an image file (see below). |
 | Text box | The help text before a run; the results summary after it. |
 
 Changing any Results-tab control updates an open 3D window immediately.
+
+**Exporting the image.** Open the 3D window with **Show surface**, arrange the
+view, then press **Export image...**. The frame is captured the moment you press
+the button, before the save dialog appears, so the file holds exactly what the
+canvas shows: the same orientation, zoom, framing, surface colours, markers,
+colour bar and background, at the window's own pixel size (resize the 3D window
+for a larger image). Only the canvas is saved — no window title bar or border —
+and the view is not reset or changed. The suggested name is
+`<name>_ESP_rho<isovalue>.png`; PNG, TIFF and BMP are accepted (all lossless —
+JPEG is refused because it would alter the colours). If the 3D window is
+minimised, restore it and export again.
 
 ##### Steps
 
@@ -1716,7 +1729,8 @@ Changing any Results-tab control updates an open 3D window immediately.
    the extrema file is written automatically.
 5. Press **Show surface** to open the 3D window (pressing it again brings the
    window to the front). Rotate with the left mouse button, zoom with the
-   wheel. Pick the surface, unit, opacity and markers on the *Results* tab.
+   wheel. Pick the surface, unit, opacity, markers and canvas background on the
+   *Results* tab, and press **Export image...** to save the canvas as shown.
 6. **Clear** discards the results and restores the help text; **Close** closes
    the tool and its 3D window.
 

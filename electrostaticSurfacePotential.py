@@ -35,6 +35,7 @@ from coordinateConverter import BOHR_RADIUS_ANGSTROM
 from espIntegrals import HARTREE_TO_KCAL_MOL
 from espViewer import COLOUR_UNITS, ESPSurfaceViewer, SurfaceMarker, UNIT_AU, symmetric_range
 from help import AtomicData, HelpGqteaWin
+from molecularViewer import save_canvas_image
 
 DEFAULT_ISOVALUE = 0.0004
 MIN_SPACING, MAX_SPACING = 0.05, 0.6
@@ -348,6 +349,14 @@ class ESPSurfaceAnalyser:
 # Toga UI
 # ----------------------------------------------------------------------
 OPACITY_LABELS = {"Opaque": 1.0, "Transparent (50 %)": 0.5}
+# Canvas background; the first entry is the default (GaussView's black).
+BACKGROUND_COLOURS = {
+    "Black": (0.0, 0.0, 0.0),
+    "White": (1.0, 1.0, 1.0),
+    "Dark grey": (0.25, 0.25, 0.25),
+    "Light grey": (0.85, 0.85, 0.85),
+}
+IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]
 
 
 class ElectrostaticSurfacePotentialUI:
@@ -415,12 +424,17 @@ class ElectrostaticSurfacePotentialUI:
         self.opacity_selection = toga.Selection(items=list(OPACITY_LABELS), on_change=self.on_display_change,
                                                 style=Pack(width=180))
         self.extrema_switch = toga.Switch("Show extrema markers", value=True, on_change=self.on_display_change)
+        self.background_selection = toga.Selection(items=list(BACKGROUND_COLOURS),
+                                                   on_change=self.on_background_change, style=Pack(width=140))
+        self.export_button = toga.Button("Export image...", on_press=self.export_image,
+                                         style=Pack(width=130, margin_left=10))
         self.summary_output = toga.MultilineTextInput(readonly=True, value=HelpGqteaWin.help_esp_surface,
                                                       style=Pack(flex=1, font_family="monospace"))
         results = toga.Box(children=[
             self._row(self._label("Surface shown:"), self.surface_selection),
             self._row(self._label("Colour-bar unit:"), self.unit_selection),
             self._row(self._label("Surface:"), self.opacity_selection, self.extrema_switch),
+            self._row(self._label("Canvas background:"), self.background_selection, self.export_button),
             self.summary_output,
         ], style=Pack(direction=COLUMN, margin=10, flex=1))
 
@@ -574,10 +588,58 @@ class ElectrostaticSurfacePotentialUI:
         if self.viewer is None:
             self.viewer = ESPSurfaceViewer()
             self.viewer.loop = asyncio.get_running_loop()
+            self.viewer.set_background_color(self.selected_background())
         self._push_to_viewer()
         ready, error = await self.viewer.ensure_viewer_window()
         if not ready:
             await self._show_error("The 3D viewer could not be opened", error)
+
+    # --- canvas background and image export ------------------------------
+    def selected_background(self):
+        return BACKGROUND_COLOURS.get(self.background_selection.value, BACKGROUND_COLOURS["Black"])
+
+    def on_background_change(self, widget):
+        # A view setting, not a result: applies with or without a run.
+        if self.viewer is not None:
+            self.viewer.set_background_color(self.selected_background())
+
+    def default_image_name(self) -> str:
+        surface = self.selected_surface()
+        if surface is None:
+            return "ESP_surface.png"
+        return f"{Path(self.results.fchk_path).stem}_ESP_rho{surface.isovalue:.6f}.png"
+
+    async def _ask_image_path(self, suggested: str):
+        return await self.window.dialog(toga.SaveFileDialog(
+            title="Export the ESP surface image", suggested_filename=suggested,
+            file_types=IMAGE_FILE_TYPES))
+
+    async def export_image(self, widget):
+        """Save the 3D canvas exactly as shown: same view, colours and background.
+
+        The frame is captured first, the instant the button is pressed, and
+        only then is the file name asked for -- so the dialog can neither
+        cover the canvas nor let the view drift before the capture.
+        """
+        if self.viewer is None or not self.viewer.viewer_window_is_open():
+            await self._show_info("No Image", "Open the 3D view with 'Show surface' first; "
+                                              "the image is taken from that window as shown.")
+            return
+        try:
+            image = await self.viewer.capture_frame()
+        except RuntimeError as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        try:
+            path = await self._ask_image_path(self.default_image_name())
+            if not path:
+                return
+            saved = save_canvas_image(image, str(path))
+        except (ValueError, OSError) as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        height, width = image.shape[:2]
+        self.status_label.text = f"Image saved ({width} x {height} px): {saved}"
 
     def clear_output(self, widget):
         self.results = None

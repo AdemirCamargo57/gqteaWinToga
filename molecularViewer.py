@@ -1,7 +1,9 @@
 import asyncio
+import concurrent.futures
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import glfw
@@ -20,6 +22,45 @@ from molecularDesign import MolecularDesignController
 
 Atom = Tuple[str, Tuple[float, float, float]]
 Frame = List[Atom]
+
+# Lossless formats only: an exported canvas must be the displayed pixels.
+CANVAS_IMAGE_FORMATS = {".png": "PNG", ".tif": "TIFF", ".tiff": "TIFF", ".bmp": "BMP"}
+DEFAULT_CANVAS_IMAGE_SUFFIX = ".png"
+
+
+def framebuffer_rows_to_image(raw, width: int, height: int) -> np.ndarray:
+    """glReadPixels GL_RGB bytes (bottom row first) -> (height, width, 3) uint8, top row first."""
+    if isinstance(raw, (bytes, bytearray, memoryview)):
+        data = np.frombuffer(raw, dtype=np.uint8)
+    else:
+        data = np.asarray(raw, dtype=np.uint8).ravel()
+    if data.size != width * height * 3:
+        raise ValueError(f"Expected {width * height * 3} bytes for a {width} x {height} RGB image, got {data.size}.")
+    return np.ascontiguousarray(data.reshape(height, width, 3)[::-1])
+
+
+def save_canvas_image(image: np.ndarray, path: str) -> str:
+    """Write an (H, W, 3) uint8 image losslessly; the suffix picks the format.
+
+    A path without a suffix gets ``.png``. Returns the path written. Raises
+    ValueError for a lossy or unknown format and OSError if the write fails.
+    """
+    from PIL import Image  # Pillow ships with matplotlib; only needed here
+
+    target = Path(path)
+    if not target.suffix:
+        target = target.with_name(target.name + DEFAULT_CANVAS_IMAGE_SUFFIX)
+    image_format = CANVAS_IMAGE_FORMATS.get(target.suffix.lower())
+    if image_format is None:
+        raise ValueError(
+            f"Cannot save '{target.suffix}' images. Use PNG, TIFF or BMP, which keep "
+            "the canvas pixels exactly (JPEG would alter the colours)."
+        )
+    pixels = np.ascontiguousarray(image, dtype=np.uint8)
+    if pixels.ndim != 3 or pixels.shape[2] != 3:
+        raise ValueError(f"Expected an (height, width, 3) RGB image, got shape {pixels.shape}.")
+    Image.fromarray(pixels).save(target, format=image_format)
+    return str(target)
 
 
 class MolecularViewer:
@@ -64,6 +105,11 @@ class MolecularViewer:
         self._projection_update_requested = False
         self._scene_radius_cache: Dict[int, float] = {}
         self._fixed_scene_radius: Optional[float] = None
+        # Canvas clear colour, read by main_loop every frame (so a change shows
+        # on the next frame), and pending image captures, which only the
+        # render thread may serve because only it owns the GL context.
+        self.background_color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._capture_requests: List[concurrent.futures.Future] = []
 
         # Sample molecule data (used until a trajectory is loaded)
         self.molecule_data: Frame = [
@@ -378,6 +424,80 @@ class MolecularViewer:
 
     def viewer_window_is_open(self) -> bool:
         return bool(self._render_thread and self._render_thread.is_alive())
+
+    # ------------------------------------------------------------------
+    # Canvas background and image capture
+    # ------------------------------------------------------------------
+    def set_background_color(self, rgb):
+        """Canvas clear colour as an (r, g, b) triple in [0, 1]; shown from the next frame."""
+        try:
+            colour = tuple(float(c) for c in rgb)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Background colour must be three numbers, got {rgb!r}.") from exc
+        if isinstance(rgb, str) or len(colour) != 3 or not all(0.0 <= c <= 1.0 for c in colour):
+            raise ValueError(f"Background colour must be three numbers in [0, 1], got {rgb!r}.")
+        self.background_color = colour
+
+    def request_frame_capture(self) -> concurrent.futures.Future:
+        """Ask the render loop for the next frame's pixels.
+
+        The future resolves to an (height, width, 3) uint8 image of the whole
+        canvas, read after everything (surface, labels, overlays) has been
+        drawn and before the buffers are swapped -- i.e. exactly the frame the
+        window then shows. Nothing about the view is changed.
+        """
+        future: concurrent.futures.Future = concurrent.futures.Future()
+        if not self.viewer_window_is_open():
+            future.set_exception(RuntimeError("The 3D viewer window is not open."))
+            return future
+        with self._state_lock:
+            self._capture_requests.append(future)
+        return future
+
+    async def capture_frame(self, timeout: float = 5.0) -> np.ndarray:
+        """Awaitable form of request_frame_capture; raises RuntimeError on failure."""
+        future = self.request_frame_capture()
+        try:
+            return await asyncio.wait_for(asyncio.wrap_future(future), timeout)
+        except asyncio.TimeoutError:
+            with self._state_lock:
+                if future in self._capture_requests:
+                    self._capture_requests.remove(future)
+            raise RuntimeError("The 3D viewer did not respond; the image was not captured.") from None
+
+    def _service_capture_requests(self):
+        """Render thread: answer pending captures from the frame just drawn."""
+        with self._state_lock:
+            pending, self._capture_requests = self._capture_requests, []
+        if not pending:
+            return
+        try:
+            image = self._read_framebuffer()
+        except Exception as exc:
+            for future in pending:
+                if not future.done():
+                    future.set_exception(RuntimeError(str(exc)))
+            return
+        for future in pending:
+            if not future.done():
+                future.set_result(image)
+
+    def _fail_capture_requests(self, message: str):
+        with self._state_lock:
+            pending, self._capture_requests = self._capture_requests, []
+        for future in pending:
+            if not future.done():
+                future.set_exception(RuntimeError(message))
+
+    def _read_framebuffer(self) -> np.ndarray:
+        """Render thread: the back buffer's pixels, at the window's real pixel size."""
+        width, height = glfw.get_framebuffer_size(self.window)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("The 3D viewer window is minimised; restore it and export again.")
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        glReadBuffer(GL_BACK)
+        raw = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
+        return framebuffer_rows_to_image(raw, width, height)
 
     async def ensure_viewer_window(self, timeout: float = 5.0):
         """Open the 3D window, or focus it if it is already open.
@@ -1664,6 +1784,7 @@ class MolecularViewer:
                     frame_data = self.get_current_frame_data()
                     bonds = list(self.bonds)
 
+                glClearColor(*self.background_color, 1.0)
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
                 glLoadIdentity()
 
@@ -1700,11 +1821,15 @@ class MolecularViewer:
                 if not self.fast_playback_mode:
                     self.draw_cartesian_axes_overlay()
                 self.draw_screen_overlay()
+                # After the last draw call, before the swap: the captured
+                # pixels are exactly the frame about to be shown.
+                self._service_capture_requests()
 
                 glfw.swap_buffers(self.window)
                 glfw.poll_events()
                 time.sleep(0.01)
         finally:
+            self._fail_capture_requests("The 3D viewer window was closed before the image was captured.")
             try:
                 self._destroy_gl_resources()
             finally:

@@ -158,6 +158,7 @@ def make_ui():
     ui.unit_selection = SimpleNamespace(value="a.u.")
     ui.opacity_selection = SimpleNamespace(value="Opaque")
     ui.extrema_switch = SimpleNamespace(value=True)
+    ui.background_selection = SimpleNamespace(value="Black")
     ui.summary_output = SimpleNamespace(value="")
     ui.status_label = SimpleNamespace(text="")
     ui.progress_bar = SimpleNamespace(value=0)
@@ -216,3 +217,123 @@ class TestUI:
         assert ui.results is None and ui.surface_selection.items == []
         asyncio.run(ui.show_surface(None))
         assert ui.errors[-1][0] == "No Results"
+
+
+class StubViewer:
+    """Stands in for ESPSurfaceViewer: records background, serves one canned frame."""
+
+    def __init__(self, image=None, open_=True, error=None):
+        self.image = image
+        self.open = open_
+        self.error = error
+        self.background = None
+        self.captures = 0
+
+    def viewer_window_is_open(self):
+        return self.open
+
+    def set_background_color(self, rgb):
+        self.background = rgb
+
+    async def capture_frame(self, timeout=5.0):
+        self.captures += 1
+        if self.error:
+            raise RuntimeError(self.error)
+        return self.image
+
+
+class TestCanvasBackground:
+    def test_black_and_white_are_offered_and_black_is_the_default(self):
+        assert list(esp.BACKGROUND_COLOURS)[0] == "Black"
+        assert esp.BACKGROUND_COLOURS["Black"] == (0.0, 0.0, 0.0)
+        assert esp.BACKGROUND_COLOURS["White"] == (1.0, 1.0, 1.0)
+
+    def test_change_is_applied_to_an_open_viewer_immediately(self):
+        ui = make_ui()
+        ui.viewer = StubViewer()
+        ui.background_selection.value = "White"
+        ui.on_background_change(ui.background_selection)
+        assert ui.viewer.background == (1.0, 1.0, 1.0)
+
+    def test_change_without_results_still_applies(self):
+        ui = make_ui()  # no run yet: the background is a view setting, not a result
+        ui.viewer = StubViewer()
+        ui.background_selection.value = "Light grey"
+        ui.on_background_change(None)
+        assert ui.viewer.background == esp.BACKGROUND_COLOURS["Light grey"]
+
+    def test_change_without_a_viewer_is_harmless(self):
+        ui = make_ui()
+        ui.background_selection.value = "White"
+        ui.on_background_change(None)
+        assert ui.selected_background() == (1.0, 1.0, 1.0)
+
+
+class TestExportImage:
+    def _ui_with_results(self, tmp_path):
+        ui = make_ui()
+        ui.fchk_input.value = str(fchk_path("water_631gd_6d"))
+        ui.output_dir_input.value = str(tmp_path)
+        ui.isovalue_input.value = "0.001"
+        asyncio.run(ui.workflow(None))
+        assert not ui.errors
+        return ui
+
+    def test_without_an_open_viewer_explains_what_to_do(self):
+        ui = make_ui()
+        asyncio.run(ui.export_image(None))
+        assert ui.errors[-1][0] == "No Image"
+        ui.viewer = StubViewer(open_=False)
+        asyncio.run(ui.export_image(None))
+        assert ui.errors[-1][0] == "No Image" and ui.viewer.captures == 0
+
+    def test_default_name_names_the_file_and_the_isovalue(self, tmp_path):
+        ui = self._ui_with_results(tmp_path)
+        assert ui.default_image_name() == "water_631gd_6d_ESP_rho0.001000.png"
+        assert make_ui().default_image_name() == "ESP_surface.png"
+
+    def test_saves_exactly_the_captured_pixels(self, tmp_path):
+        from PIL import Image
+
+        ui = self._ui_with_results(tmp_path)
+        image = np.random.default_rng(1).integers(0, 256, size=(6, 9, 3), dtype=np.uint8)
+        ui.viewer = StubViewer(image)
+        asked = []
+
+        async def ask(suggested):
+            asked.append(suggested)
+            return tmp_path / "picture.png"
+        ui._ask_image_path = ask
+        asyncio.run(ui.export_image(None))
+        assert not ui.errors and asked == ["water_631gd_6d_ESP_rho0.001000.png"]
+        with Image.open(tmp_path / "picture.png") as saved:
+            assert np.array_equal(np.asarray(saved.convert("RGB")), image)
+        assert "picture.png" in ui.status_label.text and "9 x 6" in ui.status_label.text
+
+    def test_the_frame_is_captured_before_the_dialog_opens(self, tmp_path):
+        ui = make_ui()
+        ui.viewer = StubViewer(np.zeros((2, 2, 3), np.uint8))
+        order = []
+
+        async def ask(suggested):
+            order.append(("dialog", ui.viewer.captures))
+            return None
+        ui._ask_image_path = ask
+        asyncio.run(ui.export_image(None))
+        assert order == [("dialog", 1)] and not ui.errors  # cancelled: nothing written, no error
+
+    def test_capture_failure_is_a_dialog(self):
+        ui = make_ui()
+        ui.viewer = StubViewer(error="The viewer window is minimised.")
+        asyncio.run(ui.export_image(None))
+        assert ui.errors[-1] == ("Export Image Error", "The viewer window is minimised.")
+
+    def test_write_failure_is_a_dialog(self, tmp_path):
+        ui = make_ui()
+        ui.viewer = StubViewer(np.zeros((2, 2, 3), np.uint8))
+
+        async def ask(suggested):
+            return tmp_path / "picture.jpg"
+        ui._ask_image_path = ask
+        asyncio.run(ui.export_image(None))
+        assert ui.errors[-1][0] == "Export Image Error"

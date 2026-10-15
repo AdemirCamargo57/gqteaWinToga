@@ -6,10 +6,17 @@ tab. They construct known OpenGL-style matrices and feed them directly, so no
 GL context (and no GUI) is required — matching the headless test convention in
 tests/conftest.py.
 """
+import os
+
 import numpy as np
 import pytest
 
-from molecularViewer import MolecularViewer, MolecularViewerUI
+from molecularViewer import (
+    MolecularViewer,
+    MolecularViewerUI,
+    framebuffer_rows_to_image,
+    save_canvas_image,
+)
 
 
 def _ortho_matrix(left, right, bottom, top, near, far):
@@ -859,3 +866,121 @@ def test_a_blank_max_bond_length_restores_the_defaults():
     ui.textInput_length.value = "   "
     asyncio.run(ui.set_connection_distance(None))
     assert ui.connection_distance is None
+
+
+# ----------------------------------------------------------------------
+# Canvas background and image capture
+# ----------------------------------------------------------------------
+def test_framebuffer_rows_are_flipped_to_top_down():
+    # 2 x 2 pixels as glReadPixels returns them: bottom row first.
+    raw = bytes([1, 1, 1, 2, 2, 2,      # bottom row
+                 3, 3, 3, 4, 4, 4])     # top row
+    image = framebuffer_rows_to_image(raw, 2, 2)
+    assert image.dtype == np.uint8 and image.shape == (2, 2, 3)
+    assert image[0, 0, 0] == 3 and image[0, 1, 0] == 4   # top row first
+    assert image[1, 0, 0] == 1 and image[1, 1, 0] == 2
+
+
+def test_framebuffer_rows_accept_an_array_and_reject_a_wrong_size():
+    image = framebuffer_rows_to_image(np.arange(12, dtype=np.uint8), 2, 2)
+    assert image[1, 0].tolist() == [0, 1, 2]
+    with pytest.raises(ValueError):
+        framebuffer_rows_to_image(bytes(11), 2, 2)
+
+
+def test_background_defaults_to_black_and_is_validated():
+    viewer = MolecularViewer()
+    assert viewer.background_color == (0.0, 0.0, 0.0)
+    viewer.set_background_color((1, 1, 1))
+    assert viewer.background_color == (1.0, 1.0, 1.0)
+    for bad in [(1.0, 1.0), (0.0, 0.0, 1.5), (0.0, -0.1, 0.0), "white"]:
+        with pytest.raises(ValueError):
+            viewer.set_background_color(bad)
+    assert viewer.background_color == (1.0, 1.0, 1.0)
+
+
+def test_capture_without_an_open_window_is_an_error():
+    viewer = MolecularViewer()
+    with pytest.raises(RuntimeError, match="not open"):
+        asyncio.run(viewer.capture_frame())
+
+
+def _viewer_pretending_to_be_open(monkeypatch, image):
+    viewer = MolecularViewer()
+    monkeypatch.setattr(viewer, "viewer_window_is_open", lambda: True)
+    monkeypatch.setattr(viewer, "_read_framebuffer", lambda: image)
+    return viewer
+
+
+def test_capture_is_served_by_the_render_loop_without_touching_the_view(monkeypatch):
+    image = np.zeros((3, 4, 3), dtype=np.uint8)
+    viewer = _viewer_pretending_to_be_open(monkeypatch, image)
+    view_before = (viewer.rotation_angle_x, viewer.rotation_angle_y, viewer.zoom_factor,
+                   list(viewer.translation_vector), viewer.molecule_rotation_x)
+
+    async def scenario():
+        task = asyncio.create_task(viewer.capture_frame(timeout=2.0))
+        await asyncio.sleep(0.05)
+        viewer._service_capture_requests()  # what main_loop does before swapping buffers
+        return await task
+
+    assert asyncio.run(scenario()) is image
+    assert viewer._capture_requests == []
+    assert view_before == (viewer.rotation_angle_x, viewer.rotation_angle_y, viewer.zoom_factor,
+                           list(viewer.translation_vector), viewer.molecule_rotation_x)
+
+
+def test_a_failed_read_reaches_the_caller(monkeypatch):
+    viewer = _viewer_pretending_to_be_open(monkeypatch, None)
+
+    def broken():
+        raise RuntimeError("The viewer window is minimised.")
+    monkeypatch.setattr(viewer, "_read_framebuffer", broken)
+
+    async def scenario():
+        task = asyncio.create_task(viewer.capture_frame(timeout=2.0))
+        await asyncio.sleep(0.05)
+        viewer._service_capture_requests()
+        return await task
+
+    with pytest.raises(RuntimeError, match="minimised"):
+        asyncio.run(scenario())
+
+
+def test_capture_times_out_and_withdraws_its_request(monkeypatch):
+    viewer = _viewer_pretending_to_be_open(monkeypatch, np.zeros((1, 1, 3), np.uint8))
+    with pytest.raises(RuntimeError, match="did not respond"):
+        asyncio.run(viewer.capture_frame(timeout=0.05))
+    assert viewer._capture_requests == []
+
+
+def test_closing_the_window_fails_pending_captures(monkeypatch):
+    viewer = _viewer_pretending_to_be_open(monkeypatch, None)
+    future = viewer.request_frame_capture()
+    viewer._fail_capture_requests("The 3D viewer window was closed.")
+    with pytest.raises(RuntimeError, match="closed"):
+        future.result(timeout=0)
+
+
+@pytest.mark.parametrize("name", ["view.png", "view.tif", "view.tiff", "view.bmp"])
+def test_saved_image_is_pixel_identical(tmp_path, name):
+    from PIL import Image
+
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 256, size=(7, 5, 3), dtype=np.uint8)
+    path = save_canvas_image(image, str(tmp_path / name))
+    assert path == str(tmp_path / name)
+    with Image.open(path) as saved:
+        assert saved.size == (5, 7)
+        assert np.array_equal(np.asarray(saved.convert("RGB")), image)
+
+
+def test_saved_image_gets_png_when_no_extension(tmp_path):
+    path = save_canvas_image(np.zeros((2, 2, 3), np.uint8), str(tmp_path / "view"))
+    assert path.endswith("view.png") and os.path.isfile(path)
+
+
+def test_lossy_or_unknown_image_format_is_refused(tmp_path):
+    for name in ("view.jpg", "view.xyz"):
+        with pytest.raises(ValueError, match="PNG"):
+            save_canvas_image(np.zeros((2, 2, 3), np.uint8), str(tmp_path / name))

@@ -66,3 +66,11 @@ class TestViewerState:
         viewer.set_surface(np.eye(3), np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.001)
         viewer.clear_surface()
         assert viewer.get_surface() is None and viewer.colour_bar_text() is None
+
+
+class TestOverlayText:
+    def test_text_contrasts_with_the_background(self):
+        assert ev.contrasting_text_colour((0.0, 0.0, 0.0)) == (1.0, 1.0, 1.0)
+        assert ev.contrasting_text_colour((1.0, 1.0, 1.0)) == (0.0, 0.0, 0.0)
+        assert ev.contrasting_text_colour((0.85, 0.85, 0.85)) == (0.0, 0.0, 0.0)
+        assert ev.contrasting_text_colour((0.25, 0.25, 0.25)) == (1.0, 1.0, 1.0)
