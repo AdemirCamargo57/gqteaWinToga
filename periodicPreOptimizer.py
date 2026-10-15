@@ -206,7 +206,7 @@ class OverlapPenalty:
     def __init__(self, system: PackedSystem, cell: PeriodicCell, vdw_scale: float,
                  solute_clearance: float = 0.0, wall_padding: float = 0.0,
                  penalty_constant: float = PENALTY_CONSTANT, wall_constant: float = WALL_CONSTANT,
-                 sigma_factor: float = 1.0):
+                 sigma_factor: float = 1.0, wall_bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None):
         if vdw_scale <= 0.0:
             raise ValueError("vdW scale must be positive.")
         self.cell = cell
@@ -230,10 +230,26 @@ class OverlapPenalty:
                 f"smallest cell length ({0.5 * float(np.min(cell.lengths)):.2f} A) for the "
                 "minimum-image convention to hold. Use a larger box or a smaller vdW scale."
             )
+        # Non-periodic walls: per-atom (low, high) bounds, (N, 3) each, +-inf
+        # where an atom has no wall on that side. By default every atom is
+        # kept in [pad, L - pad]; the shared-wall box passes its own bounds
+        # (no wall at the interface between its two regions).
+        self.wall_low = self.wall_high = None
         if not cell.periodic:
-            inner = cell.lengths - 2.0 * self.wall_padding
-            if np.any(inner <= 0.0):
-                raise ValueError("The wall padding leaves no room inside the box.")
+            if wall_bounds is None:
+                inner = cell.lengths - 2.0 * self.wall_padding
+                if np.any(inner <= 0.0):
+                    raise ValueError("The wall padding leaves no room inside the box.")
+                count = len(self.radii)
+                self.wall_low = np.full((count, 3), self.wall_padding)
+                self.wall_high = np.tile(cell.lengths - self.wall_padding, (count, 1))
+            else:
+                self.wall_low = np.asarray(wall_bounds[0], dtype=float)
+                self.wall_high = np.asarray(wall_bounds[1], dtype=float)
+                if self.wall_low.shape != (len(self.radii), 3) or self.wall_high.shape != self.wall_low.shape:
+                    raise ValueError("Wall bounds must give (low, high) for every atom and axis.")
+                if np.any(self.wall_high - self.wall_low <= 0.0):
+                    raise ValueError("The wall padding leaves no room inside the box.")
 
     def contacts(self, coordinates: np.ndarray):
         """Intermolecular pairs closer than the search radius.
@@ -278,10 +294,8 @@ class OverlapPenalty:
                 np.add.at(gradient, i[active], contribution)
                 np.add.at(gradient, j[active], -contribution)
         if not self.cell.periodic:
-            low = self.wall_padding
-            high = self.cell.lengths - self.wall_padding
-            below = np.minimum(coordinates - low, 0.0)
-            above = np.maximum(coordinates - high, 0.0)
+            below = np.minimum(coordinates - self.wall_low, 0.0)
+            above = np.maximum(coordinates - self.wall_high, 0.0)
             energy += self.k_wall * float(np.sum(below * below) + np.sum(above * above))
             gradient += 2.0 * self.k_wall * (below + above)
         return energy, gradient
@@ -298,6 +312,72 @@ class OverlapPenalty:
             "min_distance": float(np.min(distance)),
             "min_ratio": float(np.min(ratio)),
         }
+
+
+class SlabRestraint:
+    """Flat-bottom harmonic restraint on each molecule's centre of mass along one axis.
+
+    ``bounds[m] = (low, high)``; zero energy while the centre of mass of
+    molecule ``m`` is inside, ``k (low - z)^2`` / ``k (z - high)^2`` outside.
+    The shared-wall box uses it to keep each region's molecules in their own
+    slab during pre-optimization, so the interface composition is preserved.
+    The force on the centre of mass is shared by the atoms in proportion to
+    their mass (geometric weights for a massless molecule).
+    """
+
+    def __init__(self, system: PackedSystem, bounds, axis: int = 2, force_constant: float = WALL_CONSTANT):
+        self.bounds = np.asarray(bounds, dtype=float).reshape(-1, 2)
+        if len(self.bounds) != len(system.molecule_slices):
+            raise ValueError("Slab restraint bounds are needed for every molecule.")
+        if np.any(self.bounds[:, 1] <= self.bounds[:, 0]):
+            raise ValueError("Each slab must have high > low.")
+        self.axis = int(axis)
+        self.k = float(force_constant)
+        self.molecule_id = system.molecule_ids()
+        weights = system.masses.copy()
+        totals = np.zeros(len(system.molecule_slices))
+        np.add.at(totals, self.molecule_id, weights)
+        for index, (start, stop) in enumerate(system.molecule_slices):
+            if totals[index] <= 0.0:
+                weights[start:stop] = 1.0
+                totals[index] = float(stop - start)
+        self.fraction = weights / totals[self.molecule_id]   # d(COM)/d(x_atom)
+        self.count = len(system.molecule_slices)
+
+    def centres(self, coordinates: np.ndarray) -> np.ndarray:
+        com = np.zeros(self.count)
+        np.add.at(com, self.molecule_id, self.fraction * coordinates[:, self.axis])
+        return com
+
+    def energy_and_gradient(self, coordinates: np.ndarray) -> Tuple[float, np.ndarray]:
+        com = self.centres(coordinates)
+        below = np.minimum(com - self.bounds[:, 0], 0.0)
+        above = np.maximum(com - self.bounds[:, 1], 0.0)
+        energy = self.k * float(np.sum(below * below) + np.sum(above * above))
+        d_com = 2.0 * self.k * (below + above)
+        gradient = np.zeros_like(coordinates)
+        gradient[:, self.axis] = d_com[self.molecule_id] * self.fraction
+        return energy, gradient
+
+    def outside(self, coordinates: np.ndarray) -> int:
+        com = self.centres(coordinates)
+        return int(np.count_nonzero((com < self.bounds[:, 0] - 1e-6) | (com > self.bounds[:, 1] + 1e-6)))
+
+
+class CompositeTerm:
+    """Sum of energy terms that all take and return atom coordinates."""
+
+    def __init__(self, terms):
+        self.terms = list(terms)
+
+    def energy_and_gradient(self, coordinates: np.ndarray) -> Tuple[float, np.ndarray]:
+        energy = 0.0
+        gradient = np.zeros_like(coordinates)
+        for term in self.terms:
+            e, g = term.energy_and_gradient(coordinates)
+            energy += e
+            gradient += g
+        return energy, gradient
 
 
 # ----------------------------------------------------------------------
@@ -495,7 +575,9 @@ def pre_optimize(system: PackedSystem, cell: PeriodicCell, vdw_scale: float,
                  mode: str = MODE_RIGID, max_iterations: int = DEFAULT_MAX_ITERATIONS,
                  solute_clearance: float = 0.0, wall_padding: float = 0.0,
                  callback: Optional[Callable[[np.ndarray, int, float], None]] = None,
-                 should_stop: Optional[Callable[[], bool]] = None) -> PreOptimizationResult:
+                 should_stop: Optional[Callable[[], bool]] = None,
+                 wall_bounds: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+                 slab_bounds=None, slab_axis: int = 2) -> PreOptimizationResult:
     """Relax intermolecular overlaps; return the molecule-wrapped structure.
 
     ``callback(wrapped_coordinates, iteration, energy)`` is called after every
@@ -512,10 +594,15 @@ def pre_optimize(system: PackedSystem, cell: PeriodicCell, vdw_scale: float,
 
     # ``reporter`` measures against the true sigma; the model minimizes
     # ``penalty``, whose sigma carries OPTIMIZATION_MARGIN.
-    reporter = OverlapPenalty(system, cell, vdw_scale, solute_clearance, wall_padding)
+    reporter = OverlapPenalty(system, cell, vdw_scale, solute_clearance, wall_padding,
+                              wall_bounds=wall_bounds)
     penalty = OverlapPenalty(system, cell, vdw_scale, solute_clearance, wall_padding,
-                             sigma_factor=1.0 + OPTIMIZATION_MARGIN)
-    model = RigidBodyModel(system, penalty) if mode == MODE_RIGID else FlexibleModel(system, penalty)
+                             sigma_factor=1.0 + OPTIMIZATION_MARGIN, wall_bounds=wall_bounds)
+    # ``slab_bounds`` (one (low, high) per molecule along ``slab_axis``) keeps
+    # each molecule's centre of mass in its own region -- the shared-wall box.
+    slab = SlabRestraint(system, slab_bounds, slab_axis) if slab_bounds is not None else None
+    term = CompositeTerm([penalty, slab]) if slab is not None else penalty
+    model = RigidBodyModel(system, term) if mode == MODE_RIGID else FlexibleModel(system, term)
 
     start = system.coordinates
     energy_initial = reporter.energy_and_gradient(start)[0]
@@ -544,7 +631,8 @@ def pre_optimize(system: PackedSystem, cell: PeriodicCell, vdw_scale: float,
             raise StopIteration
 
     notes: List[str] = []
-    if report_initial["clashes"] == 0 and energy_initial == 0.0:
+    slab_clear = slab is None or slab.energy_and_gradient(start)[0] == 0.0
+    if report_initial["clashes"] == 0 and energy_initial == 0.0 and slab_clear:
         params = model.initial_parameters()
         success, message = True, "no overlaps to relax"
     else:
@@ -572,6 +660,10 @@ def pre_optimize(system: PackedSystem, cell: PeriodicCell, vdw_scale: float,
         notes.append("The minimizer produced non-finite coordinates; the starting structure was kept.")
     energy_final = reporter.energy_and_gradient(final)[0]
     report_final = reporter.report(final)
+    if slab is not None:
+        outside = slab.outside(final)
+        if outside:
+            notes.append(f"{outside} molecules ended with their centre of mass outside their region.")
     if report_final["clashes"]:
         notes.append(
             f"{report_final['clashes']} atom pairs are still closer than the clash cutoff; "

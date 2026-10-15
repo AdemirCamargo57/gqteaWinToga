@@ -1288,8 +1288,16 @@ Inputs and options:
 - Density calculation.
 - Periodic minimum-image clash detection.
 - Insert centered solute.
+- **Charge and spin**: solute charge, charge per solvent A molecule and per solvent B molecule (integers, blank = 0) and the required **total spin multiplicity**.
+- **Pre-optimization** and **Advanced > Packing engine**, as described for the [Single Solute Solvent Box](#single-solute-solvent-box).
 
-Outputs include a generated XYZ structure and a TXT summary with composition and insertion statistics.
+The window uses the same **Setup / Construction / Summary** tabs, **Cancel** button and live construction view as the single-solute builder; solvent A is drawn blue, solvent B green and the solute orange. The net charge is solute charge + (inserted A molecules × A charge) + (inserted B molecules × B charge), and the electron count and multiplicity check work exactly as for the single-solute box. All packing engines give the same box for the same seed.
+
+Outputs:
+
+- `mixture_solvent_box.xyz` — the packed box, as before.
+- `mixture_solvent_box.txt` — the summary with composition, insertion statistics, system properties and pre-optimization results.
+- `mixture_solvent_box_preopt.xyz` — the pre-optimized, molecule-wrapped box, only when pre-optimization ran.
 
 #### Shared-Wall Double Solvent Box
 
@@ -1330,10 +1338,22 @@ Per-box inputs and options:
 - Include a centered solute.
 - Solvent A, Solvent B, and optional solute XYZ files.
 
+Charge, spin and pre-optimization (Setup tab, below the two boxes):
+
+- **Charge and spin**: for each box the solute charge and the charge per solvent A and per solvent B molecule (integers, blank = 0), and one **total spin multiplicity** for the whole cell (required, never inferred). The net charge is the sum over both boxes; the electron count and the multiplicity check work as for the [Single Solute Solvent Box](#single-solute-solvent-box).
+- **Pre-optimization** works on the combined `a × b × (c1 + c2)` cell, adapted to the two-region geometry:
+  - a flat-bottom restraint keeps each molecule's centre of mass inside the region it was packed into (Box 1: `0 ≤ z ≤ c1`, Box 2: `c1 ≤ z ≤ c1 + c2`), so molecules relax across contacts but the interface composition is preserved. A note in the summary reports any molecule that ends outside its region;
+  - with minimum-image detection off, soft walls act at each box's wall padding on the x/y faces and on the outer z faces only — never at the shared interface;
+  - the target contact scale defaults to 0.90 or the larger of the two boxes' vdW scales; the extra solute clearance is the larger of the two boxes' solute gaps.
+- **Advanced > Packing engine**: as for the single-solute builder; Box 2 is checked against everything already placed in Box 1, and all engines give the same structure for the same seeds.
+
+The window has **Setup / Construction / Summary** tabs; the Construction view shows Box 1 being filled, then Box 2, then the pre-optimization.
+
 Typical outputs:
 
-- `shared_wall_box.xyz`
-- `shared_wall_box.txt`
+- `shared_wall_box.xyz` — the packed structure, as before. It is still shifted so that its lowest atom sits at `z = 0`.
+- `shared_wall_box.txt` — the summary, now with system properties and pre-optimization results.
+- `shared_wall_box_preopt.xyz` — the pre-optimized structure, only when pre-optimization ran. It is **not** shifted: it is in cell coordinates (Box 1 from `z = 0`, Box 2 from `z = c1`) with every molecule wrapped whole into the cell, and the cell lengths are on its comment line.
 
 Example workflow:
 

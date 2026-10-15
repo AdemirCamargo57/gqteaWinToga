@@ -281,6 +281,61 @@ def test_summary_lines():
     assert "Clashing atom pairs" in text and "Molecular connectivity: preserved" in text
 
 
+# ----------------------------------------------------------------------
+# Shared-wall support: slab restraint and per-atom walls
+# ----------------------------------------------------------------------
+def test_slab_restraint_gradient_matches_finite_differences():
+    system, cell = crowded_system()
+    bounds = np.tile([3.0, 5.0], (len(system.molecule_slices), 1))
+    restraint = ppo.SlabRestraint(system, bounds, axis=2)
+    energy, analytic = restraint.energy_and_gradient(system.coordinates)
+    assert energy > 0.0
+    fn = lambda flat: (restraint.energy_and_gradient(flat.reshape(-1, 3))[0], None)
+    assert np.allclose(analytic.ravel(), finite_difference(fn, system.coordinates.ravel()), rtol=1e-6, atol=1e-6)
+
+
+def test_composite_rigid_gradient_with_slab():
+    system, cell = crowded_system()
+    bounds = np.tile([2.0, 6.0], (len(system.molecule_slices), 1))
+    term = ppo.CompositeTerm([ppo.OverlapPenalty(system, cell, 0.8), ppo.SlabRestraint(system, bounds)])
+    model = ppo.RigidBodyModel(system, term)
+    params = model.initial_parameters() + np.random.default_rng(4).normal(scale=0.3, size=6 * model.count)
+    numeric = finite_difference(model.energy_and_gradient, params)
+    assert np.allclose(model.energy_and_gradient(params)[1], numeric, rtol=1e-5, atol=1e-5)
+
+
+def test_slab_restraint_keeps_two_regions_apart():
+    # Two crowded layers of water across a z interface at 6 A in a 12 A periodic cell.
+    rng = np.random.default_rng(8)
+    lower = np.column_stack([rng.uniform(0, 12, 10), rng.uniform(0, 12, 10), rng.uniform(4.5, 5.9, 10)])
+    upper = np.column_stack([rng.uniform(0, 12, 10), rng.uniform(0, 12, 10), rng.uniform(6.1, 7.5, 10)])
+    system = water_system(np.vstack([lower, upper]), random_rotations(20, 8))
+    cell = ppo.PeriodicCell([12.0, 12.0, 12.0])
+    bounds = [(0.0, 6.0)] * 10 + [(6.0, 12.0)] * 10
+    result = ppo.pre_optimize(system, cell, 0.9, slab_bounds=bounds)
+    centres = ppo.molecule_centres(result.coordinates, system.masses, system.molecule_slices)
+    assert result.report_final["clashes"] == 0
+    assert np.all(centres[:10, 2] <= 6.0 + 1e-3) and np.all(centres[10:, 2] >= 6.0 - 1e-3)
+    assert not any("outside their region" in note for note in result.notes)
+
+
+def test_per_atom_wall_bounds():
+    system = water_system([[1.0, 5.0, 5.0], [5.0, 5.0, 9.4]])
+    cell = ppo.PeriodicCell([10.0] * 3, periodic=False)
+    low = np.full((6, 3), -np.inf)
+    high = np.full((6, 3), np.inf)
+    low[:3, 0] = 2.0      # first molecule: wall at x = 2
+    high[3:, 2] = 9.0     # second molecule: wall at z = 9
+    penalty = ppo.OverlapPenalty(system, cell, 0.8, wall_bounds=(low, high))
+    energy, gradient = penalty.energy_and_gradient(system.coordinates)
+    assert energy > 0.0
+    assert np.all(gradient[:3, 0] < 0.0) and np.all(gradient[:3, 1:] == 0.0)
+    fn = lambda flat: (penalty.energy_and_gradient(flat.reshape(-1, 3))[0], None)
+    assert np.allclose(gradient.ravel(), finite_difference(fn, system.coordinates.ravel()), rtol=1e-5, atol=1e-5)
+    with pytest.raises(ValueError, match="every atom"):
+        ppo.OverlapPenalty(system, cell, 0.8, wall_bounds=(low[:2], high[:2]))
+
+
 def test_module_does_not_import_toga():
     code = "import sys, periodicPreOptimizer; print('toga' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(SRC))

@@ -1129,6 +1129,13 @@ solvent molecules (Solvent A and Solvent B) in XYZ format. Specify the compositi
 solute at the center. Ensure a specified minimum distance between solvent molecules to avoid overlap.
 By combining two solvents in precise proportions, this feature expands the application's 
 utility for more realistic molecular simulations.
+
+Charge and spin: enter the solute charge and the charge of one solvent A and one solvent B molecule;
+the net charge is computed once the inserted counts are known. The total spin multiplicity is required
+and never guessed; it is checked after the build ('Update properties' re-checks it without rebuilding).
+Pre-optimization (optional) pushes intermolecular contacts out to the target contact scale under
+periodic boundaries, as rigid or flexible molecules, and wraps every molecule whole into the cell
+(*_preopt.xyz). The Construction tab shows the build: solvent A blue, solvent B green, solute orange.
 """
 
     shared_wall_box = f""" Shared-Wall Double Solvent Box Builder: A Step-by-Step Guide
@@ -1138,6 +1145,12 @@ written to the final XYZ file. Each region can use its own pure solvent, binary 
 mixture, or binary solvent mixture with one centered solute molecule. The two regions share
 the same a and b lattice dimensions and use separate c heights. Periodic minimum-image clash
 detection is applied using the full combined box.
+
+Charge and spin: charges per box and species; one total spin multiplicity for the whole cell (required,
+never guessed, checked after the build). Pre-optimization (optional) relaxes the combined cell while a
+restraint keeps every molecule's centre of mass in the region it was packed into, so the interface is
+preserved; without periodicity, soft walls act on the outer faces only, never at the interface. The
+pre-optimized structure (*_preopt.xyz) is in cell coordinates; the packed file keeps its z shift.
 """
     
     single_solute_solvent_box = f""" Single Solute Solvent Box Builder: A Step-by-Step Guide

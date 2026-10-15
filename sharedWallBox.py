@@ -1,7 +1,6 @@
 import os
 import math
 import random
-import asyncio
 import time
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -9,9 +8,14 @@ import toga
 from toga.style import Pack
 from toga.style.pack import LEFT, CENTER, ROW, COLUMN
 from help import AtomicData, HelpGqteaWin
+from solventPacking import (
+    ENGINE_LEGACY, ENGINE_NUMPY, MoleculeGrid, RotationStream, atoms_clash, resolve_engine,
+)
+from systemProperties import parse_integer
+from solvationBoxCommon import SolvationExtrasEngine, SolvationExtrasUI
 
 
-class SharedWallBox:
+class SharedWallBox(SolvationExtrasEngine):
     """Build two adjacent solvent boxes sharing one z-normal face.
 
     Box 1 occupies z = 0..c1 and Box 2 occupies z = c1..c1+c2. The output XYZ
@@ -43,6 +47,10 @@ class SharedWallBox:
         self.last_progress_text_update = 0.0
         self.last_progress_text_box = None
         self.last_text_update = 0.0
+        # Pre-optimization, properties, progress, molecules (solvationBoxCommon);
+        # molecule_regions[m] is the region (1 or 2) molecule m was packed into.
+        self.init_solvation_extras()
+        self.molecule_regions = []
 
     def new_box_state(self, index):
         return {
@@ -78,6 +86,11 @@ class SharedWallBox:
             "radius_A": 0.0,
             "radius_B": 0.0,
             "radius_solute": 0.0,
+            # Charge per molecule of each species in this region.
+            "solute_charge": 0,
+            "charge_A": 0,
+            "charge_B": 0,
+            "molecules": [],
         }
 
     # ---------- IO helpers ----------
@@ -131,7 +144,10 @@ class SharedWallBox:
             if not ok:
                 return False
 
-        self.multi_line_text.value = self.build_parameter_summary()
+        if not await self.read_extras_params():
+            return False
+
+        self.multi_line_text.value = self.build_parameter_summary() + self.extras_parameter_text()
         return True
 
     async def read_box_params(self, box):
@@ -160,6 +176,8 @@ class SharedWallBox:
         box["max_attempts"] = await read_input(f"textInput_box{index}_max_attempts", f"Box {index} maximum insertion attempts", int, required=False, default=50000)
         box["vdw_scale"] = await read_input(f"textInput_box{index}_vdw_scale", f"Box {index} vdW scaling factor", float, required=False, default=0.80)
         box["random_seed"] = await read_input(f"textInput_box{index}_seed", f"Box {index} random seed", int, required=False, default=None)
+        if box["random_seed"] is None and getattr(self, f"textInput_box{index}_seed").value.strip():
+            return False  # read_input already explained the bad value
         comp_A = await read_input(f"textInput_box{index}_composition_A", f"Box {index} solvent A composition", float, required=False, default=100.0)
         comp_B = await read_input(f"textInput_box{index}_composition_B", f"Box {index} solvent B composition", float, required=False, default=0.0)
         box["min_distance"] = await read_input(f"textInput_box{index}_min_distance", f"Box {index} extra solute clearance", float, required=False, default=0.0)
@@ -390,95 +408,6 @@ class SharedWallBox:
                 return True
         return False
 
-    def grid_cell_size(self):
-        radii = []
-        for box in self.boxes:
-            for key in ["radius_A", "radius_B", "radius_solute"]:
-                if box.get(key, 0.0) > 0.0:
-                    radii.append(box[key])
-        max_radius = max(radii) if radii else 2.0
-        return max(4.0, min(12.0, max_radius + 2.5))
-
-    def make_entry_grid(self, entries, cell_size):
-        a, b, c = self.lattice_vectors
-        shape = (
-            max(1, int(math.ceil(a / cell_size))),
-            max(1, int(math.ceil(b / cell_size))),
-            max(1, int(math.ceil(c / cell_size))),
-        )
-        grid = {
-            "cells": {},
-            "shape": shape,
-            "widths": (a / shape[0], b / shape[1], c / shape[2]),
-            "max_radius": 0.0,
-        }
-        for entry in entries:
-            self.add_entry_to_grid(grid, entry)
-        return grid
-
-    def entry_cell_key(self, center, grid):
-        shape = grid["shape"]
-        key = []
-        for axis, length in enumerate(self.lattice_vectors):
-            value = float(center[axis])
-            if self.use_periodic_minimum_image and length > 0.0:
-                value = value % length
-            index = int(math.floor(value / grid["widths"][axis]))
-            index = max(0, min(shape[axis] - 1, index))
-            key.append(index)
-        return tuple(key)
-
-    def add_entry_to_grid(self, grid, entry):
-        key = self.entry_cell_key(entry["center"], grid)
-        grid["cells"].setdefault(key, []).append(entry)
-        grid["max_radius"] = max(grid["max_radius"], entry["radius"])
-
-    def iter_nearby_entries(self, grid, center, search_radius):
-        if not grid["cells"]:
-            return []
-        base_key = self.entry_cell_key(center, grid)
-        ranges = [
-            int(math.ceil(search_radius / width)) if width > 0.0 else 0
-            for width in grid["widths"]
-        ]
-        nearby = []
-        seen = set()
-        shape = grid["shape"]
-        for dx in range(-ranges[0], ranges[0] + 1):
-            ix = base_key[0] + dx
-            if self.use_periodic_minimum_image:
-                ix %= shape[0]
-            elif ix < 0 or ix >= shape[0]:
-                continue
-            for dy in range(-ranges[1], ranges[1] + 1):
-                iy = base_key[1] + dy
-                if self.use_periodic_minimum_image:
-                    iy %= shape[1]
-                elif iy < 0 or iy >= shape[1]:
-                    continue
-                for dz in range(-ranges[2], ranges[2] + 1):
-                    iz = base_key[2] + dz
-                    if self.use_periodic_minimum_image:
-                        iz %= shape[2]
-                    elif iz < 0 or iz >= shape[2]:
-                        continue
-                    for entry in grid["cells"].get((ix, iy, iz), []):
-                        entry_id = id(entry)
-                        if entry_id in seen:
-                            continue
-                        seen.add(entry_id)
-                        nearby.append(entry)
-        return nearby
-
-    def solvent_too_close_to_grid(self, solvent_coords, grid, candidate_center, candidate_radius, vdw_scale):
-        if not grid["cells"]:
-            return False
-        search_radius = candidate_radius + grid["max_radius"] + 2.5
-        nearby_entries = self.iter_nearby_entries(grid, candidate_center, search_radius)
-        return self.solvent_too_close_to_entries(
-            solvent_coords, nearby_entries, candidate_center, candidate_radius, vdw_scale
-        )
-
     def make_entry(self, kind, center, radius, coords, box_index):
         return {
             "kind": kind,
@@ -556,241 +485,89 @@ class SharedWallBox:
             return 0.0
         return total_mass_grams / volume_cm3
 
-    def local_progress_percent(self, attempts, accepted, target, max_attempts):
-        attempt_fraction = attempts / max(1, max_attempts)
-        accepted_fraction = 1.0 if target <= 0 else accepted / max(1, target)
-        return 100.0 * max(attempt_fraction, accepted_fraction)
+    # ---------- packing ----------
+    # Box 1 is packed first, then Box 2, which is checked against everything
+    # already in Box 1 (its solute included) under the combined-cell minimum
+    # image. The legacy and fast loops make the same accept/reject decision for
+    # every attempt and consume the random generators identically, so a fixed
+    # seed gives exactly the same structure -- pinned by
+    # tests/test_sharedWallBox.py. Both run in a worker thread and never touch
+    # a widget.
 
-    def progress_update_interval(self, box):
-        """Throttle UI work during packing.
+    KIND_OF_TYPE = {"A": "solvent_A", "B": "solvent_B"}
 
-        The worker publishes progress by attempt count, including long
-        rejection-heavy stretches where no molecules are accepted. The Toga UI
-        still applies only changed snapshots, so this can stay responsive
-        without repainting every candidate.
-        """
-        return max(100, min(500, box["max_attempts"] // 200 if box["max_attempts"] > 0 else 100))
+    def _solute_entry(self, box):
+        if not box["positioned_solute_coords"]:
+            return None
+        z_min, z_max = self.slab_bounds(box)
+        center = [self.lattice_vectors[0] / 2.0, self.lattice_vectors[1] / 2.0, (z_min + z_max) / 2.0]
+        return self.make_entry("solute", center, box["radius_solute"], box["positioned_solute_coords"], box["index"])
 
-    def progress_report_interval(self, box):
-        """Report progress every 10% of max insertion attempts."""
-        return max(1, math.ceil(box["max_attempts"] / 10))
-
-    def event_yield_interval(self, box):
-        """Yield often enough for Cancel/Close clicks without repainting every time."""
-        return max(50, min(250, box["max_attempts"] // 500 if box["max_attempts"] > 0 else 50))
-
-    def update_progress_display(self, box, attempts, accepted, base_percent, span_percent):
-        local_percent = max(0.0, min(100.0, self.local_progress_percent(
-            attempts, accepted, box["num_target_solvent_molecules"], box["max_attempts"]
-        )))
-        total_percent = base_percent + span_percent * local_percent / 100.0
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.max = 100
-            self.progress_bar.value = max(0.0, min(100.0, total_percent))
-        if hasattr(self, "status_label"):
-            self.status_label.text = (
-                f"Packing Box {box['index']}: {local_percent:.1f}% | "
-                f"attempts {attempts}/{box['max_attempts']} | "
-                f"accepted {accepted}/{box['num_target_solvent_molecules']}"
-            )
-
-    def publish_progress(self, box, attempts, accepted, base_percent, span_percent):
-        local_percent = max(0.0, min(100.0, self.local_progress_percent(
-            attempts, accepted, box["num_target_solvent_molecules"], box["max_attempts"]
-        )))
-        total_percent = base_percent + span_percent * local_percent / 100.0
-        self.latest_progress = {
-            "box_index": box["index"],
-            "attempts": attempts,
-            "accepted": accepted,
-            "target": box["num_target_solvent_molecules"],
-            "max_attempts": box["max_attempts"],
-            "local_percent": local_percent,
-            "total_percent": max(0.0, min(100.0, total_percent)),
-            "count_A": box["count_solvent_A"],
-            "count_B": box["count_solvent_B"],
-        }
-
-    def apply_latest_progress(self, force_text=False):
-        progress = self.latest_progress
-        if not progress:
-            return
-        progress_key = (progress["box_index"], progress["attempts"], progress["accepted"])
-        if progress_key == self.last_applied_progress_key:
-            return
-        self.last_applied_progress_key = progress_key
-        self.progress_bar.max = 100
-        self.progress_bar.value = progress["total_percent"]
-        self.status_label.text = (
-            f"Packing Box {progress['box_index']}: {progress['local_percent']:.1f}% | "
-            f"attempts {progress['attempts']}/{progress['max_attempts']} | "
-            f"accepted {progress['accepted']}/{progress['target']}"
-        )
-        now = time.monotonic()
-        box_changed = progress["box_index"] != self.last_progress_text_box
-        should_update_text = force_text or box_changed or (now - self.last_progress_text_update >= 0.75)
-        if not should_update_text:
-            return
-        self.last_progress_text_update = now
-        self.last_progress_text_box = progress["box_index"]
-        self.multi_line_text.value = (
-            "Running shared-wall random insertion...\n"
-            "The packing backend is running outside the UI thread.\n"
-            f"Current box: {progress['box_index']}\n"
-            f"Target solvent molecules: {progress['target']}\n"
-            f"Accepted so far: {progress['accepted']}\n"
-            f"Attempts used: {progress['attempts']}\n"
-            f"Solvent A molecules: {progress['count_A']}\n"
-            f"Solvent B molecules: {progress['count_B']}\n"
-        )
-
-    def fill_box_sync(self, box, existing_entries, base_percent, span_percent):
+    def _start_box(self, box):
         box["data"] = []
         box["accepted_molecules"] = []
+        box["molecules"] = []
         box["count_solvent_A"] = 0
         box["count_solvent_B"] = 0
-
         if box["random_seed"] is not None:
             random.seed(box["random_seed"])
             np.random.seed(box["random_seed"])
-
-        solute_entry = None
-        if box["positioned_solute_coords"]:
+        solute_entry = self._solute_entry(box)
+        if solute_entry is not None:
             box["data"].extend([[atom[0], atom[1], atom[2], atom[3]] for atom in box["positioned_solute_coords"]])
-            z_min, z_max = self.slab_bounds(box)
-            center = [self.lattice_vectors[0] / 2.0, self.lattice_vectors[1] / 2.0, (z_min + z_max) / 2.0]
-            solute_entry = self.make_entry("solute", center, box["radius_solute"], box["positioned_solute_coords"], box["index"])
+            box["molecules"].append((
+                "solute", [atom[0] for atom in box["positioned_solute_coords"]],
+                np.array([atom[1:] for atom in box["positioned_solute_coords"]], dtype=float),
+            ))
+        return solute_entry
 
-        attempts = 0
-        accepted = 0
-        update_every = self.progress_update_interval(box)
-        cell_size = self.grid_cell_size()
-        existing_grid = self.make_entry_grid(existing_entries, cell_size)
-        accepted_grid = self.make_entry_grid([], cell_size)
-        self.publish_progress(box, attempts, accepted, base_percent, span_percent)
-
-        while attempts < box["max_attempts"] and accepted < box["num_target_solvent_molecules"]:
-            if self.cancel_requested:
-                break
-            attempts += 1
-            if attempts % update_every == 0:
-                self.publish_progress(box, attempts, accepted, base_percent, span_percent)
-
-            solvent_type = self.choose_solvent_type(box)
-            template = box["centered_A"] if solvent_type == "A" else box["centered_B"]
-            radius = box["radius_A"] if solvent_type == "A" else box["radius_B"]
-            if not template:
-                continue
-
-            rotated = self.random_rotate_molecule(template) if box["rotate"] else [
-                [atom[0], atom[1], atom[2], atom[3]] for atom in template
-            ]
-            center = self.random_center_for_radius(box, radius)
-            if center is None:
-                break
-
-            translated = self.translate_molecule(rotated, center)
-            if not self.molecule_inside_slab(translated, box):
-                continue
-            if box["positioned_solute_coords"]:
-                if self.molecules_clash(translated, box["positioned_solute_coords"], box["vdw_scale"], extra=box["min_distance"]):
-                    continue
-            if self.solvent_too_close_to_grid(translated, existing_grid, center, radius, box["vdw_scale"]):
-                continue
-            if self.solvent_too_close_to_grid(translated, accepted_grid, center, radius, box["vdw_scale"]):
-                continue
-
-            entry = self.make_entry(f"solvent_{solvent_type}", center, radius, translated, box["index"])
-            box["accepted_molecules"].append(entry)
-            self.add_entry_to_grid(accepted_grid, entry)
-            box["data"].extend(translated)
-            accepted += 1
-            if solvent_type == "A":
-                box["count_solvent_A"] += 1
-            else:
-                box["count_solvent_B"] += 1
-
-            self.publish_progress(box, attempts, accepted, base_percent, span_percent)
-
+    def _finish_box(self, box, attempts, accepted, solute_entry):
         box["solvent_attempts_used"] = attempts
         box["failed_insertions"] = max(0, attempts - accepted)
         box["final_density"] = self.calculate_box_density(box)
-        self.publish_progress(box, attempts, accepted, base_percent, span_percent)
-
         entries = []
         if solute_entry is not None:
             entries.append(solute_entry)
         entries.extend(box["accepted_molecules"])
         return entries
 
-    def build_shared_wall_box_sync(self):
-        self.combined_data = []
-        global_entries = []
-        for box in self.boxes:
-            self.prepare_box_molecules(box)
-            self.estimate_target_molecule_count(box)
+    def _box_payload(self, box, attempts, accepted, base, span, earlier_molecules):
+        return {
+            "stage": "insertion",
+            "label": f"Packing Box {box['index']}",
+            "attempts": attempts,
+            "max_attempts": box["max_attempts"],
+            "accepted": accepted,
+            "target": box["num_target_solvent_molecules"],
+            "base": base,
+            "span": span,
+            "molecules": earlier_molecules + list(box["molecules"]),
+        }
 
-        box1_entries = self.fill_box_sync(self.boxes[0], global_entries, 0.0, 50.0)
-        if self.cancel_requested:
-            return False
-        global_entries.extend(box1_entries)
-        box2_entries = self.fill_box_sync(self.boxes[1], global_entries, 50.0, 50.0)
-        if self.cancel_requested:
-            return False
-        global_entries.extend(box2_entries)
+    def _accept(self, box, solvent_type, center, radius, translated, elements, xyz):
+        entry = self.make_entry(f"solvent_{solvent_type}", center, radius, translated, box["index"])
+        box["accepted_molecules"].append(entry)
+        box["data"].extend(translated)
+        box["molecules"].append((self.KIND_OF_TYPE[solvent_type], elements, xyz))
+        if solvent_type == "A":
+            box["count_solvent_A"] += 1
+        else:
+            box["count_solvent_B"] += 1
 
-        self.combined_data = []
-        for box in self.boxes:
-            self.combined_data.extend(box["data"])
-
-        if self.combined_data:
-            min_z = min(atom[3] for atom in self.combined_data)
-            for atom in self.combined_data:
-                atom[3] -= min_z
-
-        return True
-
-    async def run_packing_worker(self):
-        completed = await self.build_shared_wall_box_async()
-        return completed
-
-    async def fill_box_async(self, box, existing_entries, base_percent, span_percent):
-        box["data"] = []
-        box["accepted_molecules"] = []
-        box["count_solvent_A"] = 0
-        box["count_solvent_B"] = 0
-
-        if box["random_seed"] is not None:
-            random.seed(box["random_seed"])
-            np.random.seed(box["random_seed"])
-
-        solute_entry = None
-        if box["positioned_solute_coords"]:
-            box["data"].extend([[atom[0], atom[1], atom[2], atom[3]] for atom in box["positioned_solute_coords"]])
-            z_min, z_max = self.slab_bounds(box)
-            center = [self.lattice_vectors[0] / 2.0, self.lattice_vectors[1] / 2.0, (z_min + z_max) / 2.0]
-            solute_entry = self.make_entry("solute", center, box["radius_solute"], box["positioned_solute_coords"], box["index"])
-
+    def fill_box_legacy(self, box, existing_entries, base_percent, span_percent, progress=None, earlier=()):
+        """The original insertion loop for one region (formerly fill_box_async),
+        kept as the reference implementation."""
+        earlier = list(earlier)
+        solute_entry = self._start_box(box)
         attempts = 0
         accepted = 0
-        report_every = self.progress_report_interval(box)
-        yield_every = self.event_yield_interval(box)
-        self.update_progress_display(box, attempts, accepted, base_percent, span_percent)
-        await asyncio.sleep(0)
+        self._report(progress, self._box_payload(box, attempts, accepted, base_percent, span_percent, earlier),
+                     force=True)
 
         while attempts < box["max_attempts"] and accepted < box["num_target_solvent_molecules"]:
             if self.cancel_requested:
                 break
             attempts += 1
-            if attempts % yield_every == 0:
-                await asyncio.sleep(0)
-                if self.cancel_requested:
-                    break
-            if attempts % report_every == 0:
-                self.update_progress_display(box, attempts, accepted, base_percent, span_percent)
-                await asyncio.sleep(0)
-                if self.cancel_requested:
-                    break
 
             solvent_type = self.choose_solvent_type(box)
             template = box["centered_A"] if solvent_type == "A" else box["centered_B"]
@@ -817,72 +594,186 @@ class SharedWallBox:
             if self.solvent_too_close_to_entries(translated, box["accepted_molecules"], center, radius, box["vdw_scale"]):
                 continue
 
-            entry = self.make_entry(f"solvent_{solvent_type}", center, radius, translated, box["index"])
-            box["accepted_molecules"].append(entry)
-            box["data"].extend(translated)
+            xyz = np.array([atom[1:] for atom in translated], dtype=float)
+            self._accept(box, solvent_type, center, radius, translated, [atom[0] for atom in translated], xyz)
             accepted += 1
-            if solvent_type == "A":
-                box["count_solvent_A"] += 1
-            else:
-                box["count_solvent_B"] += 1
+            self._report(progress, self._box_payload(box, attempts, accepted, base_percent, span_percent, earlier))
 
-            if attempts % report_every == 0 or accepted == box["num_target_solvent_molecules"]:
-                self.update_progress_display(box, attempts, accepted, base_percent, span_percent)
-                now = time.monotonic()
-                if now - self.last_text_update >= 0.75:
-                    self.last_text_update = now
-                    self.multi_line_text.value = (
-                        "Running shared-wall random insertion...\n"
-                        "Box 1 and Box 2 are adjacent along z; no wall atoms are written.\n"
-                        "Periodic minimum-image clash checks use the full combined box.\n"
-                        f"Current box: {box['index']}\n"
-                        f"Target solvent molecules: {box['num_target_solvent_molecules']}\n"
-                        f"Accepted so far: {accepted}\n"
-                        f"Attempts used: {attempts}\n"
-                        f"Solvent A molecules: {box['count_solvent_A']}\n"
-                        f"Solvent B molecules: {box['count_solvent_B']}\n"
-                    )
-                await asyncio.sleep(0)
-
-        box["solvent_attempts_used"] = attempts
-        box["failed_insertions"] = max(0, attempts - accepted)
-        box["final_density"] = self.calculate_box_density(box)
-        self.update_progress_display(box, attempts, accepted, base_percent, span_percent)
-        if self.cancel_requested and hasattr(self, "status_label"):
-            self.status_label.text = "Cancelling after current packing step..."
-
-        entries = []
-        if solute_entry is not None:
-            entries.append(solute_entry)
-        entries.extend(box["accepted_molecules"])
+        entries = self._finish_box(box, attempts, accepted, solute_entry)
+        self._report(progress, self._box_payload(box, attempts, accepted, base_percent, span_percent, earlier),
+                     force=True)
         return entries
 
-    async def build_shared_wall_box_async(self):
+    def fill_box_fast(self, box, existing_entries, base_percent, span_percent, engine=ENGINE_NUMPY,
+                      progress=None, earlier=()):
+        """Same decisions as :meth:`fill_box_legacy`, through cell lists (one for
+        the entries of the region packed earlier, one for this region's own
+        molecules) and vectorised or numba-compiled clash tests."""
+        earlier = list(earlier)
+        solute_entry = self._start_box(box)
+        lengths = np.array(self.lattice_vectors, dtype=float)
+        periodic = bool(self.use_periodic_minimum_image)
+        scale = box["vdw_scale"]
+
+        def radii_of(atoms):
+            return np.array([self.get_vdw_radius(atom[0]) for atom in atoms], dtype=float)
+
+        species = {}
+        for key in ("A", "B"):
+            template = box[f"centered_{key}"]
+            species[key] = (
+                [atom[0] for atom in template],
+                np.array([atom[1:] for atom in template], dtype=float).reshape(-1, 3),
+                radii_of(template),
+                box[f"radius_{key}"],
+            )
+        largest = max(box["radius_A"], box["radius_B"])
+        existing_largest = max([entry["radius"] for entry in existing_entries], default=0.0)
+        existing_grid = MoleculeGrid(lengths, periodic, min_cell=largest + existing_largest + 2.5)
+        for entry in existing_entries:
+            existing_grid.add(entry["center"], entry["radius"],
+                              np.array([atom[1:] for atom in entry["coords"]], dtype=float), radii_of(entry["coords"]))
+        own_grid = MoleculeGrid(lengths, periodic, min_cell=2.0 * largest + 2.5)
+
+        solute_xyz = solute_r = None
+        if box["positioned_solute_coords"]:
+            solute_xyz = np.array([atom[1:] for atom in box["positioned_solute_coords"]], dtype=float)
+            solute_r = radii_of(box["positioned_solute_coords"])
+
+        a, b, total_c = self.lattice_vectors
+        z_min, z_max = self.slab_bounds(box)
+        low = np.array([box["spacing"], box["spacing"], z_min + (box["spacing"] if z_min == 0.0 else 0.0)])
+        high = np.array([a - box["spacing"], b - box["spacing"],
+                         z_max - (box["spacing"] if z_max == total_c else 0.0)])
+        rotations = RotationStream()
+
+        attempts = 0
+        accepted = 0
+        self._report(progress, self._box_payload(box, attempts, accepted, base_percent, span_percent, earlier),
+                     force=True)
+
+        while attempts < box["max_attempts"] and accepted < box["num_target_solvent_molecules"]:
+            if self.cancel_requested:
+                break
+            attempts += 1
+
+            solvent_type = self.choose_solvent_type(box)
+            elements, template, atom_radii, radius = species[solvent_type]
+            if len(template) == 0:
+                continue
+            coords = template @ rotations.next().T if box["rotate"] else template.copy()
+            center = self.random_center_for_radius(box, radius)
+            if center is None:
+                break
+            xyz = coords + center
+
+            if not (np.all(xyz >= low) and np.all(xyz <= high)):
+                continue
+            if solute_xyz is not None and atoms_clash(xyz, atom_radii, solute_xyz, solute_r, scale, lengths,
+                                                      periodic, box["min_distance"], engine):
+                continue
+            if existing_grid.count and existing_grid.clashes(xyz, atom_radii, center, radius, scale, 0.0, engine):
+                continue
+            if own_grid.clashes(xyz, atom_radii, center, radius, scale, 0.0, engine):
+                continue
+
+            own_grid.add(center, radius, xyz, atom_radii)
+            translated = [[e, float(x), float(y), float(z)] for e, (x, y, z) in zip(elements, xyz)]
+            self._accept(box, solvent_type, center, radius, translated, elements, xyz)
+            accepted += 1
+            self._report(progress, self._box_payload(box, attempts, accepted, base_percent, span_percent, earlier))
+
+        entries = self._finish_box(box, attempts, accepted, solute_entry)
+        self._report(progress, self._box_payload(box, attempts, accepted, base_percent, span_percent, earlier),
+                     force=True)
+        return entries
+
+    def build_box(self, progress=None):
+        """Pack both regions with the selected engine (runs in a worker thread)."""
+        engine = resolve_engine(self.packing_engine)
+        started = time.perf_counter()
         self.combined_data = []
-        global_entries = []
+        self.molecules = []
+        self.molecule_regions = []
         for box in self.boxes:
             self.prepare_box_molecules(box)
             self.estimate_target_molecule_count(box)
 
-        box1_entries = await self.fill_box_async(self.boxes[0], global_entries, 0.0, 50.0)
-        if self.cancel_requested:
-            return False
-        global_entries.extend(box1_entries)
-        box2_entries = await self.fill_box_async(self.boxes[1], global_entries, 50.0, 50.0)
-        if self.cancel_requested:
-            return False
-        global_entries.extend(box2_entries)
+        global_entries = []
+        earlier = []
+        for box, base in zip(self.boxes, (0.0, 50.0)):
+            if engine == ENGINE_LEGACY:
+                entries = self.fill_box_legacy(box, global_entries, base, 50.0, progress, earlier)
+            else:
+                entries = self.fill_box_fast(box, global_entries, base, 50.0, engine, progress, earlier)
+            if self.cancel_requested:
+                break
+            global_entries.extend(entries)
+            earlier.extend(box["molecules"])
 
-        self.combined_data = []
+        self.build_seconds = time.perf_counter() - started
+        self.engine_used = engine
+        if self.cancel_requested:
+            return False
+
         for box in self.boxes:
-            self.combined_data.extend(box["data"])
+            self.combined_data.extend([atom[:] for atom in box["data"]])
+            self.molecules.extend(box["molecules"])
+            self.molecule_regions.extend([box["index"]] * len(box["molecules"]))
 
+        # Unchanged from the original builder: the written structure is shifted
+        # so that its lowest atom sits at z = 0. (The molecules handed to the
+        # pre-optimizer and the construction view stay in cell coordinates.)
         if self.combined_data:
             min_z = min(atom[3] for atom in self.combined_data)
             for atom in self.combined_data:
                 atom[3] -= min_z
-
         return True
+
+    # ---------- hooks for the shared pre-optimization and properties ----------
+
+    def packing_vdw_scale(self):
+        return max(float(box["vdw_scale"]) for box in self.boxes)
+
+    def preopt_solute_clearance(self):
+        # One solute-solvent clearance for the whole cell: the larger of the
+        # two regions' values (a region without a solute contributes nothing).
+        return max([box["min_distance"] for box in self.boxes if box["positioned_solute_coords"]], default=0.0)
+
+    def preopt_slab_bounds(self, system):
+        """Keep each molecule's centre of mass in the region it was packed into."""
+        bounds = {box["index"]: self.slab_bounds(box) for box in self.boxes}
+        return [bounds[region] for region in self.molecule_regions]
+
+    def preopt_wall_bounds(self, system):
+        """Non-periodic walls at each region's own padding on the x/y faces and
+        on the outer z faces -- never at the interface between the regions."""
+        a, b, total_c = self.lattice_vectors
+        boxes = {box["index"]: box for box in self.boxes}
+        low = np.full((system.atom_count, 3), -np.inf)
+        high = np.full((system.atom_count, 3), np.inf)
+        for region, (start, stop) in zip(self.molecule_regions, system.molecule_slices):
+            pad = boxes[region]["spacing"]
+            low[start:stop, :2] = pad
+            high[start:stop, 0] = a - pad
+            high[start:stop, 1] = b - pad
+            if region == 1:
+                low[start:stop, 2] = pad
+            else:
+                high[start:stop, 2] = total_c - pad
+        return low, high
+
+    def box_atoms(self):
+        return self.combined_data
+
+    def net_charge(self):
+        total = 0
+        for box in self.boxes:
+            if box["positioned_solute_coords"]:
+                total += int(box["solute_charge"])
+            total += int(box["count_solvent_A"]) * int(box["charge_A"])
+            total += int(box["count_solvent_B"]) * int(box["charge_B"])
+        return total
 
     # ---------- validation and output ----------
 
@@ -954,42 +845,69 @@ class SharedWallBox:
                     "Warning: the target number of solvent molecules was not fully reached. "
                     "Try a larger slab, lower density, smaller vdW scale, or more attempts.\n"
                 )
+        if self.engine_used:
+            lines.append(f"\nPacking engine: {self.engine_used} ({self.build_seconds:.2f} s)\n")
+        lines.extend(self.extras_summary_lines(self.output_paths()["preopt"]))
+        if self.preopt_result is not None:
+            lines.append(
+                "The pre-optimized file keeps cell coordinates (Box 1 from z = 0, Box 2 from z = c1); "
+                "the packed file is shifted so its lowest atom is at z = 0, as before.\n"
+            )
         return "".join(lines)
 
+    OUTPUT_LABEL = "shared_wall_box"
+
+    def output_paths(self):
+        label = self.OUTPUT_LABEL
+        return {
+            "xyz": f"{self.output_dir}/{label}.xyz",
+            "summary": f"{self.output_dir}/{label}.txt",
+            "preopt": f"{self.output_dir}/{label}_preopt.xyz",
+        }
+
+    def write_summary(self):
+        paths = self.output_paths()
+        summary_text = self.build_result_summary(paths["xyz"], paths["summary"])
+        with open(paths["summary"], "w", encoding="utf-8") as f:
+            f.write(summary_text)
+        return summary_text
+
+    def write_outputs(self):
+        """The original XYZ and TXT files (names and format unchanged) plus,
+        after a pre-optimization, ``*_preopt.xyz``. Raises ``OSError``."""
+        paths = self.output_paths()
+        with open(paths["xyz"], "w", encoding="utf-8") as f:
+            f.write(f"{len(self.combined_data)}\n")
+            f.write("Shared-wall double solvent box generated by density-driven random insertion\n")
+            for atom in self.combined_data:
+                f.write(f"{atom[0]:<3s}{atom[1]:>14.7f}{atom[2]:>14.7f}{atom[3]:>14.7f}\n")
+        if self.preopt_result is not None:
+            self.write_preopt_xyz(paths["preopt"])
+        return self.write_summary()
+
     async def save_and_display_results(self):
-        label = "shared_wall_box"
-        xyz_path = f"{self.output_dir}/{label}.xyz"
-        txt_path = f"{self.output_dir}/{label}.txt"
-
         try:
-            with open(xyz_path, "w", encoding="utf-8") as f:
-                f.write(f"{len(self.combined_data)}\n")
-                f.write("Shared-wall double solvent box generated by density-driven random insertion\n")
-                for atom in self.combined_data:
-                    f.write(f"{atom[0]:<3s}{atom[1]:>14.7f}{atom[2]:>14.7f}{atom[3]:>14.7f}\n")
-        except Exception as e:
-            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving {label}: {e}\n"))
-            return None
-
-        summary_text = self.build_result_summary(xyz_path, txt_path)
+            summary_text = self.write_outputs()
+        except OSError as e:
+            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving output files: {e}\n"))
+            return False
         self.multi_line_text.value = summary_text
-
-        try:
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(summary_text)
-        except Exception as e:
-            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving summary TXT file: {e}\n"))
-            return None
-
-        if hasattr(self, "status_label"):
-            self.status_label.text = "Completed"
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.max = 100
-            self.progress_bar.value = 100
-        return None
+        return True
 
 
-class SharedWallBoxUI(SharedWallBox):
+class SharedWallBoxUI(SolvationExtrasUI, SharedWallBox):
+    """Setup / Construction / Summary tabs over a fixed run bar."""
+
+    # Box 1 fields in the left column, Box 2 in the right one.
+    CHARGE_FIELDS = (
+        ("Box 1 solute charge:", "Integer, default 0", "textInput_box1_solute_charge"),
+        ("Box 2 solute charge:", "Integer, default 0", "textInput_box2_solute_charge"),
+        ("Box 1 solvent A charge:", "Per molecule, default 0", "textInput_box1_charge_A"),
+        ("Box 2 solvent A charge:", "Per molecule, default 0", "textInput_box2_charge_A"),
+        ("Box 1 solvent B charge:", "Per molecule, default 0", "textInput_box1_charge_B"),
+        ("Box 2 solvent B charge:", "Per molecule, default 0", "textInput_box2_charge_B"),
+    )
+
     def __init__(self, *args):
         super().__init__()
         self._controls = []
@@ -998,16 +916,46 @@ class SharedWallBoxUI(SharedWallBox):
     def layout_main_window(self, widget):
         self.main_window = toga.Window(
             title="Shared-Wall Double Solvent Box Builder",
-            size=(760, 720),
+            size=(820, 720),
         )
 
         heading_style = Pack(font_size=18, font_weight="bold", text_align=LEFT, margin=(0, 0, 8, 0))
-        section_style = Pack(font_size=12, font_weight="bold", text_align=LEFT, margin=(8, 0, 4, 0))
+        main_box = toga.Box(style=Pack(direction=COLUMN, margin=12, flex=1))
+        main_box.add(toga.Label("Shared-Wall Double Box Builder", style=heading_style))
+
+        # Created before the tabs: building them sets Switch/Selection values.
+        self.status_label = toga.Label("Idle", style=Pack(margin=(0, 0, 2, 0), text_align=LEFT))
+        self.progress_bar = toga.ProgressBar(max=100, value=0, style=Pack(margin=(0, 0, 6, 0)))
+        self.multi_line_text = toga.MultilineTextInput(readonly=True, style=Pack(flex=1, margin=0, font_size=11))
+
+        help_text = getattr(HelpGqteaWin, "shared_wall_box", "Build two z-stacked solvent regions that share one face.")
+        intro = (
+            f"{help_text}\n\n"
+            "Algorithm: density-driven random insertion in Box 1 and Box 2, "
+            "separate solvent compositions and solutes per box, shared z interface, "
+            "full combined-box periodic minimum-image clash detection, and an optional periodic "
+            "pre-optimization that keeps each molecule in its own region.\n"
+        )
+        main_box.add(self.build_tabs(self._build_setup_tab(), intro))
+        main_box.add(self.build_run_bar("Build Shared-Wall Box"))
+        self._controls.append(self.start_button)
+        main_box.add(self.status_label)
+        main_box.add(self.progress_bar)
+
+        self.main_window.content = main_box
+        self.update_solute_controls()
+        self.update_solvent_controls()
+        self.update_preopt_controls()
+        self.main_window.show()
+
+    def _build_setup_tab(self):
+        heading_style = Pack(font_size=12, font_weight="bold", text_align=LEFT, margin=(8, 0, 4, 0))
+        section_style = heading_style
         label_style = Pack(margin=(0, 6, 0, 0), text_align=LEFT, width=150)
         input_style = Pack(flex=1, margin=0)
         button_style = Pack(margin=(0, 8, 0, 0), width=120)
         row_style = Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0))
-        content_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
+        content_box = toga.Box(style=Pack(direction=COLUMN, margin=(8, 8, 8, 8)))
 
         def add_field(parent, label_text, placeholder, attr_name, button=None):
             row = toga.Box(style=row_style)
@@ -1020,9 +968,6 @@ class SharedWallBoxUI(SharedWallBox):
             if button is not None:
                 row.add(button)
             parent.add(row)
-
-        title_label = toga.Label("Shared-Wall Double Box Builder", style=heading_style)
-        content_box.add(title_label)
 
         content_box.add(toga.Label("Shared geometry", style=section_style))
         geometry_row = toga.Box(style=Pack(direction=ROW, margin=(0, 0, 4, 0)))
@@ -1042,35 +987,23 @@ class SharedWallBoxUI(SharedWallBox):
         self.add_box_controls(content_box, 1, "Box 1 lower z region", button_style, section_style, row_style, label_style, input_style)
         self.add_box_controls(content_box, 2, "Box 2 upper z region", button_style, section_style, row_style, label_style, input_style)
 
-        content_box.add(toga.Label("Run controls", style=section_style))
-        run_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 6, 0)))
-        self.start_button = toga.Button("Build Shared-Wall Box", style=Pack(margin=(0, 8, 0, 0), width=180), on_press=self.workflow)
-        self.btn_cancel = toga.Button("Cancel", style=button_style, on_press=self.cancel_run)
-        self.btn_cancel.enabled = False
-        self.btn_close = toga.Button("Close", style=Pack(width=120), on_press=self.closeTopLevel)
-        self._controls.append(self.start_button)
-        run_box.add(self.start_button)
-        run_box.add(self.btn_cancel)
-        run_box.add(self.btn_close)
-        content_box.add(run_box)
+        self.build_charge_spin_section(content_box, (
+            "Net charge = sum over both boxes of solute charge + (inserted A molecules x A charge) + "
+            "(inserted B molecules x B charge). The multiplicity of the whole cell is never guessed: it is "
+            "checked against the electron count once the box is built."
+        ))
+        self.build_preopt_section(content_box)
+        self.build_engine_section(content_box)
+        return content_box
 
-        content_box.add(toga.Label("Run status and summary", style=section_style))
-        self.progress_bar = toga.ProgressBar(max=100, value=0, style=Pack(margin=(0, 0, 6, 0)))
-        content_box.add(self.progress_bar)
-        self.multi_line_text = toga.MultilineTextInput(readonly=True, style=Pack(height=180, margin=0, font_size=11))
-        help_text = getattr(HelpGqteaWin, "shared_wall_box", "Build two z-stacked solvent regions that share one face.")
-        self.multi_line_text.value = (
-            f"{help_text}\n\n"
-            "Algorithm: density-driven random insertion in Box 1 and Box 2, "
-            "separate solvent compositions and solutes per box, shared z interface, "
-            "and full combined-box periodic minimum-image clash detection.\n"
+    def preopt_hint(self):
+        return (
+            "Pushes intermolecular contacts out to d >= scale x (r_i + r_j) over the combined cell "
+            "(minimum image on, otherwise inside soft walls on the outer faces). Each molecule's centre of "
+            "mass is kept in the region it was packed into, so the interface is preserved. Packing already "
+            "guarantees each box's vdW scale, so the target must be larger to have an effect. Molecules are "
+            "wrapped whole into the cell."
         )
-        content_box.add(self.multi_line_text)
-
-        self.main_window.content = toga.ScrollContainer(content=content_box, style=Pack(flex=1))
-        self.update_solute_controls()
-        self.update_solvent_controls()
-        self.main_window.show()
 
     def add_box_controls(self, parent, index, title, button_style, section_style, row_style, label_style, input_style):
         def add_field(local_parent, label_text, placeholder, attr_name, button=None, on_change=None):
@@ -1126,6 +1059,16 @@ class SharedWallBoxUI(SharedWallBox):
         add_field(parent, "Solvent B:", "Required if B > 0", f"textInput_box{index}_solvent_B", button=browse_B)
         add_field(parent, "Solute:", "Required if solute is enabled", f"textInput_box{index}_solute", button=browse_solute)
 
+    def read_charges(self):
+        for box in self.boxes:
+            index = box["index"]
+            box["solute_charge"] = parse_integer(
+                getattr(self, f"textInput_box{index}_solute_charge").value, f"Box {index} solute charge", default=0)
+            box["charge_A"] = parse_integer(
+                getattr(self, f"textInput_box{index}_charge_A").value, f"Box {index} solvent A charge", default=0)
+            box["charge_B"] = parse_integer(
+                getattr(self, f"textInput_box{index}_charge_B").value, f"Box {index} solvent B charge", default=0)
+
     def update_solvent_controls(self, widget=None):
         for index in [1, 2]:
             try:
@@ -1157,6 +1100,8 @@ class SharedWallBoxUI(SharedWallBox):
                 getattr(self, f"textInput_box{index}_solute").enabled = editable
             if hasattr(self, f"btn_box{index}_solute"):
                 getattr(self, f"btn_box{index}_solute").enabled = editable
+            if hasattr(self, f"textInput_box{index}_solute_charge"):
+                getattr(self, f"textInput_box{index}_solute_charge").enabled = editable
 
     def set_file_buttons_enabled(self, enabled):
         for index in [1, 2]:
@@ -1167,11 +1112,12 @@ class SharedWallBoxUI(SharedWallBox):
             )
 
     def set_running_state(self, is_running):
-        self.is_running = is_running
+        self.set_extras_running(is_running)
         for control in self._controls:
             control.enabled = not is_running
+        for _, _, attr in self.CHARGE_FIELDS:
+            getattr(self, attr).enabled = not is_running
         self.start_button.enabled = not is_running
-        self.btn_cancel.enabled = is_running
         self.btn_close.enabled = True
         self.switch_minimum_image.enabled = not is_running
         for index in [1, 2]:
@@ -1179,14 +1125,7 @@ class SharedWallBoxUI(SharedWallBox):
             getattr(self, f"switch_box{index}_include_solute").enabled = not is_running
         self.set_file_buttons_enabled(not is_running)
         if is_running:
-            self.cancel_requested = False
-            self.latest_progress = None
-            self.last_applied_progress_key = None
-            self.last_progress_text_update = 0.0
-            self.last_progress_text_box = None
-            self.last_text_update = 0.0
-            if hasattr(self, "status_label"):
-                self.status_label.text = "Running shared-wall insertion... please wait"
+            self.status_label.text = "Running shared-wall insertion... please wait"
             self.progress_bar.max = 100
             self.progress_bar.value = 0
             self.multi_line_text.value = "Preparing shared-wall random insertion...\n"
@@ -1199,9 +1138,7 @@ class SharedWallBoxUI(SharedWallBox):
             return
         self.cancel_requested = True
         self.btn_cancel.enabled = False
-        if hasattr(self, "status_label"):
-            self.status_label.text = "Cancel requested. Stopping after the current packing step..."
-        self.multi_line_text.value += "\nCancel requested. No output will be written for this run.\n"
+        self.status_label.text = "Cancel requested. Stopping after the current step..."
 
     async def workflow(self, widget):
         params_ok = await self.read_params(widget)
@@ -1213,16 +1150,33 @@ class SharedWallBoxUI(SharedWallBox):
 
         try:
             self.set_running_state(True)
-            completed = await self.run_packing_worker()
-            if completed:
-                await self.save_and_display_results()
-            else:
-                if hasattr(self, "status_label"):
-                    self.status_label.text = "Cancelled"
-                self.multi_line_text.value += "\nRun cancelled before output files were written.\n"
-        except Exception as e:
-            if hasattr(self, "status_label"):
+            initial = []
+            for box in self.boxes:
+                self.prepare_box_molecules(box)
+                if box["positioned_solute_coords"]:
+                    initial.append((
+                        "solute", [atom[0] for atom in box["positioned_solute_coords"]],
+                        np.array([atom[1:] for atom in box["positioned_solute_coords"]], dtype=float),
+                    ))
+            completed = await self.run_construction(
+                initial,
+                lambda: " | ".join(
+                    f"Box {box['index']}: {box['count_solvent_A'] + box['count_solvent_B']}/"
+                    f"{box['num_target_solvent_molecules']}" for box in self.boxes
+                ),
+            )
+            if not completed:
+                return
+            if not await self.save_and_display_results():
                 self.status_label.text = "Failed"
+                return
+            self.status_label.text = "Completed"
+            self.progress_bar.max = 100
+            self.progress_bar.value = 100
+            self.tabs.current_tab = self.SUMMARY_TAB
+            await self.report_problems()
+        except Exception as e:
+            self.status_label.text = "Failed"
             await self.main_window.dialog(toga.ErrorDialog("Error", f"Failed to build shared-wall solvent box: {e}"))
             return
         finally:
@@ -1231,7 +1185,6 @@ class SharedWallBoxUI(SharedWallBox):
     def closeTopLevel(self, widget):
         if self.is_running:
             self.cancel_run(widget)
-            if hasattr(self, "status_label"):
-                self.status_label.text = "Cancel requested. Close will be available after the run stops."
+            self.status_label.text = "Cancel requested. Close will be available after the run stops."
             return
         self.main_window.close()

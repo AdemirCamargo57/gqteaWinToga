@@ -123,6 +123,31 @@ lag max 77 ms / mean 17 ms (was 9.5 s / 1.4 s with toga.Canvas).
 Numba verdict: worthwhile -- 3-5x over the numpy cell list on top of the algorithmic gain, kept
 optional (`Automatic` engine uses it when importable), bit-identical decisions.
 
+## 6c. Phase 2 (mixture, shared wall) -- implemented and measured
+
+- The phase-1 feature code moved into `solvationBoxCommon.py` (engine + UI mixins with geometry hooks);
+  single_solute_solvent_box.py was switched to it with its tests unchanged.
+- Mixture: per-species charges (solute, A, B); kinds `solvent_A`/`solvent_B` coloured on the canvas.
+- Shared wall: per-box charges, one multiplicity; pre-optimization over the combined cell with a
+  `SlabRestraint` (flat-bottom on each molecule's COM z) keeping molecules in their own region, and
+  per-atom non-periodic walls (outer faces only, none at the interface). Packed file keeps its original
+  z shift; `*_preopt.xyz` is in cell coordinates. Dead code (`fill_box_sync`, dict grid, publish/apply
+  progress) removed.
+- Equivalence: new legacy, numpy and numba engines of all three builders were checked bit-for-bit
+  against the original `main` modules (periodic/non-periodic, with/without solutes, cell-list regime).
+
+Water/methanol 60:40, 50 000 attempts per box, fixed seeds (identical output for every engine):
+
+| Builder | Box | Legacy | NumPy | Numba |
+| --- | --- | --- | --- | --- |
+| mixture | 20 A | 14.4 s | 3.0 s (5x) | 0.62 s (23x) |
+| mixture | 30 A | 27.8 s | 3.5 s (8x) | 1.01 s (28x) |
+| shared wall | 20 x 20 x (20+20) A | 60.9 s | 6.8 s (9x) | 2.0 s (30x) |
+| shared wall | 26 x 26 x (26+26) A | 114.0 s | 7.6 s (15x) | 2.4 s (48x) |
+
+Live windows (flexible pre-optimization, 26-28 A cells): every build completed with 0 clashing pairs left,
+connectivity preserved, UI event-loop lag <= 0.11 s.
+
 ## 7. Validation
 
 Tests: legacy-vs-new packing identical for fixed seeds; finite-difference gradients (rigid, flexible); minimum

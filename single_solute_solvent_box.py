@@ -10,28 +10,13 @@ from toga.style.pack import LEFT, CENTER, ROW, COLUMN
 import asyncio
 from help import AtomicData, HelpGqteaWin
 from solventPacking import (
-    ENGINE_AUTO, ENGINE_LEGACY, ENGINE_NUMBA, ENGINE_NUMPY,
-    MoleculeGrid, RotationStream, atoms_clash, numba_available, resolve_engine,
+    ENGINE_LEGACY, ENGINE_NUMPY, MoleculeGrid, RotationStream, atoms_clash, resolve_engine,
 )
-from periodicPreOptimizer import (
-    DEFAULT_MAX_ITERATIONS, MODE_FLEXIBLE, MODE_RIGID, PackedSystem, PeriodicCell, pre_optimize,
-)
-from systemProperties import compute_properties, parse_integer, parse_multiplicity
-from boxConstructionView import ROTATION_STEP, ConstructionSnapshot, ConstructionView
-
-# Seconds between progress reports from the worker thread. The canvas repaints
-# at its own, lower rate; this only bounds the cross-thread traffic.
-PROGRESS_REPORT_INTERVAL = 0.1
-# Share of the progress bar given to packing when a pre-optimization follows.
-PACKING_PROGRESS_SHARE = 70.0
-# Default contact scale for the pre-optimization. The packer already enforces
-# d >= vdw_scale * (r_i + r_j), so relaxing to the *same* scale would find
-# nothing to do; the pre-optimization pushes contacts out to this larger
-# scale (or the packing scale, if that is larger).
-DEFAULT_PREOPT_CONTACT_SCALE = 0.90
+from systemProperties import parse_integer
+from solvationBoxCommon import SolvationExtrasEngine, SolvationExtrasUI
 
 
-class SingleSoluteSolventBox:
+class SingleSoluteSolventBox(SolvationExtrasEngine):
     """Build an orthorhombic solvent box containing one optional solute.
 
     Revised algorithm:
@@ -102,32 +87,11 @@ class SingleSoluteSolventBox:
         # attributes so the engine runs headless and in a worker thread).
         self.rotate_solvent = True
         self.include_solute = False
-        self.packing_engine = ENGINE_AUTO
-        self.engine_used = ""
-        self.build_seconds = 0.0
-
-        # Pre-optimization.
-        self.preoptimize = False
-        self.preopt_mode = MODE_RIGID
-        self.preopt_max_iterations = DEFAULT_MAX_ITERATIONS
-        self.preopt_contact_scale = None   # None -> default_preopt_contact_scale()
-        self.preopt_result = None
-        self.preopt_error = ""
-        self.preopt_data = []
-        self.preopt_seconds = 0.0
-
-        # Charge and spin; the multiplicity is never inferred.
+        # Charges per species; the multiplicity (in the extras) is never inferred.
         self.solute_charge = 0
         self.solvent_charge = 0
-        self.multiplicity = None
-        self.system_properties = None
-
-        # (kind, elements, (n, 3) coordinates) per placed molecule, in the
-        # order their atoms appear in self.data -- what the pre-optimizer and
-        # the construction canvas need to keep molecules whole.
-        self.molecules = []
-        self.cancel_requested = False
-        self._last_report = 0.0
+        # Pre-optimization, properties, progress, molecules (solvationBoxCommon).
+        self.init_solvation_extras()
 
     async def read_params(self, widget):
         """Read and validate every input; True when the run can start."""
@@ -224,35 +188,7 @@ class SingleSoluteSolventBox:
             self.min_distance = 0.0
 
         # Pre-optimization, charge/spin and engine options.
-        self.preoptimize = bool(self.switch_preoptimize.value)
-        self.preopt_mode = self.PREOPT_MODE_LABELS.get(self.selection_preopt_mode.value, MODE_RIGID)
-        self.packing_engine = self.ENGINE_LABELS.get(self.selection_engine.value, ENGINE_AUTO)
-        try:
-            iterations = parse_integer(
-                self.textInput_preopt_iterations.value, "Maximum pre-optimization iterations",
-                default=DEFAULT_MAX_ITERATIONS,
-            )
-            if iterations <= 0:
-                raise ValueError("Maximum pre-optimization iterations must be a positive integer.")
-            self.preopt_max_iterations = iterations
-            contact_text = self.textInput_preopt_contact_scale.value.strip()
-            if contact_text:
-                try:
-                    contact = float(contact_text)
-                except ValueError:
-                    raise ValueError(f"Target contact scale must be a number (got '{contact_text}').")
-                if contact <= 0.0:
-                    raise ValueError("Target contact scale must be positive.")
-                self.preopt_contact_scale = contact
-            else:
-                self.preopt_contact_scale = None
-            self.solute_charge = parse_integer(self.textInput_solute_charge.value, "Solute charge", default=0)
-            self.solvent_charge = parse_integer(
-                self.textInput_solvent_charge.value, "Solvent molecule charge", default=0
-            )
-            self.multiplicity = parse_multiplicity(self.textInput_multiplicity.value)
-        except ValueError as error:
-            await self.main_window.dialog(toga.ErrorDialog("Error", str(error)))
+        if not await self.read_extras_params():
             return False
 
         update_text = (
@@ -269,12 +205,7 @@ class SingleSoluteSolventBox:
             update_text += f"{'Extra solute clearance (Å):':<32} {self.min_distance:.3f}\n"
             update_text += f"{'Solute charge:':<32} {self.solute_charge:+d}\n"
         update_text += f"{'Solvent molecule charge:':<32} {self.solvent_charge:+d}\n"
-        update_text += f"{'Total spin multiplicity:':<32} {self.multiplicity}\n"
-        if self.preoptimize:
-            update_text += (
-                f"{'Pre-optimization:':<32} {self.preopt_mode}, contact scale "
-                f"{self.effective_preopt_contact_scale():.3f}, at most {self.preopt_max_iterations} iterations\n"
-            )
+        update_text += self.extras_parameter_text()
         self.multi_line_text.value += update_text
         return True
 
@@ -893,22 +824,11 @@ class SingleSoluteSolventBox:
     # tests/test_single_solute_solvent_box.py). They run in a worker thread
     # and never touch a widget: progress goes through ``progress(dict)``.
     # ------------------------------------------------------------------
-    def _report(self, progress, payload, force=False):
-        if progress is None:
-            return
-        now = time.monotonic()
-        if not force and now - self._last_report < PROGRESS_REPORT_INTERVAL:
-            return
-        self._last_report = now
-        try:
-            progress(payload)
-        except Exception:
-            pass  # reporting must never abort a build
-
     def _insertion_payload(self, attempts, accepted, molecules):
         return {
             "stage": "insertion",
             "attempts": attempts,
+            "max_attempts": self.max_attempts,
             "accepted": accepted,
             "target": self.num_target_solvent_molecules,
             "molecules": list(molecules),
@@ -1064,74 +984,14 @@ class SingleSoluteSolventBox:
         self.engine_used = engine
 
     # ------------------------------------------------------------------
-    # Pre-optimization and system properties
+    # Hooks for the shared pre-optimization and properties (solvationBoxCommon)
     # ------------------------------------------------------------------
-    def effective_preopt_contact_scale(self):
-        if self.preopt_contact_scale is not None:
-            return float(self.preopt_contact_scale)
-        return max(DEFAULT_PREOPT_CONTACT_SCALE, float(self.vdw_scale))
-
-    def packed_system(self):
-        return PackedSystem.from_molecules(self.molecules, self.get_vdw_radius, self.get_atomic_mass)
-
-    def run_preoptimization(self, progress=None):
-        """Relax the packed box (worker thread). A setup problem -- e.g. a box
-        too small for the minimum image -- is recorded in ``preopt_error``
-        instead of raised, so the packed box is still written."""
-        self.preopt_result = None
-        self.preopt_error = ""
-        self.preopt_data = []
-        if not self.molecules:
-            self.preopt_error = "there are no molecules to pre-optimize"
-            return
-        system = self.packed_system()
-        cell = PeriodicCell(self.lattice_vectors, periodic=self.use_periodic_minimum_image)
-        clearance = self.min_distance if self._solute_molecule() is not None else 0.0
-
-        def callback(wrapped, iteration, energy):
-            molecules = [
-                (kind, system.elements[start:stop], wrapped[start:stop])
-                for kind, (start, stop) in zip(system.molecule_kinds, system.molecule_slices)
-            ]
-            self._report(progress, {
-                "stage": "preopt",
-                "iteration": iteration,
-                "max_iterations": self.preopt_max_iterations,
-                "energy": energy,
-                "molecules": molecules,
-            })
-
-        started = time.perf_counter()
-        try:
-            result = pre_optimize(
-                system, cell, self.effective_preopt_contact_scale(),
-                mode=self.preopt_mode,
-                max_iterations=self.preopt_max_iterations,
-                solute_clearance=clearance,
-                wall_padding=max(0.0, self.spacing),
-                callback=callback,
-                should_stop=lambda: self.cancel_requested,
-            )
-        except ValueError as error:
-            self.preopt_error = str(error)
-            return
-        finally:
-            self.preopt_seconds = time.perf_counter() - started
-        self.preopt_result = result
-        self.preopt_data = [
-            [element, float(x), float(y), float(z)]
-            for element, (x, y, z) in zip(system.elements, result.coordinates)
-        ]
+    def preopt_solute_clearance(self):
+        return self.min_distance if self._solute_molecule() is not None else 0.0
 
     def net_charge(self):
         solute = self.solute_charge if self._solute_molecule() is not None else 0
         return int(solute) + int(self.solvent_insertion_count) * int(self.solvent_charge)
-
-    def compute_system_properties(self):
-        self.system_properties = compute_properties(
-            [atom[0] for atom in self.data], self.net_charge(), self.multiplicity
-        )
-        return self.system_properties
 
     def calculate_density(self):
         total_mass_amu = 0.0
@@ -1221,31 +1081,8 @@ class SingleSoluteSolventBox:
         if self.engine_used:
             summary_lines.append(f"Packing engine: {self.engine_used} ({self.build_seconds:.2f} s)\n")
 
-        if self.system_properties is not None:
-            summary_lines.append("\n")
-            summary_lines.extend(self.system_properties.summary_lines())
-
-        if self.preoptimize:
-            summary_lines.append("\n")
-            if self.preopt_result is not None:
-                summary_lines.append(
-                    f"Target contact scale: {self.effective_preopt_contact_scale():.3f} "
-                    f"(packing vdW scale {self.vdw_scale:.3f})\n"
-                )
-                summary_lines.extend(self.preopt_result.summary_lines())
-                summary_lines.append(f"Pre-optimization time: {self.preopt_seconds:.2f} s\n")
-                summary_lines.append(f"Saved pre-optimized XYZ: {paths['preopt']}\n")
-            else:
-                summary_lines.append(f"Pre-optimization not performed: {self.preopt_error}\n")
+        summary_lines.extend(self.extras_summary_lines(paths["preopt"]))
         return "".join(summary_lines)
-
-    @staticmethod
-    def _write_xyz(path, atoms, comment):
-        with open(path, "w") as f:
-            f.write(f"{len(atoms)}\n")
-            f.write(f"{comment}\n")
-            for atom in atoms:
-                f.write(f"{atom[0]:<3s}{atom[1]:>14.7f}{atom[2]:>14.7f}{atom[3]:>14.7f}\n")
 
     def write_summary(self):
         summary_text = self.build_summary_text()
@@ -1279,15 +1116,10 @@ class SingleSoluteSolventBox:
         ``OSError``; the UI turns it into a dialog.
         """
         paths = self.output_paths()
-        self._write_xyz(paths["xyz"], self.data,
+        self.write_xyz(paths["xyz"], self.data,
                         "Solvent box generated by random-insertion solvent box builder")
         if self.preopt_result is not None:
-            a, b, c = self.lattice_vectors
-            self._write_xyz(
-                paths["preopt"], self.preopt_data,
-                f"Pre-optimized solvation box ({self.preopt_result.mode}, molecules wrapped whole "
-                f"into the cell); cell a b c = {a:.6f} {b:.6f} {c:.6f} Angstrom",
-            )
+            self.write_preopt_xyz(paths["preopt"])
         summary_text = self.write_summary()
         self.write_parameters_file()
         self.element_count()
@@ -1304,21 +1136,13 @@ class SingleSoluteSolventBox:
         return True
 
 
-class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
+class SingleSoluteSolventBoxUI(SolvationExtrasUI, SingleSoluteSolventBox):
     """Setup / Construction / Summary tabs over a fixed run bar."""
 
-    ENGINE_LABELS = {
-        "Automatic (numba if installed)": ENGINE_AUTO,
-        "NumPy cell list": ENGINE_NUMPY,
-        "Numba kernel": ENGINE_NUMBA,
-        "Legacy (reference, slow)": ENGINE_LEGACY,
-    }
-    PREOPT_MODE_LABELS = {
-        "Rigid molecules": MODE_RIGID,
-        "Flexible molecules": MODE_FLEXIBLE,
-    }
-    SETUP_TAB, CONSTRUCTION_TAB, SUMMARY_TAB = 0, 1, 2
-    HINT_COLOR = "#666666"
+    CHARGE_FIELDS = (
+        ("Solute charge:", "Integer, default 0", "textInput_solute_charge"),
+        ("Solvent molecule charge:", "Integer per molecule, default 0", "textInput_solvent_charge"),
+    )
 
     def __init__(self, *args):
         super().__init__()
@@ -1349,16 +1173,15 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
             style=Pack(flex=1, margin=0, font_size=11),
         )
 
-        self.tabs = toga.OptionContainer(
-            content=[
-                ("Setup", toga.ScrollContainer(content=self._build_setup_tab(), horizontal=False)),
-                ("Construction", self._build_construction_tab()),
-                ("Summary", self._build_summary_tab()),
-            ],
-            style=Pack(flex=1),
+        help_text = getattr(HelpGqteaWin, "single_solute_solvent_box", "Random insertion solvent box builder.")
+        intro = (
+            f"{help_text}\n\n"
+            "Algorithm: target-density random insertion with random rotations and "
+            "explicit solvent-solute / solvent-solvent vdW clash rejection, optionally followed by a "
+            "periodic pre-optimization.\n"
         )
-        main_box.add(self.tabs)
-        main_box.add(self._build_run_bar())
+        main_box.add(self.build_tabs(self._build_setup_tab(), intro))
+        main_box.add(self.build_run_bar("Build Solvent Box"))
         main_box.add(self.status_label)
         main_box.add(self.progress_bar)
 
@@ -1378,12 +1201,6 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
         if button is not None:
             row.add(button)
         parent.add(row)
-
-    def _hint(self, text):
-        # Toga labels do not wrap on their own; break the text to the window width.
-        import textwrap
-        return toga.Label(textwrap.fill(text, 125),
-                          style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 4, 0)))
 
     def _build_setup_tab(self):
         setup = toga.Box(style=Pack(direction=COLUMN, margin=(8, 8, 8, 8)))
@@ -1434,140 +1251,35 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
         self._add_field(setup, "Select Solute:", "Click Browse to select solute in XYZ format",
                         "textInput_solute", button=self.btn_browse_solute)
 
-        setup.add(toga.Label("Charge and spin", style=section))
-        charge_row = toga.Box(style=Pack(direction=ROW, margin=(0, 0, 4, 0)))
-        charge_left = toga.Box(style=Pack(direction=COLUMN, flex=1, margin=(0, 8, 0, 0)))
-        charge_right = toga.Box(style=Pack(direction=COLUMN, flex=1))
-        self._add_field(charge_left, "Solute charge:", "Integer, default 0", "textInput_solute_charge")
-        self._add_field(charge_left, "Solvent molecule charge:", "Integer per molecule, default 0", "textInput_solvent_charge")
-        self._add_field(charge_right, "Total spin multiplicity:", "Required: 2S+1, e.g. 1", "textInput_multiplicity")
-        charge_row.add(charge_left)
-        charge_row.add(charge_right)
-        setup.add(charge_row)
-        setup.add(self._hint(
+        self.build_charge_spin_section(setup, (
             "Net charge = solute charge + (inserted solvent molecules x solvent charge). The multiplicity "
             "is never guessed: it is checked against the electron count once the box is built."
         ))
-
-        setup.add(toga.Label("Pre-optimization", style=section))
-        preopt_row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0)))
-        self.switch_preoptimize = toga.Switch(
-            "Pre-optimize after building", style=Pack(margin=(0, 12, 0, 0)), on_change=self.update_preopt_controls
-        )
-        self.selection_preopt_mode = toga.Selection(
-            items=list(self.PREOPT_MODE_LABELS), style=Pack(width=180, margin=(0, 12, 0, 0))
-        )
-        preopt_row.add(self.switch_preoptimize)
-        preopt_row.add(self.selection_preopt_mode)
-        setup.add(preopt_row)
-        preopt_fields = toga.Box(style=Pack(direction=ROW, margin=(0, 0, 4, 0)))
-        preopt_left = toga.Box(style=Pack(direction=COLUMN, flex=1, margin=(0, 8, 0, 0)))
-        preopt_right = toga.Box(style=Pack(direction=COLUMN, flex=1))
-        self._add_field(preopt_left, "Target contact scale:",
-                        f"Default {DEFAULT_PREOPT_CONTACT_SCALE:.2f} or the vdW scale", "textInput_preopt_contact_scale")
-        self._add_field(preopt_right, "Max iterations:", f"Default {DEFAULT_MAX_ITERATIONS}", "textInput_preopt_iterations")
-        preopt_fields.add(preopt_left)
-        preopt_fields.add(preopt_right)
-        setup.add(preopt_fields)
-        setup.add(self._hint(
-            "Pushes intermolecular contacts out to d >= scale x (r_i + r_j) under periodic boundaries "
-            "(minimum image on, otherwise inside soft walls). Packing already guarantees the vdW scale, so "
-            "the target must be larger to have an effect. Rigid keeps every molecule's geometry exactly; "
-            "flexible lets bonds and angles relax around the input geometry. Molecules are wrapped whole "
-            "into the cell."
-        ))
-
-        setup.add(toga.Label("Advanced", style=section))
-        engine_row = toga.Box(style=self._row_style)
-        engine_row.add(toga.Label("Packing engine:", style=self._label_style))
-        self.selection_engine = toga.Selection(items=list(self.ENGINE_LABELS), style=Pack(width=260))
-        if not numba_available():
-            self.selection_engine.items = [k for k, v in self.ENGINE_LABELS.items() if v != ENGINE_NUMBA]
-        engine_row.add(self.selection_engine)
-        setup.add(engine_row)
-        setup.add(self._hint(
-            "All engines produce the same box for the same seed; Legacy is the original, slower loop."
-        ))
+        self.build_preopt_section(setup)
+        self.build_engine_section(setup)
         return setup
 
-    def _build_construction_tab(self):
-        page = toga.Box(style=Pack(direction=COLUMN, margin=(6, 6, 6, 6), flex=1))
-        self.construction_view = ConstructionView(width=770, height=430)
-        page.add(self.construction_view.widget)
-        view_row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(6, 0, 0, 0)))
-        view = self.construction_view
-        step = ROTATION_STEP
-        for text, action in [
-            ("Turn left", lambda w: view.rotate(horizontal_degrees=-step)),
-            ("Turn right", lambda w: view.rotate(horizontal_degrees=step)),
-            ("Tilt up", lambda w: view.rotate(vertical_degrees=-step)),
-            ("Tilt down", lambda w: view.rotate(vertical_degrees=step)),
-            ("Zoom +", lambda w: view.zoom(1.25)),
-            ("Zoom -", lambda w: view.zoom(0.8)),
-            ("Reset view", lambda w: view.reset_view()),
-        ]:
-            view_row.add(toga.Button(text, on_press=action, style=Pack(width=92, margin=(0, 6, 0, 0))))
-        page.add(view_row)
-        return page
-
-    def _build_summary_tab(self):
-        page = toga.Box(style=Pack(direction=COLUMN, margin=(6, 6, 6, 6), flex=1))
-        help_text = getattr(HelpGqteaWin, "single_solute_solvent_box", "Random insertion solvent box builder.")
-        self.multi_line_text.value = (
-            f"{help_text}\n\n"
-            "Algorithm: target-density random insertion with random rotations and "
-            "explicit solvent-solute / solvent-solvent vdW clash rejection, optionally followed by a "
-            "periodic pre-optimization.\n"
+    # -- inputs and control state -------------------------------------------
+    def read_charges(self):
+        self.solute_charge = parse_integer(self.textInput_solute_charge.value, "Solute charge", default=0)
+        self.solvent_charge = parse_integer(
+            self.textInput_solvent_charge.value, "Solvent molecule charge", default=0
         )
-        page.add(self.multi_line_text)
-        row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(6, 0, 0, 0)))
-        self.btn_update_properties = toga.Button(
-            "Update properties", on_press=self.update_properties, style=Pack(width=150, margin=(0, 8, 0, 0))
-        )
-        row.add(self.btn_update_properties)
-        row.add(toga.Label("Re-checks charge and multiplicity on the last box without rebuilding it.",
-                           style=Pack(color=self.HINT_COLOR)))
-        page.add(row)
-        return page
 
-    def _build_run_bar(self):
-        run_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(8, 0, 6, 0)))
-        self.start_button = toga.Button("Build Solvent Box", style=Pack(margin=(0, 8, 0, 0), width=150),
-                                        on_press=self.workflow)
-        self.btn_cancel = toga.Button("Cancel", style=self._button_style, on_press=self.cancel_run)
-        self.btn_cancel.enabled = False
-        self.btn_close = toga.Button("Close", style=Pack(width=120), on_press=self.closeTopLevel)
-        run_box.add(self.start_button)
-        run_box.add(self.btn_cancel)
-        run_box.add(self.btn_close)
-        return run_box
-
-    # -- control state ---------------------------------------------------
     def update_solute_controls(self, widget=None):
-        enabled = bool(self.switch_include_solute.value)
+        enabled = bool(self.switch_include_solute.value) and not getattr(self, "is_running", False)
         self.textInput_min_distance.enabled = enabled
         self.textInput_solute.enabled = enabled
         self.btn_browse_solute.enabled = enabled
         self.textInput_solute_charge.enabled = enabled
 
-    def update_preopt_controls(self, widget=None):
-        enabled = bool(self.switch_preoptimize.value)
-        self.selection_preopt_mode.enabled = enabled
-        self.textInput_preopt_iterations.enabled = enabled
-        self.textInput_preopt_contact_scale.enabled = enabled
-
     def set_running_state(self, is_running):
+        self.set_extras_running(is_running)
         self.start_button.enabled = not is_running
         self.btn_close.enabled = not is_running
-        self.btn_cancel.enabled = is_running
-        self.btn_update_properties.enabled = not is_running
         self.btn_browse_solvent.enabled = not is_running
-        self.btn_browse_solute.enabled = (not is_running) and bool(self.switch_include_solute.value)
-        for switch in [self.switch, self.switch_density, self.switch_minimum_image,
-                       self.switch_include_solute, self.switch_preoptimize]:
+        for switch in [self.switch, self.switch_density, self.switch_minimum_image, self.switch_include_solute]:
             switch.enabled = not is_running
-        self.selection_engine.enabled = not is_running
-
         for field in [
             self.textInput_lattice_vectors,
             self.textInput_spacing,
@@ -1577,62 +1289,13 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
             self.textInput_seed,
             self.textInput_solvent,
             self.textInput_solvent_charge,
-            self.textInput_multiplicity,
         ]:
             field.enabled = not is_running
-
+        self.update_solute_controls()
         if is_running:
-            self.cancel_requested = False
-            self.textInput_min_distance.enabled = False
-            self.textInput_solute.enabled = False
-            self.textInput_solute_charge.enabled = False
-            self.selection_preopt_mode.enabled = False
-            self.textInput_preopt_iterations.enabled = False
-            self.textInput_preopt_contact_scale.enabled = False
             self.status_label.text = "Running insertion..."
             self.progress_bar.value = 0
             self.multi_line_text.value = "Preparing random insertion...\n"
-        else:
-            self.update_solute_controls()
-            self.update_preopt_controls()
-
-    def cancel_run(self, widget):
-        self.cancel_requested = True
-        self.btn_cancel.enabled = False
-        self.status_label.text = "Cancel requested. Stopping after the current step..."
-
-    # -- progress (always on the Toga thread) ------------------------------
-    def _packing_share(self):
-        return PACKING_PROGRESS_SHARE if self.preoptimize else 100.0
-
-    def _snapshot(self, stage, molecules, caption=""):
-        return ConstructionSnapshot(stage, tuple(self.lattice_vectors), molecules, caption)
-
-    def _apply_progress(self, payload):
-        if payload.get("stage") == "insertion":
-            attempts, accepted, target = payload["attempts"], payload["accepted"], payload["target"]
-            percent = self.insertion_progress_percent(attempts, accepted, target)
-            self.progress_bar.max = 100
-            self.progress_bar.value = self._packing_share() * percent / 100.0
-            self.status_label.text = (
-                f"Insertion: attempts {attempts}/{self.max_attempts} | "
-                f"accepted {accepted}/{target} solvent molecules"
-            )
-            self.construction_view.submit(self._snapshot(
-                "Inserting solvent", payload["molecules"], f"{accepted}/{target} molecules"
-            ))
-        elif payload.get("stage") == "preopt":
-            iteration, limit = payload["iteration"], max(1, payload["max_iterations"])
-            share = self._packing_share()
-            self.progress_bar.value = share + (100.0 - share) * min(1.0, iteration / limit)
-            self.status_label.text = f"Pre-optimizing: iteration {iteration} | penalty {payload['energy']:.4g}"
-            self.construction_view.submit(self._snapshot(
-                "Pre-optimizing", payload["molecules"], f"iteration {iteration}"
-            ))
-
-    def update_progress_display(self, attempts, accepted, target):
-        self._apply_progress({"stage": "insertion", "attempts": attempts, "accepted": accepted,
-                              "target": target, "molecules": list(self.molecules)})
 
     # -- run ---------------------------------------------------------------
     async def workflow(self, widget):
@@ -1650,50 +1313,16 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
             await self.main_window.dialog(toga.ErrorDialog("Error", "Please select a solute molecule file."))
             return
 
-        loop = asyncio.get_running_loop()
-
-        def progress(payload):
-            loop.call_soon_threadsafe(self._apply_progress, payload)
-
         try:
             self.set_running_state(True)
-            self.preopt_result = None
-            self.preopt_error = ""
-            self.system_properties = None
             self.center_of_mass()
-            self.tabs.current_tab = self.CONSTRUCTION_TAB
             initial = [m for m in [self._solute_molecule()] if m is not None]
-            self.construction_view.submit(
-                self._snapshot("Solute placed" if initial else "Empty box", initial), force=True
+            completed = await self.run_construction(
+                initial,
+                lambda: f"{self.solvent_insertion_count}/{self.num_target_solvent_molecules} molecules",
             )
-
-            await asyncio.to_thread(self.build_box, progress)
-            if self.cancel_requested:
-                self._report_cancelled()
+            if not completed:
                 return
-            self.construction_view.submit(self._snapshot(
-                "Packed box", list(self.molecules),
-                f"{self.solvent_insertion_count}/{self.num_target_solvent_molecules} molecules",
-            ), force=True)
-
-            if self.preoptimize:
-                self.status_label.text = "Pre-optimizing..."
-                await asyncio.to_thread(self.run_preoptimization, progress)
-                if self.cancel_requested:
-                    self._report_cancelled()
-                    return
-                if self.preopt_result is not None:
-                    system = self.packed_system()
-                    final = [
-                        (kind, system.elements[s:e], self.preopt_result.coordinates[s:e])
-                        for kind, (s, e) in zip(system.molecule_kinds, system.molecule_slices)
-                    ]
-                    self.construction_view.submit(self._snapshot(
-                        "Pre-optimized box (molecules wrapped whole)", final,
-                        f"{self.preopt_result.report_final['clashes']} clashing pairs left",
-                    ), force=True)
-
-            self.compute_system_properties()
             if not await self.save_and_display_results():
                 self.status_label.text = "Failed"
                 return
@@ -1708,52 +1337,13 @@ class SingleSoluteSolventBoxUI(SingleSoluteSolventBox):
             self.progress_bar.max = 100
             self.progress_bar.value = 100
             self.tabs.current_tab = self.SUMMARY_TAB
-            await self._report_problems()
+            await self.report_problems()
         except Exception as e:
             self.status_label.text = "Failed"
             await self.main_window.dialog(toga.ErrorDialog("Error", f"Failed to build solvent box: {e}"))
             return
         finally:
             self.set_running_state(False)
-
-    def _report_cancelled(self):
-        self.status_label.text = "Cancelled"
-        self.multi_line_text.value += "\nRun cancelled: no output files were written.\n"
-
-    async def _report_problems(self):
-        if self.preoptimize and self.preopt_result is None and self.preopt_error:
-            await self.main_window.dialog(toga.InfoDialog(
-                "Pre-optimization not performed",
-                f"{self.preopt_error}\n\nThe packed box was written without pre-optimization.",
-            ))
-        props = self.system_properties
-        if props is not None and not props.multiplicity_valid:
-            await self.main_window.dialog(toga.InfoDialog(
-                "Check the spin multiplicity",
-                f"Multiplicity {props.multiplicity} is not possible here: {props.message}.\n\n"
-                "Enter a valid value on the Setup tab and press 'Update properties' on the "
-                "Summary tab; the box does not need to be rebuilt.",
-            ))
-
-    async def update_properties(self, widget):
-        if not self.data:
-            await self.main_window.dialog(toga.InfoDialog("No box yet", "Build a solvent box first."))
-            return
-        try:
-            self.solute_charge = parse_integer(self.textInput_solute_charge.value, "Solute charge", default=0)
-            self.solvent_charge = parse_integer(
-                self.textInput_solvent_charge.value, "Solvent molecule charge", default=0
-            )
-            self.multiplicity = parse_multiplicity(self.textInput_multiplicity.value)
-            self.compute_system_properties()
-            self.multi_line_text.value = self.write_summary()
-        except ValueError as error:
-            await self.main_window.dialog(toga.ErrorDialog("Error", str(error)))
-            return
-        except OSError as error:
-            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving summary TXT file: {error}"))
-            return
-        await self._report_problems()
 
     def closeTopLevel(self, widget):
         self.main_window.close()

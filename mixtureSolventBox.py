@@ -2,16 +2,21 @@
 import os
 import math
 import random
-import asyncio
+import time
 import numpy as np
 from scipy.spatial.transform import Rotation
 import toga
 from toga.style import Pack
 from toga.style.pack import LEFT, CENTER, ROW, COLUMN
 from help import AtomicData, HelpGqteaWin
+from solventPacking import (
+    ENGINE_LEGACY, ENGINE_NUMPY, MoleculeGrid, RotationStream, atoms_clash, resolve_engine,
+)
+from systemProperties import parse_integer
+from solvationBoxCommon import SolvationExtrasEngine, SolvationExtrasUI
 
 
-class MixtureSolvationBox:
+class MixtureSolvationBox(SolvationExtrasEngine):
     """Build an orthorhombic solvent mixture box with an optional centered solute.
 
     Revised design:
@@ -72,6 +77,17 @@ class MixtureSolvationBox:
         self.radius_solute = 0.0
 
         self.use_periodic_minimum_image = True
+
+        # Packing options copied from the widgets by read_params, so the
+        # engine runs headless and in a worker thread.
+        self.rotate_solvent = True
+        self.include_solute = False
+        # Charge per molecule of each species; the multiplicity (in the
+        # extras) is never inferred.
+        self.solute_charge = 0
+        self.solvent_A_charge = 0
+        self.solvent_B_charge = 0
+        self.init_solvation_extras()
 
     # ---------- IO helpers ----------
 
@@ -170,8 +186,17 @@ class MixtureSolvationBox:
         self.composition_A = comp_A / 100.0
         self.composition_B = comp_B / 100.0
         self.use_periodic_minimum_image = bool(self.switch_minimum_image.value)
+        self.rotate_solvent = bool(self.switch_rotate.value)
+        self.include_solute = bool(self.switch_include_solute.value)
+        if any(length <= 0.0 for length in self.lattice_vectors):
+            await self.main_window.dialog(toga.ErrorDialog(
+                "Error", "All three box lattice vectors must be positive."
+            ))
+            return False
+        if seed_value is None and self.textInput_seed.value.strip():
+            return False  # read_input already explained the bad value
 
-        if self.switch_include_solute.value:
+        if self.include_solute:
             self.min_distance = await read_input(
                 self.textInput_min_distance, "extra solute clearance", float, required=False, default=0.0
             )
@@ -182,6 +207,9 @@ class MixtureSolvationBox:
                 return False
         else:
             self.min_distance = 0.0
+
+        if not await self.read_extras_params():
+            return False
 
         update_text = (
             f"{'Box lattice vectors:':<36} {self.lattice_vectors}\n"
@@ -195,8 +223,11 @@ class MixtureSolvationBox:
         )
         if self.random_seed is not None:
             update_text += f"{'Random seed:':<36} {self.random_seed}\n"
-        if self.switch_include_solute.value:
+        if self.include_solute:
             update_text += f"{'Extra solute clearance (Å):':<36} {self.min_distance:.3f}\n"
+            update_text += f"{'Solute charge:':<36} {self.solute_charge:+d}\n"
+        update_text += f"{'Solvent A / B molecule charge:':<36} {self.solvent_A_charge:+d} / {self.solvent_B_charge:+d}\n"
+        update_text += self.extras_parameter_text(36)
 
         self.multi_line_text.value = update_text
         return True
@@ -358,7 +389,7 @@ class MixtureSolvationBox:
         self.radius_A = self.molecule_bounding_radius(self.centered_A)
         self.radius_B = self.molecule_bounding_radius(self.centered_B)
 
-        if self.switch_include_solute.value and self.solute_coords:
+        if self.include_solute and self.solute_coords:
             self.centered_solute = self.center_molecule(self.solute_coords)
             self.solute_mass_amu = self.molecule_mass(self.centered_solute)
             self.radius_solute = self.molecule_bounding_radius(self.centered_solute)
@@ -435,29 +466,68 @@ class MixtureSolvationBox:
                 return True
         return False
 
-    async def fill_solvent_box_async(self):
+    # ---------- packing ----------
+    # Both loops make the same accept/reject decision for every attempt and
+    # consume the random generators identically (random.random for the solvent
+    # type, numpy's global state for the rotation, random.uniform for the
+    # centre), so a fixed seed gives exactly the same box from either -- pinned
+    # by tests/test_mixtureSolventBox.py. They run in a worker thread and never
+    # touch a widget: progress goes through ``progress(dict)``.
+
+    KIND_OF_TYPE = {"A": "solvent_A", "B": "solvent_B"}
+
+    def _solute_molecule(self):
+        if not self.positioned_solute_coords:
+            return None
+        return (
+            "solute",
+            [atom[0] for atom in self.positioned_solute_coords],
+            np.array([atom[1:] for atom in self.positioned_solute_coords], dtype=float),
+        )
+
+    def _insertion_payload(self, attempts, accepted, molecules):
+        return {
+            "stage": "insertion",
+            "attempts": attempts,
+            "max_attempts": self.max_attempts,
+            "accepted": accepted,
+            "target": self.num_target_solvent_molecules,
+            "molecules": list(molecules),
+        }
+
+    def _start_packing(self):
         self.accepted_molecules = []
         self.data = []
         self.count_solvent_A = 0
         self.count_solvent_B = 0
-
         if self.random_seed is not None:
             random.seed(self.random_seed)
             np.random.seed(self.random_seed)
-
-        if self.positioned_solute_coords:
+        molecules = []
+        solute = self._solute_molecule()
+        if solute is not None:
             self.data.extend([[atom[0], atom[1], atom[2], atom[3]] for atom in self.positioned_solute_coords])
+            molecules.append(solute)
+        return molecules
 
+    def _finish_packing(self, molecules, attempts):
+        self.molecules = molecules
+        self.solvent_attempts_used = attempts
+        self.failed_insertions = max(0, attempts - (self.count_solvent_A + self.count_solvent_B))
+        self.final_density = self.calculate_density()
+
+    def fill_solvent_box_legacy(self, progress=None):
+        """The original pure-Python insertion loop, kept as the reference
+        implementation (the 'Legacy' engine, the tests and the benchmark)."""
+        molecules = self._start_packing()
         attempts = 0
         accepted = 0
-        self.update_progress_display(attempts, accepted, self.num_target_solvent_molecules)
-        await asyncio.sleep(0.001)
+        self._report(progress, self._insertion_payload(attempts, accepted, molecules), force=True)
 
         while attempts < self.max_attempts and accepted < self.num_target_solvent_molecules:
+            if self.cancel_requested:
+                break
             attempts += 1
-            if attempts % 25 == 0:
-                self.update_progress_display(attempts, accepted, self.num_target_solvent_molecules)
-                await asyncio.sleep(0.001)
 
             solvent_type = self.choose_solvent_type()
             template = self.centered_A if solvent_type == "A" else self.centered_B
@@ -466,7 +536,7 @@ class MixtureSolvationBox:
             if not template:
                 continue
 
-            rotated = self.random_rotate_molecule(template) if self.switch_rotate.value else [
+            rotated = self.random_rotate_molecule(template) if self.rotate_solvent else [
                 [atom[0], atom[1], atom[2], atom[3]] for atom in template
             ]
 
@@ -493,28 +563,112 @@ class MixtureSolvationBox:
                 "coords": translated,
             })
             self.data.extend(translated)
+            molecules.append((
+                self.KIND_OF_TYPE[solvent_type], [atom[0] for atom in translated],
+                np.array([atom[1:] for atom in translated], dtype=float),
+            ))
 
             accepted += 1
             if solvent_type == "A":
                 self.count_solvent_A += 1
             else:
                 self.count_solvent_B += 1
+            self._report(progress, self._insertion_payload(attempts, accepted, molecules))
 
-            if attempts % 25 == 0 or accepted == self.num_target_solvent_molecules:
-                self.update_progress_display(attempts, accepted, self.num_target_solvent_molecules)
-                self.multi_line_text.value = (
-                    "Running random insertion...\n"
-                    f"Target solvent molecules: {self.num_target_solvent_molecules}\n"
-                    f"Accepted so far: {accepted}\n"
-                    f"Attempts used: {attempts}\n"
-                    f"Solvent A molecules: {self.count_solvent_A}\n"
-                    f"Solvent B molecules: {self.count_solvent_B}\n"
-                )
-                await asyncio.sleep(0.001)
+        self._finish_packing(molecules, attempts)
+        self._report(progress, self._insertion_payload(attempts, accepted, molecules), force=True)
 
-        self.solvent_attempts_used = attempts
-        self.failed_insertions = max(0, attempts - accepted)
-        self.final_density = self.calculate_density()
+    def fill_solvent_box_fast(self, engine=ENGINE_NUMPY, progress=None):
+        """Same decisions as :meth:`fill_solvent_box_legacy`, through a cell
+        list and vectorised (or numba-compiled) clash tests."""
+        molecules = self._start_packing()
+        lengths = np.array(self.lattice_vectors, dtype=float)
+        periodic = bool(self.use_periodic_minimum_image)
+        species = {}
+        for key, template, radius in (("A", self.centered_A, self.radius_A), ("B", self.centered_B, self.radius_B)):
+            elements = [atom[0] for atom in template]
+            species[key] = (
+                elements,
+                np.array([atom[1:] for atom in template], dtype=float).reshape(-1, 3),
+                np.array([self.get_vdw_radius(e) for e in elements], dtype=float),
+                radius,
+            )
+        solute = self._solute_molecule()
+        solute_xyz = solute_r = None
+        if solute is not None:
+            solute_xyz = solute[2]
+            solute_r = np.array([self.get_vdw_radius(e) for e in solute[1]], dtype=float)
+
+        low = self.spacing
+        high = lengths - self.spacing
+        grid = MoleculeGrid(lengths, periodic, min_cell=2.0 * max(self.radius_A, self.radius_B) + 2.5)
+        rotations = RotationStream()
+
+        attempts = 0
+        accepted = 0
+        self._report(progress, self._insertion_payload(attempts, accepted, molecules), force=True)
+
+        while attempts < self.max_attempts and accepted < self.num_target_solvent_molecules:
+            if self.cancel_requested:
+                break
+            attempts += 1
+
+            solvent_type = self.choose_solvent_type()
+            elements, template, atom_radii, radius = species[solvent_type]
+            if len(template) == 0:
+                continue
+            coords = template @ rotations.next().T if self.rotate_solvent else template.copy()
+
+            center = self.random_center_for_radius(radius)
+            if center is None:
+                break
+            xyz = coords + center
+
+            if not (np.all(xyz >= low) and np.all(xyz <= high)):
+                continue
+            if solute_xyz is not None and atoms_clash(xyz, atom_radii, solute_xyz, solute_r, self.vdw_scale,
+                                                      lengths, periodic, self.min_distance, engine):
+                continue
+            if grid.clashes(xyz, atom_radii, center, radius, self.vdw_scale, 0.0, engine):
+                continue
+
+            grid.add(center, radius, xyz, atom_radii)
+            translated = [[e, float(x), float(y), float(z)] for e, (x, y, z) in zip(elements, xyz)]
+            self.accepted_molecules.append({"type": solvent_type, "center": center, "radius": radius,
+                                            "coords": translated})
+            self.data.extend(translated)
+            molecules.append((self.KIND_OF_TYPE[solvent_type], elements, xyz))
+            accepted += 1
+            if solvent_type == "A":
+                self.count_solvent_A += 1
+            else:
+                self.count_solvent_B += 1
+            self._report(progress, self._insertion_payload(attempts, accepted, molecules))
+
+        self._finish_packing(molecules, attempts)
+        self._report(progress, self._insertion_payload(attempts, accepted, molecules), force=True)
+
+    def build_box(self, progress=None):
+        """Pack the box with the selected engine (runs in a worker thread).
+        Call prepare_molecules() and estimate_target_molecule_count() first."""
+        engine = resolve_engine(self.packing_engine)
+        started = time.perf_counter()
+        if engine == ENGINE_LEGACY:
+            self.fill_solvent_box_legacy(progress)
+        else:
+            self.fill_solvent_box_fast(engine, progress)
+        self.build_seconds = time.perf_counter() - started
+        self.engine_used = engine
+
+    # ---------- hooks for the shared pre-optimization and properties ----------
+
+    def preopt_solute_clearance(self):
+        return self.min_distance if self.positioned_solute_coords else 0.0
+
+    def net_charge(self):
+        solute = self.solute_charge if self.positioned_solute_coords else 0
+        return (int(solute) + int(self.count_solvent_A) * int(self.solvent_A_charge)
+                + int(self.count_solvent_B) * int(self.solvent_B_charge))
 
     def calculate_density(self):
         total_mass_amu = 0.0
@@ -527,32 +681,20 @@ class MixtureSolvationBox:
             return 0.0
         return total_mass_grams / volume_cm3
 
-    def update_progress_display(self, attempts, accepted, target):
-        if hasattr(self, "status_label"):
-            attempt_fraction = 0.0 if self.max_attempts <= 0 else min(1.0, attempts / self.max_attempts)
-            self.status_label.text = (
-                f"Insertion progress: {attempts}/{self.max_attempts} attempts ({100.0 * attempt_fraction:.1f}%) | "
-                f"accepted {accepted}/{target} solvent molecules"
-            )
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.max = max(1, self.max_attempts)
-            self.progress_bar.value = min(attempts, self.max_attempts)
+    # ---------- output ----------
 
-    async def save_and_display_results(self):
-        label = "mixture_solvent_box"
-        xyz_path = f"{self.output_dir}/{label}.xyz"
-        txt_path = f"{self.output_dir}/{label}.txt"
+    OUTPUT_LABEL = "mixture_solvent_box"
 
-        try:
-            with open(xyz_path, "w", encoding="utf-8") as f:
-                f.write(f"{len(self.data)}\n")
-                f.write("Mixture solvent box generated by density-driven random insertion\n")
-                for atom in self.data:
-                    f.write(f"{atom[0]:<3s}{atom[1]:>14.7f}{atom[2]:>14.7f}{atom[3]:>14.7f}\n")
-        except Exception as e:
-            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving {label}: {e}\n"))
-            return None
+    def output_paths(self):
+        label = self.OUTPUT_LABEL
+        return {
+            "xyz": f"{self.output_dir}/{label}.xyz",
+            "summary": f"{self.output_dir}/{label}.txt",
+            "preopt": f"{self.output_dir}/{label}_preopt.xyz",
+        }
 
+    def build_summary_text(self):
+        paths = self.output_paths()
         summary_lines = [
             "Random-insertion solvent mixture box build completed.\n",
             f"Target solvent molecules: {self.num_target_solvent_molecules}\n",
@@ -565,8 +707,8 @@ class MixtureSolvationBox:
             f"Composition solvent B (%): {100.0 * self.composition_B:.2f}\n",
             f"Periodic minimum-image clash detection: {'ON' if self.use_periodic_minimum_image else 'OFF'}\n",
             f"Centered solute inserted: {'ON' if bool(self.positioned_solute_coords) else 'OFF'}\n",
-            f"Saved XYZ: {xyz_path}\n",
-            f"Saved TXT summary: {txt_path}\n",
+            f"Saved XYZ: {paths['xyz']}\n",
+            f"Saved TXT summary: {paths['summary']}\n",
             f"a = {self.lattice_vectors[0]:.3f} Å\n",
             f"b = {self.lattice_vectors[1]:.3f} Å\n",
             f"c = {self.lattice_vectors[2]:.3f} Å\n",
@@ -578,25 +720,49 @@ class MixtureSolvationBox:
                 "Warning: the target number of solvent molecules was not fully reached. "
                 "Try a larger box, a lower target density, a smaller vdW scale, or more attempts.\n"
             )
+        if self.engine_used:
+            summary_lines.append(f"Packing engine: {self.engine_used} ({self.build_seconds:.2f} s)\n")
+        summary_lines.extend(self.extras_summary_lines(paths["preopt"]))
+        return "".join(summary_lines)
 
-        summary_text = "".join(summary_lines)
-        self.multi_line_text.value = summary_text
+    def write_summary(self):
+        summary_text = self.build_summary_text()
+        with open(self.output_paths()["summary"], "w", encoding="utf-8") as f:
+            f.write(summary_text)
+        return summary_text
 
+    def write_outputs(self):
+        """The original XYZ and TXT files (names and format unchanged) plus,
+        after a pre-optimization, ``*_preopt.xyz``. Raises ``OSError``."""
+        paths = self.output_paths()
+        with open(paths["xyz"], "w", encoding="utf-8") as f:
+            f.write(f"{len(self.data)}\n")
+            f.write("Mixture solvent box generated by density-driven random insertion\n")
+            for atom in self.data:
+                f.write(f"{atom[0]:<3s}{atom[1]:>14.7f}{atom[2]:>14.7f}{atom[3]:>14.7f}\n")
+        if self.preopt_result is not None:
+            self.write_preopt_xyz(paths["preopt"])
+        return self.write_summary()
+
+    async def save_and_display_results(self):
         try:
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(summary_text)
-        except Exception as e:
-            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving summary TXT file: {e}\n"))
-            return None
-
-        if hasattr(self, "status_label"):
-            self.status_label.text = "Completed"
-        if hasattr(self, "progress_bar"):
-            self.progress_bar.value = self.max_attempts if (self.count_solvent_A + self.count_solvent_B) < self.num_target_solvent_molecules else min(self.solvent_attempts_used, self.max_attempts)
-        return None
+            summary_text = self.write_outputs()
+        except OSError as e:
+            await self.main_window.dialog(toga.ErrorDialog("Error", f"Error saving output files: {e}\n"))
+            return False
+        self.multi_line_text.value = summary_text
+        return True
 
 
-class MixtureSolventBoxUI(MixtureSolvationBox):
+class MixtureSolventBoxUI(SolvationExtrasUI, MixtureSolvationBox):
+    """Setup / Construction / Summary tabs over a fixed run bar."""
+
+    CHARGE_FIELDS = (
+        ("Solute charge:", "Integer, default 0", "textInput_solute_charge"),
+        ("Solvent A molecule charge:", "Integer per molecule, default 0", "textInput_solvent_A_charge"),
+        ("Solvent B molecule charge:", "Integer per molecule, default 0", "textInput_solvent_B_charge"),
+    )
+
     def __init__(self, *args):
         super().__init__()
         self.layout_main_window(*args)
@@ -604,16 +770,42 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
     def layout_main_window(self, widget):
         self.main_window = toga.Window(
             title="Solvent Mixture Box Builder",
-            size=(820, 650),
+            size=(820, 720),
         )
 
         heading_style = Pack(font_size=18, font_weight="bold", text_align=LEFT, margin=(0, 0, 8, 0))
+        main_box = toga.Box(style=Pack(direction=COLUMN, margin=12, flex=1))
+        main_box.add(toga.Label("Solvent Mixture Box Builder", style=heading_style))
+
+        # Created before the tabs: building them sets Switch/Selection values.
+        self.status_label = toga.Label("Idle", style=Pack(margin=(0, 0, 2, 0), text_align=LEFT))
+        self.progress_bar = toga.ProgressBar(max=100, value=0, style=Pack(margin=(0, 0, 6, 0)))
+        self.multi_line_text = toga.MultilineTextInput(readonly=True, style=Pack(flex=1, margin=0, font_size=11))
+
+        help_text = getattr(HelpGqteaWin, "mixture_solvent_box", "Random insertion solvent mixture box builder.")
+        intro = (
+            f"{help_text}\n\n"
+            "Algorithm: target-density random insertion for solvent A/B, "
+            "optional centered solute insertion, optional periodic minimum-image clash detection, "
+            "optional periodic pre-optimization, and summary output in XYZ/TXT files.\n"
+        )
+        main_box.add(self.build_tabs(self._build_setup_tab(), intro))
+        main_box.add(self.build_run_bar("Build Mixture Box"))
+        main_box.add(self.status_label)
+        main_box.add(self.progress_bar)
+
+        self.main_window.content = main_box
+        self.update_solute_controls()
+        self.update_preopt_controls()
+        self.main_window.show()
+
+    def _build_setup_tab(self):
         section_style = Pack(font_size=12, font_weight="bold", text_align=LEFT, margin=(8, 0, 4, 0))
         label_style = Pack(margin=(0, 6, 0, 0), text_align=LEFT, width=170)
         input_style = Pack(flex=1, margin=0)
         button_style = Pack(margin=(0, 8, 0, 0), width=120)
         row_style = Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 4, 0))
-        main_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
+        main_box = toga.Box(style=Pack(direction=COLUMN, margin=(8, 8, 8, 8)))
 
         def add_field(parent, label_text, placeholder, attr_name, button=None):
             row = toga.Box(style=row_style)
@@ -625,9 +817,6 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
             if button is not None:
                 row.add(button)
             parent.add(row)
-
-        title_label = toga.Label("Solvent Mixture Box Builder", style=heading_style)
-        main_box.add(title_label)
 
         main_box.add(toga.Label("System and packing parameters", style=section_style))
         params_row = toga.Box(style=Pack(direction=ROW, margin=(0, 0, 4, 0)))
@@ -681,75 +870,48 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
 
         main_box.add(toga.Label("Input structures", style=section_style))
         self.btn_browse_solvent_A = toga.Button("Browse", on_press=self.read_solvent_A_xyz, style=button_style)
-        add_field(
-            main_box,
-            "Select Solvent A:",
-            "Click Browse to select solvent A in XYZ format",
-            "textInput_solvent_A",
-            button=self.btn_browse_solvent_A,
-        )
-
+        add_field(main_box, "Select Solvent A:", "Click Browse to select solvent A in XYZ format",
+                  "textInput_solvent_A", button=self.btn_browse_solvent_A)
         self.btn_browse_solvent_B = toga.Button("Browse", on_press=self.read_solvent_B_xyz, style=button_style)
-        add_field(
-            main_box,
-            "Select Solvent B:",
-            "Click Browse to select solvent B in XYZ format",
-            "textInput_solvent_B",
-            button=self.btn_browse_solvent_B,
-        )
-
+        add_field(main_box, "Select Solvent B:", "Click Browse to select solvent B in XYZ format",
+                  "textInput_solvent_B", button=self.btn_browse_solvent_B)
         self.btn_browse_solute = toga.Button("Browse", on_press=self.read_solute_xyz, style=button_style)
-        add_field(
-            main_box,
-            "Select Solute:",
-            "Click Browse to select solute in XYZ format",
-            "textInput_solute",
-            button=self.btn_browse_solute,
+        add_field(main_box, "Select Solute:", "Click Browse to select solute in XYZ format",
+                  "textInput_solute", button=self.btn_browse_solute)
+
+        self.build_charge_spin_section(main_box, (
+            "Net charge = solute charge + (inserted A molecules x A charge) + (inserted B molecules x B "
+            "charge). The multiplicity is never guessed: it is checked against the electron count once the "
+            "box is built."
+        ))
+        self.build_preopt_section(main_box)
+        self.build_engine_section(main_box)
+        return main_box
+
+    def read_charges(self):
+        self.solute_charge = parse_integer(self.textInput_solute_charge.value, "Solute charge", default=0)
+        self.solvent_A_charge = parse_integer(
+            self.textInput_solvent_A_charge.value, "Solvent A molecule charge", default=0
         )
-
-        main_box.add(toga.Label("Run controls", style=section_style))
-        run_box = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0, 0, 6, 0)))
-        self.start_button = toga.Button("Build Mixture Box", style=button_style, on_press=self.workflow)
-        self.btn_close = toga.Button("Close", style=Pack(width=120), on_press=self.closeTopLevel)
-        run_box.add(self.start_button)
-        run_box.add(self.btn_close)
-        main_box.add(run_box)
-
-        main_box.add(toga.Label("Run status and summary", style=section_style))
-        self.status_label = toga.Label("Idle", style=Pack(margin=(0, 0, 2, 0), text_align=LEFT))
-        main_box.add(self.status_label)
-        self.progress_bar = toga.ProgressBar(max=100, value=0, style=Pack(margin=(0, 0, 6, 0)))
-        main_box.add(self.progress_bar)
-        self.multi_line_text = toga.MultilineTextInput(readonly=True, style=Pack(flex=1, margin=0, font_size=11))
-        help_text = getattr(HelpGqteaWin, "mixture_solvent_box", "Random insertion solvent mixture box builder.")
-        self.multi_line_text.value = (
-            f"{help_text}\n\n"
-            "Algorithm: target-density random insertion for solvent A/B, "
-            "optional centered solute insertion, optional periodic minimum-image clash detection, "
-            "and summary output in XYZ/TXT files.\n"
+        self.solvent_B_charge = parse_integer(
+            self.textInput_solvent_B_charge.value, "Solvent B molecule charge", default=0
         )
-        main_box.add(self.multi_line_text)
-
-        self.main_window.content = main_box
-        self.update_solute_controls()
-        self.main_window.show()
 
     def update_solute_controls(self, widget=None):
-        enabled = bool(self.switch_include_solute.value)
+        enabled = bool(self.switch_include_solute.value) and not getattr(self, "is_running", False)
         self.textInput_min_distance.enabled = enabled
         self.textInput_solute.enabled = enabled
         self.btn_browse_solute.enabled = enabled
+        self.textInput_solute_charge.enabled = enabled
 
     def set_running_state(self, is_running):
+        self.set_extras_running(is_running)
         self.start_button.enabled = not is_running
         self.btn_close.enabled = not is_running
         self.btn_browse_solvent_A.enabled = not is_running
         self.btn_browse_solvent_B.enabled = not is_running
-        self.btn_browse_solute.enabled = (not is_running) and bool(self.switch_include_solute.value)
-        self.switch_rotate.enabled = not is_running
-        self.switch_density.enabled = not is_running
-        self.switch_minimum_image.enabled = not is_running
-        self.switch_include_solute.enabled = not is_running
+        for switch in [self.switch_rotate, self.switch_density, self.switch_minimum_image, self.switch_include_solute]:
+            switch.enabled = not is_running
 
         for field in [
             self.textInput_lattice_vectors,
@@ -760,24 +922,18 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
             self.textInput_seed,
             self.textInput_composition_A,
             self.textInput_composition_B,
-            self.textInput_min_distance,
             self.textInput_solvent_A,
             self.textInput_solvent_B,
-            self.textInput_solute,
+            self.textInput_solvent_A_charge,
+            self.textInput_solvent_B_charge,
         ]:
-            if field is self.textInput_min_distance:
-                field.enabled = (not is_running) and bool(self.switch_include_solute.value)
-            elif field is self.textInput_solute:
-                field.enabled = (not is_running) and bool(self.switch_include_solute.value)
-            else:
-                field.enabled = not is_running
+            field.enabled = not is_running
+        self.update_solute_controls()
 
         if is_running:
             self.status_label.text = "Running insertion... please wait"
             self.progress_bar.value = 0
             self.multi_line_text.value = "Preparing random insertion...\n"
-        else:
-            self.update_solute_controls()
 
     async def workflow(self, widget):
         params_ok = await self.read_params(widget)
@@ -790,7 +946,7 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
         if not self.coords_B:
             await self.main_window.dialog(toga.ErrorDialog("Error", "Please select solvent B molecule file."))
             return
-        if self.switch_include_solute.value and not self.solute_coords:
+        if self.include_solute and not self.solute_coords:
             await self.main_window.dialog(toga.ErrorDialog("Error", "Please select a solute molecule file."))
             return
 
@@ -798,9 +954,24 @@ class MixtureSolventBoxUI(MixtureSolvationBox):
             self.set_running_state(True)
             self.prepare_molecules()
             self.estimate_target_molecule_count()
-            await self.fill_solvent_box_async()
-            await self.save_and_display_results()
+            initial = [m for m in [self._solute_molecule()] if m is not None]
+            completed = await self.run_construction(
+                initial,
+                lambda: (f"A {self.count_solvent_A} + B {self.count_solvent_B} of "
+                         f"{self.num_target_solvent_molecules} molecules"),
+            )
+            if not completed:
+                return
+            if not await self.save_and_display_results():
+                self.status_label.text = "Failed"
+                return
+            self.status_label.text = "Completed"
+            self.progress_bar.max = 100
+            self.progress_bar.value = 100
+            self.tabs.current_tab = self.SUMMARY_TAB
+            await self.report_problems()
         except Exception as e:
+            self.status_label.text = "Failed"
             await self.main_window.dialog(toga.ErrorDialog("Error", f"Failed to build solvent mixture box: {e}"))
             return
         finally:
