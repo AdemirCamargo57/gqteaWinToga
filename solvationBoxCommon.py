@@ -245,6 +245,9 @@ class SolvationExtrasUI:
     HINT_COLOR = "#666666"
     # (label, placeholder, attribute) for each charge field -- set per builder.
     CHARGE_FIELDS = ()
+    # Where the multiplicity field is, for the message shown when it is missing
+    # or impossible -- a long Setup tab can hide it below the fold.
+    MULTIPLICITY_LOCATION = "Setup tab, Charge and spin section"
 
     # -- layout helpers ----------------------------------------------------
     def _extras_styles(self):
@@ -284,8 +287,11 @@ class SolvationExtrasUI:
         left, right = self._two_columns(parent)
         for index, (label, placeholder, attr) in enumerate(self.CHARGE_FIELDS):
             self._extras_field(left if index % 2 == 0 else right, label, placeholder, attr)
-        self._extras_field(right, "Total spin multiplicity:", "Required: 2S+1, e.g. 1", "textInput_multiplicity")
+        self.build_multiplicity_field(right)
         parent.add(self._hint(hint))
+
+    def build_multiplicity_field(self, parent):
+        self._extras_field(parent, "Total spin multiplicity:", "Required: 2S+1, e.g. 1", "textInput_multiplicity")
 
     def build_preopt_section(self, parent):
         parent.add(toga.Label("Pre-optimization", style=self._extras_styles()["section"]))
@@ -440,11 +446,34 @@ class SolvationExtrasUI:
             else:
                 self.preopt_contact_scale = None
             self.read_charges()
-            self.multiplicity = parse_multiplicity(self.textInput_multiplicity.value)
         except ValueError as error:
             await self.main_window.dialog(toga.ErrorDialog("Error", str(error)))
             return False
+        return await self.read_multiplicity()
+
+    async def read_multiplicity(self) -> bool:
+        try:
+            self.multiplicity = parse_multiplicity(self.textInput_multiplicity.value)
+        except ValueError as error:
+            await self.point_to_multiplicity(str(error))
+            return False
         return True
+
+    async def point_to_multiplicity(self, message):
+        """Show the Setup tab, say where the field is, then put the cursor in it
+        (focusing also scrolls the Setup page to it)."""
+        try:
+            self.tabs.current_tab = self.SETUP_TAB
+        except Exception:
+            pass
+        await self.main_window.dialog(toga.ErrorDialog(
+            "Spin multiplicity",
+            f"{message}\n\nEnter it in 'Total spin multiplicity' ({self.MULTIPLICITY_LOCATION}).",
+        ))
+        try:
+            self.textInput_multiplicity.focus()
+        except Exception:
+            pass
 
     def extras_parameter_text(self, width=32):
         text = f"{'Total spin multiplicity:':<{width}} {self.multiplicity}\n"
@@ -546,8 +575,8 @@ class SolvationExtrasUI:
             await self.main_window.dialog(toga.InfoDialog(
                 "Check the spin multiplicity",
                 f"Multiplicity {props.multiplicity} is not possible here: {props.message}.\n\n"
-                "Enter a valid value on the Setup tab and press 'Update properties' on the "
-                "Summary tab; the box does not need to be rebuilt.",
+                f"Enter a valid value in 'Total spin multiplicity' ({self.MULTIPLICITY_LOCATION}) and "
+                "press 'Update properties' on the Summary tab; the box does not need to be rebuilt.",
             ))
 
     async def update_properties(self, widget):
@@ -556,7 +585,12 @@ class SolvationExtrasUI:
             return
         try:
             self.read_charges()
-            self.multiplicity = parse_multiplicity(self.textInput_multiplicity.value)
+        except ValueError as error:
+            await self.main_window.dialog(toga.ErrorDialog("Error", str(error)))
+            return
+        if not await self.read_multiplicity():
+            return
+        try:
             self.compute_system_properties()
             self.multi_line_text.value = self.write_summary()
         except ValueError as error:

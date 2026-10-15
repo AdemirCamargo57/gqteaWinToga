@@ -184,6 +184,45 @@ def test_read_charges_per_box():
         ui.read_charges()
 
 
+@pytest.mark.parametrize("value,fragment", [("", "not inferred"), ("0", "positive")])
+def test_missing_multiplicity_points_to_the_field(value, fragment, monkeypatch):
+    import toga
+
+    class Recorded:
+        def __init__(self, title, message):
+            self.title, self.message = title, message
+
+    class Dialogs:
+        def __init__(self):
+            self.shown = []
+
+        async def dialog(self, d):
+            self.shown.append(d)
+
+    class FocusField(Field):
+        focused = 0
+
+        def focus(self):
+            self.focused += 1
+
+    class Tabs:
+        current_tab = 2
+
+    monkeypatch.setattr(toga, "ErrorDialog", Recorded)
+    ui = SharedWallBoxUI.__new__(SharedWallBoxUI)
+    SharedWallBox.__init__(ui)
+    ui.main_window = Dialogs()
+    ui.tabs = Tabs()
+    ui.textInput_multiplicity = FocusField(value)
+    assert asyncio.run(ui.read_multiplicity()) is False
+    message = ui.main_window.shown[-1].message
+    assert fragment in message and "Shared geometry section at the top" in message
+    assert ui.tabs.current_tab == ui.SETUP_TAB
+    assert ui.textInput_multiplicity.focused == 1
+    ui.textInput_multiplicity.value = "3"
+    assert asyncio.run(ui.read_multiplicity()) is True and ui.multiplicity == 3
+
+
 def test_progress_bar_splits_the_two_regions():
     ui = SharedWallBoxUI.__new__(SharedWallBoxUI)
     SharedWallBox.__init__(ui)

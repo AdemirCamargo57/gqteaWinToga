@@ -898,7 +898,9 @@ class SharedWallBox(SolvationExtrasEngine):
 class SharedWallBoxUI(SolvationExtrasUI, SharedWallBox):
     """Setup / Construction / Summary tabs over a fixed run bar."""
 
-    # Box 1 fields in the left column, Box 2 in the right one.
+    # Each box's charges sit in that box's own section; the multiplicity (one
+    # for the whole cell) sits at the top, in Shared geometry.
+    MULTIPLICITY_LOCATION = "Setup tab, Shared geometry section at the top"
     CHARGE_FIELDS = (
         ("Box 1 solute charge:", "Integer, default 0", "textInput_box1_solute_charge"),
         ("Box 2 solute charge:", "Integer, default 0", "textInput_box2_solute_charge"),
@@ -975,6 +977,8 @@ class SharedWallBoxUI(SolvationExtrasUI, SharedWallBox):
         geom_right = toga.Box(style=Pack(direction=COLUMN, flex=1))
         add_field(geom_left, "Shared a b:", "a b", "textInput_shared_ab")
         add_field(geom_left, "Box 1 c:", "c1", "textInput_c1")
+        add_field(geom_left, "Total spin multiplicity:", "Required: 2S+1 of the whole cell, e.g. 1",
+                  "textInput_multiplicity")
         add_field(geom_right, "Box 2 c:", "c2", "textInput_c2")
         self.switch_minimum_image = toga.Switch("Periodic minimum-image clash detection", style=Pack(margin=(0, 8, 0, 0)))
         self.switch_minimum_image.value = True
@@ -983,15 +987,15 @@ class SharedWallBoxUI(SolvationExtrasUI, SharedWallBox):
         geometry_row.add(geom_left)
         geometry_row.add(geom_right)
         content_box.add(geometry_row)
+        content_box.add(self._hint(
+            "The multiplicity is for the whole cell and is never guessed: it is checked against the "
+            "electron count once the box is built. Charges are entered in each box's section; the net "
+            "charge is the sum over both boxes of solute charge + (inserted A x A charge) + (inserted B x B charge)."
+        ))
 
         self.add_box_controls(content_box, 1, "Box 1 lower z region", button_style, section_style, row_style, label_style, input_style)
         self.add_box_controls(content_box, 2, "Box 2 upper z region", button_style, section_style, row_style, label_style, input_style)
 
-        self.build_charge_spin_section(content_box, (
-            "Net charge = sum over both boxes of solute charge + (inserted A molecules x A charge) + "
-            "(inserted B molecules x B charge). The multiplicity of the whole cell is never guessed: it is "
-            "checked against the electron count once the box is built."
-        ))
         self.build_preopt_section(content_box)
         self.build_engine_section(content_box)
         return content_box
@@ -1058,6 +1062,16 @@ class SharedWallBoxUI(SolvationExtrasUI, SharedWallBox):
         add_field(parent, "Solvent A:", "Required if A > 0", f"textInput_box{index}_solvent_A", button=browse_A)
         add_field(parent, "Solvent B:", "Required if B > 0", f"textInput_box{index}_solvent_B", button=browse_B)
         add_field(parent, "Solute:", "Required if solute is enabled", f"textInput_box{index}_solute", button=browse_solute)
+
+        charges_row = toga.Box(style=Pack(direction=ROW, margin=(0, 0, 4, 0)))
+        charges_left = toga.Box(style=Pack(direction=COLUMN, flex=1, margin=(0, 8, 0, 0)))
+        charges_right = toga.Box(style=Pack(direction=COLUMN, flex=1))
+        add_field(charges_left, "Solvent A charge:", "Per molecule, default 0", f"textInput_box{index}_charge_A")
+        add_field(charges_left, "Solute charge:", "Integer, default 0", f"textInput_box{index}_solute_charge")
+        add_field(charges_right, "Solvent B charge:", "Per molecule, default 0", f"textInput_box{index}_charge_B")
+        charges_row.add(charges_left)
+        charges_row.add(charges_right)
+        parent.add(charges_row)
 
     def read_charges(self):
         for box in self.boxes:
