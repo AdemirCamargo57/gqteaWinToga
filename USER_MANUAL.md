@@ -1222,11 +1222,11 @@ Typical outputs:
 
 #### Single Solute Solvent Box
 
-Use **Structural > Single Solute solvent box** to create a box containing one solute and inserted solvent molecules.
+Use **Structural > Single Solute solvent box** to create a box containing one solute and inserted solvent molecules. The window has three tabs — **Setup**, **Construction** and **Summary** — above a fixed run bar (**Build Solvent Box**, **Cancel**, **Close**), status line and progress bar.
 
-Inputs and options:
+Setup tab inputs and options:
 
-- Box lattice vectors.
+- Box lattice vectors (three positive lengths in Å).
 - Target density.
 - Maximum insertion attempts.
 - van der Waals scaling factor.
@@ -1237,14 +1237,41 @@ Inputs and options:
 - Calculate density.
 - Periodic minimum-image clash detection.
 - Include centered solute.
+- **Charge and spin**: solute charge, charge per solvent molecule (both integers, blank = 0) and the **total spin multiplicity** (2S+1, required).
+- **Pre-optimization**: *Pre-optimize after building*, the mode (*Rigid molecules* or *Flexible molecules*), the **target contact scale** (blank = 0.90, or the vdW scale if that is larger) and the maximum number of iterations (blank = 500).
+- **Advanced > Packing engine**: *Automatic* (uses numba when it is installed), *NumPy cell list*, *Numba kernel* or *Legacy* (the original loop). All engines produce exactly the same box for the same random seed; they differ only in speed.
+
+The **Construction** tab shows the box being built: the cell edges, the solute (orange, larger) and the solvent molecules (blue), farther atoms paler. It is updated a few times per second while solvent is inserted and during the pre-optimization, and finally shows the finished box. **Turn left/right** and **Tilt up/down** rotate the view by 15°, and **Zoom +**, **Zoom −** and **Reset view** change the zoom or restore the default view. Boxes with more than 4000 atoms show one dot per solvent molecule.
+
+##### System properties
+
+After the build the summary reports the total number of atoms, the net charge, the total number of electrons and the spin multiplicity:
+
+- Net charge = solute charge + (number of inserted solvent molecules × solvent molecule charge). The number of solvent molecules is only known after packing, which is why charges are entered per species.
+- Electrons = Σ Z (atomic numbers of all atoms) − net charge.
+- The multiplicity is **never inferred**: an even electron count allows 1, 3, 5, … and an odd one 2, 4, 6, …, so the electron count alone does not decide it. A blank field stops the build and asks for it. After the build it is checked: the value must have the opposite parity to the electron count and be at most N_e + 1. An impossible value is marked *INCONSISTENT* in the summary and a dialog lists the allowed values; correct it on the Setup tab and press **Update properties** on the Summary tab — the box is not rebuilt.
+
+##### Pre-optimization
+
+Random insertion only guarantees `d ≥ vdW scale × (r_i + r_j)`, so with the usual 0.8 many contacts sit right at that tight limit. The optional pre-optimization pushes them further apart. It minimizes an overlap penalty `(d² − σ²)²` for every pair of atoms in *different* molecules closer than `σ = target contact scale × (r_i + r_j)` (plus the extra solute clearance for solute–solvent pairs).
+
+The target must be larger than the packing vdW scale to have any effect, since packing already satisfies its own scale. The default is 0.90, or the vdW scale if that is larger. A final penalty of zero means every contact now satisfies the target. The minimizer aims 1% beyond σ, so contacts settle just outside the cutoff rather than a hair inside it.
+
+- **Periodic boundaries**: with minimum-image clash detection on, every distance uses the minimum image, so molecules interact across the faces of the cell. The contact range must be shorter than half the smallest cell length. If it is not, the packed box is still written and a dialog explains why the pre-optimization was skipped. With the switch off, molecules are kept inside the box by soft walls at the wall padding.
+- **Rigid molecules** (default): each molecule moves only as a whole (translation and rotation), so bond lengths and angles are exactly those of the input files.
+- **Flexible molecules**: atoms move individually. Bonds (detected from covalent radii) and angles are held near their input values, so molecules can adjust slightly to their neighbours. There are no torsion terms.
+- **Molecule-aware wrapping**: afterwards every molecule is translated as a whole so that its centre of mass lies inside the cell. Molecules are never split across a face, so atoms of a molecule near a face can lie slightly outside the cell. That is the usual convention for periodic codes, and it keeps every molecule whole.
+- The summary reports the penalty, the number of clashing pairs and the closest intermolecular contact before and after, and the largest change of an intramolecular distance. It also confirms that the bond connectivity of every molecule is unchanged.
 
 Typical outputs:
 
 - `single_solute_solvent.txt`
 - `single_solute_box_cmass.xyz`
-- A generated solvent-box XYZ file.
+- `single_solute_solvent_box.xyz` — the packed box, as before.
+- `single_solute_solvent_box.txt` — the summary, now including system properties and pre-optimization results.
+- `single_solute_solvent_box_preopt.xyz` — the pre-optimized, molecule-wrapped box, only when pre-optimization ran. Its comment line records the cell lengths.
 
-If the target number of solvent molecules cannot be inserted, the summary reports a warning and the number of successful insertions.
+If the target number of solvent molecules cannot be inserted, the summary reports a warning and the number of successful insertions. **Cancel** stops the run; no output files are written for a cancelled run.
 
 #### Mixture of Two Solvent Box
 

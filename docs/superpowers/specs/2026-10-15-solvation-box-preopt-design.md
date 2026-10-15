@@ -5,7 +5,7 @@ Status: approved 2026-10-15. Branch `feature/solvation-box-preopt`.
 ## 0. User decisions
 
 | Question | Decision |
-|---|---|
+| --- | --- |
 | Pre-optimization model | **Both, user selectable**: rigid bodies (default) and flexible (input-geometry-referenced bonded terms). |
 | Charge input | **Per species**: solute charge + charge per solvent molecule; total = q_solute + N_solvent * q_solvent. |
 | Spin multiplicity | **Always required**; never inferred. Parity and range validated once N_e is known. |
@@ -89,6 +89,39 @@ summary gains a properties block and pre-opt statistics.
 - Mixture: same as phase 1 with per-species charges q_A, q_B, q_solute.
 - Shared wall: cell `a x b x (c1 + c2)`; flat-bottom restraint keeps each molecule's COM in its own slab during
   pre-optimization; charges per box and species; one total multiplicity.
+
+## 6a. Changes made during phase-1 implementation (deviations from the approved design)
+
+1. **Pre-optimization target scale.** As designed (sigma = the *packing* vdW scale) the
+   pre-optimization was a guaranteed no-op: packing already enforces exactly that criterion
+   (a live run reported "no overlaps to relax"). Added *Target contact scale*
+   (`preopt_contact_scale`, default `max(0.90, vdw_scale)`); the minimizer aims at
+   `1.01 * sigma` while reports use sigma, so no pair is left a hair inside the cutoff.
+2. **Canvas -> bitmap view.** `toga.Canvas` on WinForms replays every shape through pythonnet on
+   each repaint; with the packing thread holding the GIL the window froze for up to 9.5 s.
+   The view now rasterises with Pillow and copies pixels into a native `System.Drawing.Bitmap`
+   (`toga.Image(pil)` alone costs ~170 ms). Rotation moved from mouse drag to buttons
+   (ImageView has no pointer events). Repaints are throttled adaptively (<= ~25 % of the UI thread).
+3. **Cancel button** added (not in the design), so a long build can be stopped; no files are
+   written for a cancelled run.
+
+## 6b. Measured results (phase 1)
+
+Water, density 0.997, 100 000 attempts, seed 7; every engine produced the identical box.
+
+| Box | Placed | Legacy | NumPy | Numba | Pre-opt rigid | Pre-opt flexible |
+| --- | --- | --- | --- | --- | --- | --- |
+| 15 A | 100/112 | 54.2 s | 8.6 s (6x) | 1.8 s (31x) | 0.04 s, 170 -> 0 clashes | 0.10 s, 170 -> 0 |
+| 20 A | 234/266 | 64.7 s | 9.4 s (7x) | 1.9 s (34x) | 0.08 s, 384 -> 0 | 0.25 s, 384 -> 0 |
+| 30 A | 747/899 | 128.8 s | 12.1 s (11x) | 4.1 s (32x) | 0.28 s, 1055 -> 0 | 0.76 s, 1055 -> 0 |
+| 40 A | 1670/2133 | -- | 12.9 s | 4.6 s | 0.54 s, 2088 -> 0 | 1.64 s, 2088 -> 0 |
+
+(pre-opt: packing scale 0.8, target 0.9; rigid internal change <= 1e-14 A, flexible <= 1e-6 A;
+connectivity preserved in every run). Live window, 30 A box: build 7.4 s (numba), UI event-loop
+lag max 77 ms / mean 17 ms (was 9.5 s / 1.4 s with toga.Canvas).
+
+Numba verdict: worthwhile -- 3-5x over the numpy cell list on top of the algorithmic gain, kept
+optional (`Automatic` engine uses it when importable), bit-identical decisions.
 
 ## 7. Validation
 

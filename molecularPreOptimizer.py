@@ -90,6 +90,36 @@ DEFAULT_IDEAL_ANGLE = 109.47
 # the term contributes nothing rather than dividing by ~0.
 TORSION_DEGENERACY_FLOOR = 1e-10
 
+# ForceField.from_geometry (structures read from files, no bond orders):
+# two atoms are bonded when closer than r_cov,i + r_cov,j + this tolerance --
+# the same rule molecularViewer draws bonds with; an input angle at or above
+# GEOMETRY_LINEAR_ANGLE gets the linear (1 + cos) form; and the repulsion
+# between atoms four or more bonds apart is capped at this fraction of their
+# input distance so it never pushes the input geometry apart.
+GEOMETRY_BOND_TOLERANCE = 0.45
+GEOMETRY_LINEAR_ANGLE = 175.0
+GEOMETRY_NONBONDED_FRACTION = 0.80
+
+
+def detect_bonds(elements: Sequence[str], coordinates,
+                 tolerance: float = GEOMETRY_BOND_TOLERANCE) -> List[Tuple[int, int]]:
+    """Bonded pairs ``(i, j)``, ``i < j``, of one molecule from its geometry."""
+    coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 3)
+    radii = []
+    for element in elements:
+        radius = AtomicData.covalent_radii.get(element)
+        if radius is None:
+            raise ValueError(f"No covalent radius is known for {element}; bonds cannot be detected.")
+        radii.append(float(radius))
+    radii = np.array(radii)
+    if len(radii) < 2:
+        return []
+    delta = coordinates[:, None, :] - coordinates[None, :, :]
+    distance = np.sqrt(np.sum(delta * delta, axis=2))
+    threshold = radii[:, None] + radii[None, :] + tolerance
+    i_index, j_index = np.nonzero(np.triu(distance <= threshold, k=1))
+    return [(int(i), int(j)) for i, j in zip(i_index, j_index)]
+
 
 @dataclass
 class OptimizationResult:
@@ -261,6 +291,21 @@ class ForceField:
         self.angle_terms = list(angle_terms)
         self.torsion_terms = list(torsion_terms)
         self.nonbonded_pairs = list(nonbonded_pairs)
+        # Index/parameter arrays are built once here rather than on every
+        # energy call: a solvation box tiles thousands of terms, and the
+        # minimizer evaluates the energy hundreds of times. Same numbers.
+        self._bond_arrays = self._columns(self.bond_terms, (int, int, float))
+        self._angle_arrays = self._columns(self.angle_terms, (int, int, int, float, bool))
+        self._nonbonded_arrays = self._columns(self.nonbonded_pairs, (int, int, float))
+
+    @staticmethod
+    def _columns(terms, dtypes):
+        if not terms:
+            return None
+        return tuple(
+            np.array([term[column] for term in terms], dtype=dtype)
+            for column, dtype in enumerate(dtypes)
+        )
 
     # ------------------------------------------------------------------
     # Assembly
@@ -335,6 +380,83 @@ class ForceField:
 
         return cls(elements, bond_terms, angle_terms, torsion_terms, nonbonded_pairs)
 
+    @classmethod
+    def from_geometry(
+        cls,
+        elements: Sequence[str],
+        coordinates,
+        bonds: Optional[Sequence[Tuple[int, int]]] = None,
+    ) -> "ForceField":
+        """A force field whose minimum is the given geometry.
+
+        For a molecule read from a file there are no bond orders to build
+        :meth:`from_sketch`'s references from -- and a covalent-radius
+        reference would distort CO2 or benzene. Here every reference comes from
+        the input structure itself: bond lengths and angles as they are, so the
+        bonded terms only resist *deformation*. There are no torsion terms
+        (nothing says which bonds should stay planar); pairs at least four bonds
+        apart keep the usual repulsion, with sigma capped below their input
+        distance so the input geometry is not pushed apart. Used by the
+        solvation-box pre-optimizer's flexible mode.
+        """
+        elements = list(elements)
+        coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 3)
+        if bonds is None:
+            bonds = detect_bonds(elements, coordinates)
+
+        bond_terms = []
+        neighbours: Dict[int, List[int]] = {index: [] for index in range(len(elements))}
+        for i, j in bonds:
+            bond_terms.append((int(i), int(j), float(np.linalg.norm(coordinates[i] - coordinates[j]))))
+            neighbours[int(i)].append(int(j))
+            neighbours[int(j)].append(int(i))
+
+        angle_terms = []
+        for centre, attached in neighbours.items():
+            for position, first in enumerate(attached):
+                for second in attached[position + 1:]:
+                    u = coordinates[first] - coordinates[centre]
+                    v = coordinates[second] - coordinates[centre]
+                    cosine = float(np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v)))
+                    cosine = min(1.0, max(-1.0, cosine))
+                    is_linear = np.degrees(np.arccos(cosine)) >= GEOMETRY_LINEAR_ANGLE
+                    angle_terms.append((first, centre, second, cosine, bool(is_linear)))
+
+        nonbonded_pairs = []
+        separation = cls._bond_separations(neighbours, len(elements))
+        for i in range(len(elements)):
+            for j in range(i + 1, len(elements)):
+                if separation[i][j] <= 3:
+                    continue
+                radius_i = AtomicData.covalent_radii.get(elements[i], 1.0)
+                radius_j = AtomicData.covalent_radii.get(elements[j], 1.0)
+                distance = float(np.linalg.norm(coordinates[i] - coordinates[j]))
+                sigma = min(
+                    NONBONDED_SIGMA_SCALE * (radius_i + radius_j),
+                    GEOMETRY_NONBONDED_FRACTION * distance,
+                )
+                nonbonded_pairs.append((i, j, sigma))
+
+        return cls(elements, bond_terms, angle_terms, [], nonbonded_pairs)
+
+    @classmethod
+    def combine(cls, parts: Sequence[Tuple["ForceField", int]]) -> "ForceField":
+        """One force field for many molecules: each part's atom indices shifted by its offset.
+
+        Terms never couple two parts -- intermolecular contacts belong to the
+        caller (the solvation-box pre-optimizer adds a periodic overlap penalty).
+        """
+        elements: List[str] = []
+        bond_terms, angle_terms, torsion_terms, nonbonded_pairs = [], [], [], []
+        for field, offset in parts:
+            o = int(offset)
+            bond_terms.extend((i + o, j + o, r) for i, j, r in field.bond_terms)
+            angle_terms.extend((a + o, c + o, b + o, cos, lin) for a, c, b, cos, lin in field.angle_terms)
+            torsion_terms.extend((a + o, i + o, j + o, b + o, k) for a, i, j, b, k in field.torsion_terms)
+            nonbonded_pairs.extend((i + o, j + o, s) for i, j, s in field.nonbonded_pairs)
+            elements.extend(field.elements)
+        return cls(elements, bond_terms, angle_terms, torsion_terms, nonbonded_pairs)
+
     @staticmethod
     def _bond_separations(neighbours: Dict[int, List[int]], count: int) -> List[List[int]]:
         """Shortest path length in bonds between every pair (BFS from each atom).
@@ -372,11 +494,9 @@ class ForceField:
         return self.energy_and_gradient(flat_coordinates)[0]
 
     def _bond_energy(self, coordinates: np.ndarray, gradient: np.ndarray) -> float:
-        if not self.bond_terms:
+        if self._bond_arrays is None:
             return 0.0
-        i_index = np.array([term[0] for term in self.bond_terms])
-        j_index = np.array([term[1] for term in self.bond_terms])
-        reference = np.array([term[2] for term in self.bond_terms])
+        i_index, j_index, reference = self._bond_arrays
 
         separation = coordinates[i_index] - coordinates[j_index]
         distance = np.linalg.norm(separation, axis=1)
@@ -392,13 +512,9 @@ class ForceField:
         return energy
 
     def _angle_energy(self, coordinates: np.ndarray, gradient: np.ndarray) -> float:
-        if not self.angle_terms:
+        if self._angle_arrays is None:
             return 0.0
-        first = np.array([term[0] for term in self.angle_terms])
-        centre = np.array([term[1] for term in self.angle_terms])
-        second = np.array([term[2] for term in self.angle_terms])
-        cos_ideal = np.array([term[3] for term in self.angle_terms])
-        is_linear = np.array([term[4] for term in self.angle_terms], dtype=bool)
+        first, centre, second, cos_ideal, is_linear = self._angle_arrays
 
         u = coordinates[first] - coordinates[centre]
         v = coordinates[second] - coordinates[centre]
@@ -474,11 +590,9 @@ class ForceField:
         return float(energy)
 
     def _nonbonded_energy(self, coordinates: np.ndarray, gradient: np.ndarray) -> float:
-        if not self.nonbonded_pairs:
+        if self._nonbonded_arrays is None:
             return 0.0
-        i_index = np.array([pair[0] for pair in self.nonbonded_pairs])
-        j_index = np.array([pair[1] for pair in self.nonbonded_pairs])
-        sigma = np.array([pair[2] for pair in self.nonbonded_pairs])
+        i_index, j_index, sigma = self._nonbonded_arrays
 
         separation = coordinates[i_index] - coordinates[j_index]
         distance = np.linalg.norm(separation, axis=1)

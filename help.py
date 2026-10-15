@@ -1140,12 +1140,26 @@ the same a and b lattice dimensions and use separate c heights. Periodic minimum
 detection is applied using the full combined box.
 """
     
-    single_solute_solvent_box = f""" Mixture Solvent Box Builder: A Step-by-Step Guide
+    single_solute_solvent_box = f""" Single Solute Solvent Box Builder: A Step-by-Step Guide
 The Solvent Box Builder allows you to generate a solvent box with just one solute molecule simulating
-the infinit dilution. This feature enables the simulation of complex environments where the solute
-is solvated by the solevent molecules. The users can specify any kind of solvent and solute. The user
+the infinite dilution. This feature enables the simulation of complex environments where the solute
+is solvated by the solvent molecules. The users can specify any kind of solvent and solute. The user
 should define a minimum distances between solvent molecules and the solute and solvent distance, avoiding
 overlap between the solute and solvent molecules.
+
+Charge and spin: enter the solute charge and the charge of one solvent molecule; the net charge is
+computed once the number of inserted solvent molecules is known. The total spin multiplicity (2S+1) is
+required and is never guessed from the electron count; it is checked after the build (parity and
+1 <= M <= N_e + 1), and 'Update properties' re-checks a corrected value without rebuilding.
+
+Pre-optimization (optional): pushes the intermolecular contacts left by the random insertion out to
+d >= target contact scale x (r_i + r_j) (default 0.90; it must exceed the packing vdW scale, which the
+insertion already guarantees) under periodic boundary conditions. 'Rigid molecules' moves whole
+molecules only; 'Flexible molecules' also lets bonds and angles relax around the input geometry.
+Afterwards each molecule is wrapped whole into the cell, so no molecule is split across a face. The
+pre-optimized box is written to *_preopt.xyz.
+
+The Construction tab shows the box while it is built and pre-optimized (Turn/Tilt/Zoom buttons).
 """
 
     solvent_box = f""" Solvent Box Builder: A Step-by-Step Guide
