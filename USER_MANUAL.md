@@ -111,7 +111,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.4.0 Molecular Analysis Toolkit
+gQTEA-0.7.5 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -3950,10 +3950,10 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.4.0 Molecular Analysis Toolkit
+gQTEA-0.7.5 Molecular Analysis Toolkit
 ```
 
-The launcher source notes that the program was revised and updated in March 2026.
+Version 0.7.5 (October 2026) adds the Electrostatic Surface Potential (ESP) tool and the solvation-box improvements: faster packing, optional periodic pre-optimization, system properties (atoms, electrons, spin multiplicity) and a live construction view.
 
 Core development team:
 
