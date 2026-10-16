@@ -1688,3 +1688,42 @@ OUTPUT  (next to the .fchk unless another folder is chosen)
   size, without the window frame. The view is not changed. Open the window
   with Show surface first. Formats: PNG (default), TIFF, BMP (lossless).
 """
+
+    help_fukui = """FUKUI FUNCTION ANALYSIS
+Fukui functions show where a molecule's electron density changes most when
+it gains or loses an electron. They INDICATE likely reactive regions; they do
+not predict reaction outcomes (sterics, solvent, kinetics are not included).
+
+  f+(r) = rho(N+1) - rho(N)        large: susceptible to NUCLEOPHILIC attack
+  f-(r) = rho(N) - rho(N-1)        large: susceptible to ELECTROPHILIC attack
+  f0(r) = [rho(N+1) - rho(N-1)]/2  large: susceptible to RADICAL attack
+  dual descriptor DD = f+ - f-     > 0 nucleophilic, < 0 electrophilic attack
+  (compare sites by how positive/negative DD is, not only by its sign)
+
+WHAT TO PREPARE (Gaussian)
+  1. Optimize the N state (the molecule as it reacts) and run a frequency job.
+  2. At that SAME geometry run three single points with the SAME method and
+     basis set: N, N+1 and N-1. Do not re-optimize the ions.
+     Neutral closed shell: N 0 1, N+1 -1 2, N-1 1 2.
+     Neutral radical:      N 0 2, N+1 -1 1, N-1 1 1 (check other spins for
+     transition-metal systems).
+  3. formchk each .chk to .fchk and select the three files here.
+
+CONDENSED (per-atom) INDICES
+  f-_A = q_A(N-1) - q_A(N), f+_A = q_A(N) - q_A(N+1), f0_A = average,
+  CDD_A = f+_A - f-_A, from Hirshfeld charges. They come from Multiwfn
+  (main function 22, option 2): run here when Multiwfn.exe is found, or
+  imported from an existing CDFT.txt.
+
+OUTPUTS (next to the N file unless another folder is chosen)
+  <name>_Fukui.txt  global indices, condensed table, site ranking, surface
+                    extrema of f+, f-, f0, DD on rho(N) = 0.01 a.u., notes
+  <name>_fplus.cub, _fminus.cub, _fzero.cub, _dual.cub  (a.u., bohr grid)
+  Show 3D: isosurfaces (blue +, red -) or the function mapped on the
+  rho(N) surface with its extrema (cyan minimum, orange maximum).
+
+CAVEATS
+  Diffuse basis functions with B3LYP-like functionals can make f+ and DD
+  over-diffuse; degenerate HOMO/LUMO need N+p/N-q states or orbital-weighted
+  Fukui functions. Read the NOTES at the end of the report.
+"""

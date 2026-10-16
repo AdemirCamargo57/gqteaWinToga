@@ -54,6 +54,7 @@ from orca_input_builder import ORCAInputBuilderUI
 from gqteaMDinputBuilder import GqteaMDInputBuilderUI
 from MolGeomComparator import MolGeomComparatorUI
 from electrostaticSurfacePotential import ElectrostaticSurfacePotentialUI
+from fukuiFunctionAnalyze import FukuiFunctionAnalyzeUI
 
 class gqteaWin(toga.App):
     def startup(self):
@@ -132,6 +133,7 @@ class gqteaWin(toga.App):
             ("3D Molecular Viewer", MolecularViewerUI),
             ("Electrostatic Surface Potential (ESP)", ElectrostaticSurfacePotentialUI),
             ("Plots", PlotterUI),
+            ("Analysis of Fukui Functions", FukuiFunctionAnalyzeUI),
             ("Molecular Axis Alignment", MolecularAxisAlignmentUI),
             ("Select Frames", SelectFramesUI),
             ("Frame selection by interatomic distance range", RangeFramesSelectionUI),

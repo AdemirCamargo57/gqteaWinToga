@@ -669,3 +669,331 @@ class FukuiAnalyser:
         except OSError as exc:
             raise ValueError(f"Could not write {report}: {exc}") from exc
         return [str(report)] + written
+
+
+# ----------------------------------------------------------------------
+# Toga UI
+# ----------------------------------------------------------------------
+DISPLAY_LOBES = "Isosurfaces (+/- isovalue)"
+DISPLAY_MAPPED = "Mapped on rho(N) surface"
+DISPLAY_MODES = (DISPLAY_LOBES, DISPLAY_MAPPED)
+BACKGROUND_COLOURS = {
+    "Black": (0.0, 0.0, 0.0),
+    "White": (1.0, 1.0, 1.0),
+    "Dark grey": (0.25, 0.25, 0.25),
+    "Light grey": (0.85, 0.85, 0.85),
+}
+IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]
+
+
+class FukuiFunctionAnalyzeUI:
+    LABEL_WIDTH = 230
+    HINT_COLOR = "#666666"
+
+    def __init__(self, *args, **kwargs):
+        # gqteaWinToga passes the Button that was pressed; ignore it.
+        self.analyser = FukuiAnalyser()
+        self.results: Optional[FukuiResults] = None
+        self.written: List[str] = []
+        self.viewer: Optional[ESPSurfaceViewer] = None
+        self._syncing = False
+        self.window = toga.Window(title="Fukui Function Analysis", size=(900, 700), on_close=self._on_close)
+        self.layout_main_window()
+        self.window.show()
+
+    # --- layout -----------------------------------------------------------
+    def _label(self, text):
+        return toga.Label(text, style=Pack(width=self.LABEL_WIDTH, margin=(6, 6, 0, 0)))
+
+    def _row(self, *children):
+        return toga.Box(children=list(children), style=Pack(direction=ROW, margin_bottom=4))
+
+    def _heading(self, text):
+        return toga.Label(text, style=Pack(font_weight="bold", margin=(10, 0, 4, 0)))
+
+    def _hint(self, text):
+        return toga.Label(text, style=Pack(color=self.HINT_COLOR, font_size=9, margin=(0, 0, 4, 0)))
+
+    def _file_row(self, label, attr, handler):
+        field_ = toga.TextInput(placeholder=".fchk / .fch", style=Pack(flex=1))
+        setattr(self, attr, field_)
+        return self._row(self._label(label), field_,
+                         toga.Button("Browse", on_press=handler, style=Pack(width=90, margin_left=5)))
+
+    def layout_main_window(self):
+        self.output_dir_input = toga.TextInput(placeholder="Blank = folder of the N file", style=Pack(flex=1))
+        header = toga.Box(children=[
+            self._file_row("N state (optimized geometry):", "n_input", self.browse_n),
+            self._file_row("N+1 state (anion of a neutral):", "plus_input", self.browse_plus),
+            self._file_row("N-1 state (cation of a neutral):", "minus_input", self.browse_minus),
+            self._row(self._label("Output folder:"), self.output_dir_input,
+                      toga.Button("Browse", on_press=self.browse_output_dir, style=Pack(width=90, margin_left=5))),
+        ], style=Pack(direction=COLUMN))
+
+        self.fukui_iso_input = toga.TextInput(placeholder=f"{DEFAULT_FUKUI_ISOVALUE:g}", style=Pack(width=160))
+        self.surface_iso_input = toga.TextInput(placeholder=f"{DEFAULT_SURFACE_ISOVALUE:g}", style=Pack(width=160))
+        self.spacing_input = toga.TextInput(placeholder=f"{DEFAULT_SPACING_BOHR:g}", style=Pack(width=160))
+        self.condensed_selection = toga.Selection(items=list(CONDENSED_SOURCES), style=Pack(width=260))
+        self.multiwfn_input = toga.TextInput(value=find_multiwfn() or "", placeholder="Multiwfn.exe",
+                                             style=Pack(flex=1))
+        self.cdft_input = toga.TextInput(placeholder="CDFT.txt from Multiwfn main function 22, option 2",
+                                         style=Pack(flex=1))
+        self.cubes_switch = toga.Switch("Write cube files (f+, f-, f0, dual descriptor)", value=True)
+        setup = toga.Box(children=[
+            self._heading("Real-space functions"),
+            self._row(self._label("Fukui isovalue (a.u.):"), self.fukui_iso_input),
+            self._hint("Blank = 0.005. Isosurfaces are drawn at +value and -value."),
+            self._row(self._label("rho(N) surface for mapping (a.u.):"), self.surface_iso_input),
+            self._hint("Blank = 0.01, as in Multiwfn manual 4.12.4 (f is too small on rho = 0.001)."),
+            self._row(self._label("Grid spacing (bohr):"), self.spacing_input),
+            self._hint("Blank = 0.25 bohr. Smaller = smoother and slower."),
+            self._heading("Atom-condensed indices (Hirshfeld, via Multiwfn)"),
+            self._row(self._label("Source:"), self.condensed_selection),
+            self._row(self._label("Multiwfn executable:"), self.multiwfn_input),
+            self._row(self._label("Existing CDFT.txt:"), self.cdft_input,
+                      toga.Button("Browse", on_press=self.browse_cdft, style=Pack(width=90, margin_left=5))),
+            self._hint("If Multiwfn is missing or fails, the run continues without condensed indices."),
+            self.cubes_switch,
+        ], style=Pack(direction=COLUMN, margin=10))
+
+        self.function_selection = toga.Selection(items=list(FUNCTIONS), on_change=self.on_display_change,
+                                                 style=Pack(width=140))
+        self.display_selection = toga.Selection(items=list(DISPLAY_MODES), on_change=self.on_display_change,
+                                                style=Pack(width=240))
+        self.extrema_switch = toga.Switch("Show extrema markers", value=True, on_change=self.on_display_change)
+        self.background_selection = toga.Selection(items=list(BACKGROUND_COLOURS),
+                                                   on_change=self.on_background_change, style=Pack(width=140))
+        self.export_button = toga.Button("Export image...", on_press=self.export_image,
+                                         style=Pack(width=130, margin_left=10))
+        self.summary_output = toga.MultilineTextInput(readonly=True, value=HelpGqteaWin.help_fukui,
+                                                      style=Pack(flex=1, font_family="monospace"))
+        results = toga.Box(children=[
+            self._row(self._label("Function:"), self.function_selection),
+            self._row(self._label("Display:"), self.display_selection, self.extrema_switch),
+            self._row(self._label("Canvas background:"), self.background_selection, self.export_button),
+            self.summary_output,
+        ], style=Pack(direction=COLUMN, margin=10, flex=1))
+
+        self.tabs = toga.OptionContainer(content=[
+            ("Setup", toga.ScrollContainer(content=setup, style=Pack(flex=1))),
+            ("Results", results),
+        ], style=Pack(flex=1))
+        self.run_button = toga.Button("Run", on_press=self.workflow, style=Pack(width=110, margin=5))
+        self.show_button = toga.Button("Show 3D", on_press=self.show_surface, style=Pack(width=110, margin=5))
+        self.clear_button = toga.Button("Clear", on_press=self.clear_output, style=Pack(width=110, margin=5))
+        self.close_button = toga.Button("Close", on_press=self.closeTopLevel, style=Pack(width=110, margin=5))
+        self.status_label = toga.Label("Ready.", style=Pack(margin=6, flex=1))
+        self.progress_bar = toga.ProgressBar(max=100, style=Pack(margin=(0, 5, 5, 5)))
+        self.window.content = toga.Box(children=[
+            header,
+            self._row(self.run_button, self.show_button, self.clear_button, self.close_button),
+            self.tabs, self.status_label, self.progress_bar,
+        ], style=Pack(direction=COLUMN, margin=10, flex=1))
+
+    # --- dialogs ------------------------------------------------------------
+    async def _show_error(self, title: str, message: str):
+        await self.window.dialog(toga.ErrorDialog(title, message))
+
+    async def _show_info(self, title: str, message: str):
+        await self.window.dialog(toga.InfoDialog(title, message))
+
+    async def _browse_into(self, target, title, file_types):
+        try:
+            path = await self.window.dialog(toga.OpenFileDialog(title=title, file_types=file_types))
+            if path:
+                target.value = str(path)
+        except Exception as exc:
+            await self._show_error("File Selection Error", str(exc))
+
+    async def browse_n(self, widget):
+        await self._browse_into(self.n_input, "Formatted checkpoint of the N state", ["fchk", "fch"])
+
+    async def browse_plus(self, widget):
+        await self._browse_into(self.plus_input, "Formatted checkpoint of the N+1 state", ["fchk", "fch"])
+
+    async def browse_minus(self, widget):
+        await self._browse_into(self.minus_input, "Formatted checkpoint of the N-1 state", ["fchk", "fch"])
+
+    async def browse_cdft(self, widget):
+        await self._browse_into(self.cdft_input, "Multiwfn CDFT.txt", ["txt"])
+
+    async def browse_output_dir(self, widget):
+        try:
+            folder = await self.window.dialog(toga.SelectFolderDialog(title="Choose the output folder"))
+            if folder:
+                self.output_dir_input.value = str(folder)
+        except Exception as exc:
+            await self._show_error("Folder Selection Error", str(exc))
+
+    # --- run ----------------------------------------------------------------
+    def _collect_inputs(self) -> Dict[str, object]:
+        paths = {}
+        for key, widget, label in (("n_path", self.n_input, "N"), ("plus_path", self.plus_input, "N+1"),
+                                   ("minus_path", self.minus_input, "N-1")):
+            path = (widget.value or "").strip()
+            if not path:
+                raise ValueError(f"Please select the {label} state .fchk file.")
+            if not os.path.isfile(path):
+                raise ValueError(f"File not found: {path}")
+            paths[key] = path
+        source = self.condensed_selection.value or CONDENSED_MULTIWFN
+        cdft = (self.cdft_input.value or "").strip() or None
+        if source == CONDENSED_IMPORT and (cdft is None or not os.path.isfile(cdft)):
+            raise ValueError("Please select an existing CDFT.txt, or choose another condensed-index source.")
+        return {
+            **paths,
+            "fukui_isovalue": parse_positive_float(self.fukui_iso_input.value, DEFAULT_FUKUI_ISOVALUE,
+                                                   "Fukui isovalue", 1.0),
+            "surface_isovalue": parse_positive_float(self.surface_iso_input.value, DEFAULT_SURFACE_ISOVALUE,
+                                                     "rho surface isovalue", 1.0),
+            "spacing": parse_positive_float(self.spacing_input.value, DEFAULT_SPACING_BOHR,
+                                            "Grid spacing", 0.6),
+            "condensed_source": source,
+            "multiwfn_path": (self.multiwfn_input.value or "").strip() or None,
+            "cdft_path": cdft,
+        }
+
+    def _apply_progress(self, fraction: float, message: str):
+        self.progress_bar.value = max(0.0, min(100.0, 100.0 * fraction))
+        self.status_label.text = message
+
+    def _set_buttons(self, enabled: bool):
+        for b in (self.run_button, self.show_button, self.clear_button):
+            b.enabled = enabled
+
+    async def workflow(self, widget):
+        try:
+            params = self._collect_inputs()
+            output_dir = resolve_output_dir(params["n_path"], self.output_dir_input.value)
+        except ValueError as exc:
+            await self._show_error("Input Error", str(exc))
+            return
+        self._set_buttons(False)
+        self.progress_bar.value = 0
+        loop = asyncio.get_running_loop()
+
+        def on_progress(fraction, message):
+            loop.call_soon_threadsafe(self._apply_progress, fraction, message)
+
+        try:
+            results = await asyncio.to_thread(self.analyser.run, progress=on_progress, **params)
+            self.written = self.analyser.write_outputs(results, output_dir, bool(self.cubes_switch.value))
+            self.results = results
+            self.summary_output.value = self.analyser.report_text(results, self.written)
+            self.tabs.current_tab = 1
+            self.status_label.text = f"Done in {results.elapsed:.1f} s. Report: {self.written[0]}"
+            self.progress_bar.value = 100
+            if self.viewer is not None and self.viewer.viewer_window_is_open():
+                self._push_to_viewer()
+        except Exception as exc:
+            self.status_label.text = "Calculation failed."
+            self.progress_bar.value = 0
+            await self._show_error("Fukui Calculation Error", str(exc))
+        finally:
+            self._set_buttons(True)
+
+    # --- display --------------------------------------------------------
+    def selected_function(self) -> str:
+        return self.function_selection.value if self.function_selection.value in FUNCTIONS else "f-"
+
+    def surface_markers(self, key: str) -> List[SurfaceMarker]:
+        return [SurfaceMarker(r["position_angstrom"], r["kind"], r["scope"], str(r["row"]))
+                for r in self.analyser.extrema_rows(self.results, key)]
+
+    def _push_to_viewer(self):
+        if self.results is None or self.viewer is None:
+            return
+        key = self.selected_function()
+        n = self.results.n_state
+        self.viewer.set_molecule(n.atom_symbols(), n.coordinates * BOHR_RADIUS_ANGSTROM)
+        self.viewer.set_display_options(unit=UNIT_AU, show_extrema=bool(self.extrema_switch.value))
+        if self.display_selection.value == DISPLAY_MAPPED:
+            s = self.results.surface
+            self.viewer.set_surface(
+                s.vertices * BOHR_RADIUS_ANGSTROM, s.triangles, s.vertex_normals(),
+                self.results.surface_values[key], self.results.surface_isovalue, self.surface_markers(key),
+                caption=f"{key} (a.u.)   mapped on rho(N) = {self.results.surface_isovalue:g} a.u.")
+            return
+        lobe = self.results.lobes[key]
+        if lobe is None:
+            self.viewer.clear_surface()
+            self.status_label.text = f"{key} has no isosurface at +/-{self.results.fukui_isovalue:g} a.u."
+            return
+        iso = self.results.fukui_isovalue
+        self.viewer.set_surface(lobe.vertices * BOHR_RADIUS_ANGSTROM, lobe.triangles, lobe.normals,
+                                lobe.values, iso, (), half_range=iso,
+                                caption=f"{key} isosurfaces at +/-{iso:g} a.u.: blue positive, red negative")
+
+    def on_display_change(self, widget):
+        if self._syncing or self.results is None or self.viewer is None:
+            return
+        self._push_to_viewer()
+
+    async def show_surface(self, widget):
+        if self.results is None:
+            await self._show_info("No Results", "Run the calculation first.")
+            return
+        if self.viewer is None:
+            self.viewer = ESPSurfaceViewer()
+            self.viewer.window_title = "Fukui Function Viewer"
+            self.viewer.loop = asyncio.get_running_loop()
+            self.viewer.set_background_color(self.selected_background())
+        self._push_to_viewer()
+        ready, error = await self.viewer.ensure_viewer_window()
+        if not ready:
+            await self._show_error("The 3D viewer could not be opened", error)
+
+    def selected_background(self):
+        return BACKGROUND_COLOURS.get(self.background_selection.value, BACKGROUND_COLOURS["Black"])
+
+    def on_background_change(self, widget):
+        if self.viewer is not None:
+            self.viewer.set_background_color(self.selected_background())
+
+    def default_image_name(self) -> str:
+        if self.results is None:
+            return "Fukui.png"
+        tag = {"f+": "fplus", "f-": "fminus", "f0": "fzero", "DD": "dual"}[self.selected_function()]
+        return f"{Path(self.results.paths[0]).stem}_{tag}.png"
+
+    async def _ask_image_path(self, suggested: str):
+        return await self.window.dialog(toga.SaveFileDialog(
+            title="Export the Fukui function image", suggested_filename=suggested, file_types=IMAGE_FILE_TYPES))
+
+    async def export_image(self, widget):
+        """Capture first, then ask for the file name (same contract as the ESP tool)."""
+        if self.viewer is None or not self.viewer.viewer_window_is_open():
+            await self._show_info("No Image", "Open the 3D view with 'Show 3D' first.")
+            return
+        try:
+            image = await self.viewer.capture_frame()
+        except RuntimeError as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        try:
+            path = await self._ask_image_path(self.default_image_name())
+            if not path:
+                return
+            saved = save_canvas_image(image, str(path))
+        except (ValueError, OSError) as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        self.status_label.text = f"Image saved: {saved}"
+
+    def clear_output(self, widget):
+        self.results = None
+        self.written = []
+        self.summary_output.value = HelpGqteaWin.help_fukui
+        if self.viewer is not None:
+            self.viewer.clear_surface()
+        self.progress_bar.value = 0
+        self.status_label.text = "Ready."
+
+    def _on_close(self, window, **kwargs) -> bool:
+        if self.viewer is not None:
+            self.viewer.request_close()
+        return True
+
+    def closeTopLevel(self, widget):
+        self._on_close(self.window)
+        self.window.close()

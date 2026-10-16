@@ -239,3 +239,112 @@ class TestCondensedSources:
     def test_unknown_source(self):
         with pytest.raises(ValueError):
             fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), condensed_source="magic")
+
+
+def make_ui():
+    """The UI class without a window: stub widgets, as in test_electrostaticSurfacePotential."""
+    ui = fk.FukuiFunctionAnalyzeUI.__new__(fk.FukuiFunctionAnalyzeUI)
+    ui.analyser = fk.FukuiAnalyser()
+    ui.results = None
+    ui.written = []
+    ui.viewer = None
+    ui._syncing = False
+    for name in ("n_input", "plus_input", "minus_input", "output_dir_input", "fukui_iso_input",
+                 "surface_iso_input", "spacing_input", "multiwfn_input", "cdft_input"):
+        setattr(ui, name, SimpleNamespace(value=""))
+    ui.condensed_selection = SimpleNamespace(value=fk.CONDENSED_NONE)
+    ui.cubes_switch = SimpleNamespace(value=False)
+    ui.function_selection = SimpleNamespace(value="f-")
+    ui.display_selection = SimpleNamespace(value=fk.DISPLAY_LOBES)
+    ui.extrema_switch = SimpleNamespace(value=True)
+    ui.background_selection = SimpleNamespace(value="Black")
+    ui.summary_output = SimpleNamespace(value="")
+    ui.status_label = SimpleNamespace(text="")
+    ui.progress_bar = SimpleNamespace(value=0)
+    ui.tabs = SimpleNamespace(current_tab=0)
+    for name in ("run_button", "show_button", "clear_button"):
+        setattr(ui, name, SimpleNamespace(enabled=True))
+    ui.errors = []
+
+    async def record(title, message):
+        ui.errors.append((title, message))
+    ui._show_error = record
+    ui._show_info = record
+    return ui
+
+
+def fill(ui, tmp_path):
+    ui.n_input.value, ui.plus_input.value, ui.minus_input.value = str(N), str(PLUS), str(MINUS)
+    ui.output_dir_input.value = str(tmp_path)
+    ui.spacing_input.value = "0.4"
+
+
+class StubViewer:
+    def __init__(self):
+        self.surfaces = []
+
+    def set_molecule(self, symbols, xyz):
+        self.symbols = list(symbols)
+
+    def set_display_options(self, **kwargs):
+        self.options = kwargs
+
+    def set_surface(self, *args, **kwargs):
+        self.surfaces.append((args, kwargs))
+
+    def clear_surface(self):
+        self.surfaces.append(None)
+
+    def viewer_window_is_open(self):
+        return False
+
+
+class TestUI:
+    def test_missing_files_are_an_input_error(self):
+        ui = make_ui()
+        asyncio.run(ui.workflow(None))
+        assert ui.errors and ui.errors[0][0] == "Input Error" and "N state" in ui.errors[0][1]
+
+    def test_import_without_a_file_is_an_input_error(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        ui.condensed_selection.value = fk.CONDENSED_IMPORT
+        with pytest.raises(ValueError, match="CDFT.txt"):
+            ui._collect_inputs()
+
+    def test_every_run_parameter_is_supplied_by_the_ui(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        wanted = set(inspect.signature(fk.FukuiAnalyser.run).parameters) - {"self", "progress"}
+        assert wanted == set(ui._collect_inputs())
+
+    def test_workflow_writes_the_report_and_switches_tab(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        assert not ui.errors and (tmp_path / "phenol_N_Fukui.txt").exists()
+        assert not list(tmp_path.glob("*.cub"))  # cubes switch off
+        assert ui.tabs.current_tab == 1 and ui.run_button.enabled
+
+    def test_viewer_gets_lobes_or_the_mapped_surface(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        ui.viewer = StubViewer()
+        ui._push_to_viewer()
+        args, kwargs = ui.viewer.surfaces[-1]
+        assert "blue positive, red negative" in kwargs["caption"] and kwargs["half_range"] == 0.005
+        ui.display_selection.value = fk.DISPLAY_MAPPED
+        ui._push_to_viewer()
+        args, kwargs = ui.viewer.surfaces[-1]
+        assert kwargs["caption"].startswith("f- (a.u.)") and args[5]  # extrema markers
+        assert ui.default_image_name() == "phenol_N_fminus.png"
+
+    def test_clear_resets_results(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        ui.clear_output(None)
+        assert ui.results is None
+        asyncio.run(ui.show_surface(None))
+        assert ui.errors[-1][0] == "No Results"
