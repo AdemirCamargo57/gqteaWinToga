@@ -38,7 +38,7 @@ def run_atom(symbol: str, gaussian_dir: Path, work: Path) -> Path:
     if fchk.is_file():
         return fchk
     gjf = work / f"{symbol}.gjf"
-    gjf.write_bytes(  # LF and float coordinates: G09W rejects CRLF here and integer coordinates
+    gjf.write_bytes(  # coordinates must be written as floats: G09W rejects "H 0 0 0"
         (f"%chk={symbol}.chk\n%mem=1GB\n#p {LEVEL} scf=(tight,maxcycle=300)\n\n"
          f"{symbol} free atom\n\n0 {GROUND_STATE_MULTIPLICITY[symbol]}\n{symbol} 0.0 0.0 0.0\n\n").encode())
     env = dict(os.environ, GAUSS_EXEDIR=str(gaussian_dir), GAUSS_SCRDIR=str(work))
