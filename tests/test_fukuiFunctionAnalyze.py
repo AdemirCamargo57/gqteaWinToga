@@ -144,3 +144,98 @@ class TestCDFT:
     def test_script_adds_a_blank_line_only_without_settings(self):
         assert fk.multiwfn_cdft_script(True).startswith("22\n2\nN.fch\nN+1.fch\nN-1.fch\n")
         assert fk.multiwfn_cdft_script(False).startswith("\n22\n")
+
+
+@pytest.fixture(scope="module")
+def phenol():
+    seen = []
+    results = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.3,
+                                     condensed_source=fk.CONDENSED_IMPORT, cdft_path=str(CDFT),
+                                     progress=lambda f, m: seen.append(f))
+    return results, seen
+
+
+class TestPhenol:
+    def test_progress_is_monotone_to_one(self, phenol):
+        _, seen = phenol
+        assert seen[-1] == 1.0 and all(b >= a - 1e-12 for a, b in zip(seen, seen[1:]))
+
+    def test_grid_matches_multiwfn(self):
+        data = np.loadtxt(REFERENCE_DIR / "phenol_grid_sample.txt", comments="#")
+        states = [gw.read_fchk(p) for p in (N, PLUS, MINUS)]
+        mine = fk.fukui_from_densities(*[gw.electron_density(w, data[:, :3]) for w in states])
+        for k, key in enumerate(fk.FUNCTIONS):
+            assert np.max(np.abs(mine[key] - data[:, 3 + k])) < 2e-5
+
+    def test_integrals_are_close_to_one_and_zero(self, phenol):
+        r, _ = phenol
+        for key in ("f+", "f-", "f0"):
+            assert 0.9 < r.integral(key) < 1.02
+        assert abs(r.integral("DD")) < 0.05
+
+    def test_globals_and_condensed_rows(self, phenol):
+        r, _ = phenol
+        assert r.global_indices.eta == pytest.approx(0.382666, abs=2e-6)
+        assert len(r.condensed) == 13 and r.condensed_source == fk.CONDENSED_IMPORT
+        assert r.notes == []
+
+    def test_ranking_matches_the_manual_for_phenol(self, phenol):
+        # Multiwfn manual 4.7.3: para C1 most favoured for electrophilic attack among ring carbons
+        r, _ = phenol
+        ranking = dict(fk.FukuiAnalyser.site_ranking(r.condensed, top=13))
+        ring = [row.index for row in ranking["electrophilic attack: most negative CDD"] if row.symbol == "C"]
+        assert ring[0] == 1
+
+    def test_surface_maxima_of_f_minus_lie_on_ring_and_oxygen(self, phenol):
+        r, _ = phenol
+        maxima = [e for e in r.extrema["f-"] if e.kind == "maximum"]
+        assert maxima and maxima[0].scope == "global"
+        assert fk.FukuiAnalyser.nearest_atom_label(r.n_state, maxima[0].position)[0] in "CO"
+
+    def test_lobes_carry_both_signs_for_the_dual_descriptor(self, phenol):
+        r, _ = phenol
+        lobe = r.lobes["DD"]
+        assert lobe is not None and set(np.unique(lobe.values)) == {-r.fukui_isovalue, r.fukui_isovalue}
+        assert lobe.triangles.max() < len(lobe.vertices)
+
+    def test_outputs(self, phenol, tmp_path):
+        r, _ = phenol
+        written = fk.FukuiAnalyser().write_outputs(r, str(tmp_path))
+        names = sorted(p.split("\\")[-1].split("/")[-1] for p in written)
+        assert names == ["phenol_N_Fukui.txt", "phenol_N_dual.cub", "phenol_N_fminus.cub",
+                         "phenol_N_fplus.cub", "phenol_N_fzero.cub"]
+        text = (tmp_path / "phenol_N_Fukui.txt").read_text()
+        assert "not predictions of reaction outcome" in text and "SITE RANKING" in text
+        assert "Hardness" in text and "SURFACE EXTREMA OF f-" in text
+
+    def test_cube_round_trip(self, phenol, tmp_path):
+        import cubeFile as cf
+        r, _ = phenol
+        fk.FukuiAnalyser().write_outputs(r, str(tmp_path))
+        cube = cf.read_cube(tmp_path / "phenol_N_fminus.cub")
+        assert np.allclose(cube.values, r.grids["f-"], rtol=1e-5, atol=1e-10)
+
+
+class TestCondensedSources:
+    def test_missing_multiwfn_continues_with_a_note(self, monkeypatch):
+        monkeypatch.setattr(fk, "find_multiwfn", lambda explicit=None: None)
+        r = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.4)
+        assert r.condensed == [] and "not found" in r.notes[-1]
+
+    def test_failing_multiwfn_continues_with_a_note(self, monkeypatch):
+        monkeypatch.setattr(fk, "find_multiwfn", lambda explicit=None: "C:/fake/Multiwfn.exe")
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("Multiwfn finished without writing CDFT.txt (exit 24): test")
+        monkeypatch.setattr(fk, "run_multiwfn_cdft", broken)
+        r = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.4)
+        assert r.condensed == [] and "without writing CDFT.txt" in r.notes[-1]
+
+    @pytest.mark.skipif(fk.find_multiwfn() is None, reason="Multiwfn not installed")
+    def test_multiwfn_engine_reproduces_the_reference(self):
+        text = fk.run_multiwfn_cdft(fk.find_multiwfn(), [str(N), str(PLUS), str(MINUS)])
+        assert fk.parse_cdft_text(text)[0] == fk.parse_cdft_text(CDFT_TEXT)[0]
+
+    def test_unknown_source(self):
+        with pytest.raises(ValueError):
+            fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), condensed_source="magic")

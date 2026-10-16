@@ -360,3 +360,312 @@ def run_multiwfn_cdft(multiwfn: str, paths: Sequence[str], timeout: float = MULT
             tail = " | ".join((proc.stdout or "").strip().splitlines()[-3:])
             raise RuntimeError(f"Multiwfn finished without writing CDFT.txt (exit {proc.returncode}): {tail}")
         return out.read_text(encoding="utf-8", errors="replace")
+
+
+# ----------------------------------------------------------------------
+# Results
+# ----------------------------------------------------------------------
+@dataclass
+class LobeSurface:
+    vertices: np.ndarray   # (V, 3) bohr
+    triangles: np.ndarray  # (F, 3)
+    normals: np.ndarray    # (V, 3)
+    values: np.ndarray     # (V,) +isovalue or -isovalue
+
+
+@dataclass
+class FukuiResults:
+    paths: Tuple[str, str, str]
+    states: Tuple[gw.FchkWavefunction, gw.FchkWavefunction, gw.FchkWavefunction]
+    p: int
+    q: int
+    fukui_isovalue: float
+    surface_isovalue: float
+    spacing: float
+    origin: np.ndarray
+    grids: Dict[str, np.ndarray]                 # a.u., on the cube grid
+    surface: ms.SurfaceMesh                      # rho(N) = surface_isovalue, bohr
+    surface_values: Dict[str, np.ndarray]        # a.u., one per vertex
+    extrema: Dict[str, List[ms.SurfaceExtremum]]
+    lobes: Dict[str, Optional[LobeSurface]]
+    global_indices: Optional[GlobalIndices]
+    condensed: List[CondensedRow]
+    condensed_source: str
+    notes: List[str] = field(default_factory=list)
+    elapsed: float = 0.0
+
+    @property
+    def n_state(self) -> gw.FchkWavefunction:
+        return self.states[0]
+
+    def integral(self, key: str) -> float:
+        return float(self.grids[key].sum() * self.spacing ** 3)
+
+
+class FukuiAnalyser:
+    """Headless pipeline: three fchk -> validation -> grids -> surface -> condensed indices."""
+
+    def run(self, n_path: str, plus_path: str, minus_path: str,
+            fukui_isovalue: float = DEFAULT_FUKUI_ISOVALUE,
+            surface_isovalue: float = DEFAULT_SURFACE_ISOVALUE,
+            spacing: float = DEFAULT_SPACING_BOHR,
+            condensed_source: str = CONDENSED_MULTIWFN,
+            multiwfn_path: Optional[str] = None, cdft_path: Optional[str] = None,
+            progress: Optional[ProgressCallback] = None) -> FukuiResults:
+        started = time.perf_counter()
+
+        def report(fraction: float, message: str):
+            if progress is not None:
+                try:
+                    progress(fraction, message)
+                except Exception:
+                    pass  # reporting must never abort an analysis
+
+        if condensed_source not in CONDENSED_SOURCES:
+            raise ValueError(f"Unknown condensed-index source '{condensed_source}'.")
+        paths = (str(n_path), str(plus_path), str(minus_path))
+        report(0.02, "Reading the three formatted checkpoints...")
+        states = tuple(gw.read_fchk(p) for p in paths)
+        n, plus, minus = states
+        p, q, notes = validate_states(n, plus, minus)
+
+        globals_ = None
+        if p == 1 and q == 1:
+            if None in (n.total_energy, plus.total_energy, minus.total_energy):
+                notes.append("A 'Total Energy' entry is missing; global indices were not computed.")
+            else:
+                globals_ = GlobalIndices(n.total_energy, plus.total_energy, minus.total_energy, homo_energy(n))
+                if not globals_.eta > 0:
+                    notes.append("I - A is not positive; check the charges and multiplicities of the states.")
+        else:
+            notes.append(f"p = {p}, q = {q}: degenerate-frontier-orbital Fukui functions "
+                         "(Multiwfn manual 3.25.4). Global indices need the N+1 and N-1 energies "
+                         "and were not computed.")
+        degeneracy = frontier_degeneracy(n)
+        if degeneracy is not None and (degeneracy[0], degeneracy[1]) != (p, q) and max(degeneracy) > 1:
+            notes.append(f"The N state has LUMO degeneracy {degeneracy[0]} and HOMO degeneracy "
+                         f"{degeneracy[1]} (orbitals within {DEGENERACY_EV} eV) but the files give "
+                         f"p = {p}, q = {q}. Standard f+/f- can then break the molecular symmetry; "
+                         "use N+p / N-q states (manual 3.25.4) or orbital-weighted Fukui functions "
+                         "(Multiwfn main function 22, options 4-7).")
+        if has_diffuse_functions(n.basis_set):
+            notes.append(f"The basis set {n.basis_set} has diffuse functions. They improve the electron "
+                         "affinity, but with self-interaction-prone functionals the N+1 density can become "
+                         "over-diffuse and f+ / the dual descriptor lose chemical meaning (manual 4.22.3.1).")
+
+        def densities(points):
+            return [gw.electron_density(w, points) for w in states]
+
+        def fukui_at(points):
+            return fukui_from_densities(*densities(points), p, q)
+
+        def envelope(points):
+            rn, rp, rm = densities(points)
+            f = fukui_from_densities(rn, rp, rm, p, q)
+            return np.maximum.reduce([rn / surface_isovalue,
+                                      np.abs(f["f+"]) / fukui_isovalue,
+                                      np.abs(f["f-"]) / fukui_isovalue])
+
+        report(0.08, "Sizing the grid...")
+        radii = np.array([AtomicData.vdw_radii.get(s, AtomicData.DEFAULT_VDW_RADIUS)
+                          for s in n.atom_symbols()]) / BOHR_RADIUS_ANGSTROM
+        origin, shape = ms.grid_box(n.coordinates, radii, envelope, 1.0, spacing)
+        points = ms.grid_points(origin, spacing, shape)
+        rho = []
+        for k, (label, w) in enumerate(zip(("N", "N+1", "N-1"), states)):
+            report(0.15 + 0.15 * k, f"Electron density of the {label} state on {len(points)} points...")
+            rho.append(gw.electron_density(w, points).reshape(shape))
+        grids = fukui_from_densities(*rho, p, q)
+
+        report(0.62, f"rho(N) = {surface_isovalue:g} a.u. surface and the functions on it...")
+        density_n = lambda pts: gw.electron_density(n, pts)  # noqa: E731
+        surface = ms.build_isosurface(rho[0], origin, spacing, surface_isovalue,
+                                      density_n, ms.density_outward(density_n))
+        surface_values = fukui_at(surface.vertices)
+        extrema = {k: ms.find_surface_extrema(v, surface.vertices, surface.neighbours)
+                   for k, v in surface_values.items()}
+
+        report(0.75, f"Isosurfaces at +/-{fukui_isovalue:g} a.u....")
+        lobes = {k: self.lobe_surface(grids[k], origin, spacing, fukui_isovalue,
+                                      lambda pts, key=k: fukui_at(pts)[key]) for k in FUNCTIONS}
+        for k, lobe in lobes.items():
+            if lobe is None:
+                notes.append(f"{k} never reaches +/-{fukui_isovalue:g} a.u.; lower the Fukui isovalue to see it.")
+
+        report(0.85, "Condensed indices...")
+        condensed, source = self._condensed(condensed_source, paths, n, p, q, multiwfn_path, cdft_path, notes)
+        report(1.0, "Done.")
+        return FukuiResults(paths, states, p, q, fukui_isovalue, surface_isovalue, spacing, origin,
+                            grids, surface, surface_values, extrema, lobes, globals_, condensed, source,
+                            notes, time.perf_counter() - started)
+
+    @staticmethod
+    def lobe_surface(grid, origin, spacing, isovalue, exact) -> Optional[LobeSurface]:
+        """The +isovalue and -isovalue surfaces of one function, as one mesh."""
+        verts, tris, norms, vals = [], [], [], []
+        offset = 0
+        for sign in (1.0, -1.0):
+            if (sign * grid).max() < isovalue:
+                continue
+            signed = lambda pts, s=sign: s * exact(pts)  # noqa: E731
+            mesh = ms.build_isosurface(sign * grid, origin, spacing, isovalue, signed, ms.density_outward(signed))
+            verts.append(mesh.vertices)
+            tris.append(mesh.triangles + offset)
+            norms.append(mesh.vertex_normals())
+            vals.append(np.full(len(mesh.vertices), sign * isovalue))
+            offset += len(mesh.vertices)
+        if not verts:
+            return None
+        return LobeSurface(np.vstack(verts), np.vstack(tris), np.vstack(norms), np.concatenate(vals))
+
+    @staticmethod
+    def _condensed(source, paths, n, p, q, multiwfn_path, cdft_path, notes):
+        if source == CONDENSED_NONE:
+            return [], source
+        if (p, q) != (1, 1):
+            notes.append("Condensed indices for N+p / N-q states are not supported here; use Multiwfn "
+                         "main function 22 option -3 then option 2 (manual 3.25.4).")
+            return [], CONDENSED_NONE
+        try:
+            if source == CONDENSED_IMPORT:
+                if not cdft_path:
+                    raise RuntimeError("no CDFT.txt file was given")
+                text = Path(cdft_path).read_text(encoding="utf-8", errors="replace")
+            else:
+                exe = find_multiwfn(multiwfn_path)
+                if exe is None:
+                    raise RuntimeError("Multiwfn.exe was not found (set its path, or Multiwfnpath, or PATH)")
+                text = run_multiwfn_cdft(exe, paths)
+        except (OSError, RuntimeError) as exc:
+            notes.append(f"Condensed indices were not computed: {exc}.")
+            return [], CONDENSED_NONE
+        rows, _ = parse_cdft_text(text)
+        check_rows_match(rows, n)
+        bad = condensed_inconsistencies(rows)
+        if bad:
+            notes.append(f"CDFT.txt rows for atoms {bad} do not follow f- = q(N-1) - q(N), "
+                         "f+ = q(N) - q(N+1); check the file.")
+        negative = [r.index for r in rows if r.f_plus < 0 or r.f_minus < 0]
+        if negative:
+            notes.append(f"Negative condensed f+ or f- on atoms {negative}. Hirshfeld values are usually "
+                         "non-negative; negative values can come from orbital relaxation or the partition "
+                         "and should not be read as reactivity.")
+        return rows, source
+
+    # --- reporting ------------------------------------------------------
+    @staticmethod
+    def nearest_atom_label(w: gw.FchkWavefunction, position_bohr: np.ndarray) -> str:
+        i = int(np.argmin(np.linalg.norm(w.coordinates - position_bohr, axis=1)))
+        return f"{w.atom_symbols()[i]}{i + 1}"
+
+    def extrema_rows(self, results: FukuiResults, key: str) -> List[Dict[str, object]]:
+        rows = []
+        for e in results.extrema[key]:
+            rows.append({"row": len(rows) + 1, "kind": e.kind, "scope": e.scope, "value": e.value,
+                         "position_angstrom": e.position * BOHR_RADIUS_ANGSTROM,
+                         "nearest_atom": self.nearest_atom_label(results.n_state, e.position)})
+        return rows
+
+    @staticmethod
+    def site_ranking(rows: Sequence[CondensedRow], top: int = 5) -> List[Tuple[str, List[CondensedRow]]]:
+        def best(key, reverse):
+            return sorted(rows, key=key, reverse=reverse)[:top]
+        return [
+            ("electrophilic attack: largest f-", best(lambda r: r.f_minus, True)),
+            ("nucleophilic attack: largest f+", best(lambda r: r.f_plus, True)),
+            ("radical attack: largest f0", best(lambda r: r.f_zero, True)),
+            ("electrophilic attack: most negative CDD", best(lambda r: r.cdd, False)),
+            ("nucleophilic attack: most positive CDD", best(lambda r: r.cdd, True)),
+        ]
+
+    def report_text(self, results: FukuiResults, written: Sequence[str] = ()) -> str:
+        n, plus, minus = results.states
+        p, q = results.p, results.q
+        lines = [
+            "# gQTEA Fukui Function Analysis",
+            "# Indicators of likely reactive regions -- not predictions of reaction outcome.",
+            f"# file_N                 {Path(results.paths[0]).name}",
+            f"# file_N+{p}               {Path(results.paths[1]).name}",
+            f"# file_N-{q}               {Path(results.paths[2]).name}",
+            f"# method / basis         {n.method} / {n.basis_set}",
+            f"# electrons              {n.n_electrons} / {plus.n_electrons} / {minus.n_electrons}",
+            f"# charge multiplicity    N: {n.charge} {n.multiplicity}   N+{p}: {plus.charge} {plus.multiplicity}"
+            f"   N-{q}: {minus.charge} {minus.multiplicity}",
+            f"# density                {gw.DENSITY_SECTION}",
+            f"# definitions            f+ = [rho(N+{p}) - rho(N)]/{p}; f- = [rho(N) - rho(N-{q})]/{q}; "
+            "f0 = (f+ + f-)/2; DD = f+ - f-",
+            f"# grid_spacing_bohr      {results.spacing:g}",
+            f"# fukui_isovalue_au      {results.fukui_isovalue:g}",
+            f"# surface                rho(N) = {results.surface_isovalue:g} a.u., "
+            f"{len(results.surface.vertices)} vertices",
+            "",
+        ]
+        g = results.global_indices
+        if g is not None:
+            def both(value):
+                return f"{value:12.6f} Hartree  {value * HARTREE_TO_EV:10.4f} eV"
+            lines += [
+                "GLOBAL INDICES (hardness = I - A, without 1/2, as in Multiwfn)",
+                f"  E(N)                 {g.e_n:.6f} Hartree",
+                f"  E(N+1)               {g.e_plus:.6f} Hartree",
+                f"  E(N-1)               {g.e_minus:.6f} Hartree",
+                f"  Vertical IP          {both(g.ip)}",
+                f"  Vertical EA          {both(g.ea)}",
+                f"  Electronegativity    {both(g.chi)}",
+                f"  Chemical potential   {both(g.mu)}",
+                f"  Hardness             {both(g.eta)}",
+                f"  Softness             {g.softness:12.6f} Hartree^-1",
+                f"  Electrophilicity     {both(g.omega)}",
+            ]
+            if g.nucleophilicity is not None:
+                lines.append(f"  Nucleophilicity      {both(g.nucleophilicity)}   "
+                             "(E_HOMO(TCE) at B3LYP/6-31G*, as in Multiwfn)")
+            lines.append("")
+        lines.append("GRID INTEGRALS (ideally 1 for f+, f-, f0 and 0 for DD; a finite uniform grid undercounts)")
+        lines.append("  " + "   ".join(f"{k} {results.integral(k):.4f}" for k in FUNCTIONS))
+        lines.append("")
+        if results.condensed:
+            s = g.softness if g is not None else float("nan")
+            lines += [f"CONDENSED INDICES  (source: {results.condensed_source}; Hirshfeld charges, e; "
+                      "s = S x f in e/Hartree)",
+                      "  atom      q(N)   q(N+1)   q(N-1)       f-       f+       f0      CDD       s-       s+       s0"]
+            for r in results.condensed:
+                lines.append(f"  {r.symbol:>2s}{r.index:<4d} {r.q_n:8.4f} {r.q_plus:8.4f} {r.q_minus:8.4f} "
+                             f"{r.f_minus:8.4f} {r.f_plus:8.4f} {r.f_zero:8.4f} {r.cdd:8.4f} "
+                             f"{s * r.f_minus:8.4f} {s * r.f_plus:8.4f} {s * r.f_zero:8.4f}")
+            lines += ["", "SITE RANKING (consider only atoms that can actually react)"]
+            for title, best in self.site_ranking(results.condensed):
+                lines.append(f"  {title:42s} " + ", ".join(f"{r.symbol}{r.index}" for r in best))
+            lines.append("")
+        for key in FUNCTIONS:
+            lines += [f"SURFACE EXTREMA OF {FUNCTION_TITLES[key]}  on rho(N) = {results.surface_isovalue:g} a.u.",
+                      "   row  type     scope        value (a.u.)    x (A)     y (A)     z (A)   atom"]
+            for r in self.extrema_rows(results, key):
+                x, y, z = r["position_angstrom"]
+                lines.append(f"  {r['row']:4d}  {r['kind']:7s}  {r['scope']:6s}  {r['value']:16.8f}  "
+                             f"{x:8.4f}  {y:8.4f}  {z:8.4f}   {r['nearest_atom']}")
+            lines.append("")
+        for note in results.notes:
+            lines.append(f"NOTE: {note}")
+        for path in written:
+            lines.append(f"Written: {path}")
+        return "\n".join(lines) + "\n"
+
+    def write_outputs(self, results: FukuiResults, output_dir: str, write_cubes: bool = True) -> List[str]:
+        stem = Path(results.paths[0]).stem
+        out = Path(output_dir)
+        written: List[str] = []
+        n = results.n_state
+        if write_cubes:
+            for key in FUNCTIONS:
+                cube = cf.CubeData(f"{stem} {FUNCTION_TITLES[key]}", "gQTEA Fukui Function Analysis, a.u.",
+                                   n.atomic_numbers, n.nuclear_charges, n.coordinates,
+                                   results.origin, results.spacing, results.grids[key])
+                written.append(cf.write_cube(out / (stem + CUBE_SUFFIXES[key]), cube))
+        report = out / (stem + REPORT_SUFFIX)
+        try:
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(self.report_text(results, written), encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"Could not write {report}: {exc}") from exc
+        return [str(report)] + written
