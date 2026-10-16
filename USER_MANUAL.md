@@ -113,7 +113,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.7.5 Molecular Analysis Toolkit
+gQTEA-0.8.0 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -4522,10 +4522,18 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.7.5 Molecular Analysis Toolkit
+gQTEA-0.8.0 Molecular Analysis Toolkit
 ```
 
-Version 0.7.5 (October 2026) adds the Electrostatic Surface Potential (ESP) tool and the solvation-box improvements: faster packing, optional periodic pre-optimization, system properties (atoms, electrons, spin multiplicity) and a live construction view.
+Version 0.8.0 (October 2026) adds the [Analysis of Fukui Functions](#analysis-of-fukui-functions) tool. From the N, N+1 and N−1 Gaussian `.fchk` files of one molecule it computes:
+
+- the Fukui functions f⁺, f⁻ and f⁰ and the dual descriptor, written as reports and cube files;
+- the global indices;
+- atom-condensed indices from built-in Hirshfeld charges, with no external program needed.
+
+Results can be viewed in 3D as isosurfaces or mapped on the molecular surface, with a choice of atom style and atom numbering. With `numba` installed, a new compiled density kernel also speeds up the ESP tool's density grid.
+
+Version 0.7.5 (October 2026) added the Electrostatic Surface Potential (ESP) tool and the solvation-box improvements: faster packing, optional periodic pre-optimization, system properties (atoms, electrons, spin multiplicity) and a live construction view.
 
 Core development team:
 
