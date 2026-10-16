@@ -74,3 +74,13 @@ class TestOverlayText:
         assert ev.contrasting_text_colour((1.0, 1.0, 1.0)) == (0.0, 0.0, 0.0)
         assert ev.contrasting_text_colour((0.85, 0.85, 0.85)) == (0.0, 0.0, 0.0)
         assert ev.contrasting_text_colour((0.25, 0.25, 0.25)) == (1.0, 1.0, 1.0)
+
+
+def test_custom_caption_replaces_the_esp_caption():
+    v = ev.ESPSurfaceViewer()
+    tri = np.array([[0, 1, 2]])
+    verts = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    v.set_surface(verts, tri, np.tile([0, 0, 1.0], (3, 1)), [0.01, -0.01, 0.0], 0.01, caption="f- (a.u.)")
+    assert v.colour_bar_text()[2] == "f- (a.u.)"
+    v.set_surface(verts, tri, np.tile([0, 0, 1.0], (3, 1)), [0.01, -0.01, 0.0], 0.01)
+    assert v.colour_bar_text()[2].startswith("ESP (a.u.)")

@@ -112,6 +112,7 @@ class SurfaceDrawData:
     isovalue: float
     markers: List[SurfaceMarker]
     radius: float          # max distance of a vertex from the atoms' centre
+    caption: Optional[str] = None  # replaces the ESP caption (other mapped properties)
 
 
 class ESPSurfaceViewer(MolecularViewer):
@@ -131,7 +132,8 @@ class ESPSurfaceViewer(MolecularViewer):
         self.load_designed_molecule(frame)
 
     def set_surface(self, vertices_angstrom, triangles, normals, values_au, isovalue,
-                    markers: Sequence[SurfaceMarker] = (), half_range: Optional[float] = None):
+                    markers: Sequence[SurfaceMarker] = (), half_range: Optional[float] = None,
+                    caption: Optional[str] = None):
         values = np.asarray(values_au, dtype=float)
         r = half_range if half_range else symmetric_range(values)
         verts = np.ascontiguousarray(vertices_angstrom, dtype=np.float32)
@@ -146,6 +148,7 @@ class ESPSurfaceViewer(MolecularViewer):
             isovalue=float(isovalue),
             markers=list(markers),
             radius=float(np.linalg.norm(verts - centre, axis=1).max()) if len(verts) else 0.0,
+            caption=caption,
         )
         with self._state_lock:
             self._surface = data
@@ -180,7 +183,10 @@ class ESPSurfaceViewer(MolecularViewer):
 
     def colour_bar_text(self) -> Optional[Tuple[str, str, str]]:
         s = self.get_surface()
-        return None if s is None else colour_bar_text(s.half_range, self.colour_unit, s.isovalue)
+        if s is None:
+            return None
+        left, right, caption = colour_bar_text(s.half_range, self.colour_unit, s.isovalue)
+        return left, right, s.caption or caption
 
     def get_scene_radius(self, frame_data=None) -> float:
         base = super().get_scene_radius(frame_data)
