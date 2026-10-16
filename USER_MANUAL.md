@@ -1903,6 +1903,58 @@ Limitations:
   coloured surface (e.g. `.pqr`/`.cube`), interpolation of extremum positions,
   a user-defined colour range, and h functions.
 
+#### Analysis of Fukui Functions
+
+**Tools > Analysis of Fukui Functions** shows where a molecule is most susceptible to nucleophilic (f⁺), electrophilic (f⁻) and radical (f⁰) attack, and the dual descriptor Δf = f⁺ − f⁻ (positive: nucleophilic attack; negative: electrophilic attack). The results indicate *likely* reactive regions. They are not predictions of reaction outcome: sterics, solvent and barriers are not included.
+
+**Before you start (Gaussian).**
+1. Optimize the molecule in the state in which it reacts (N electrons) and check that it is a minimum.
+2. At that same geometry, run three single points with the same method and basis set: N, N+1 and N−1. Do not re-optimize the ions.
+
+   | Molecule | N | N+1 | N−1 |
+   |---|---|---|---|
+   | neutral, closed shell | 0 1 | −1 2 | 1 2 |
+   | neutral radical | 0 2 | −1 1 | 1 1 |
+
+3. Run `formchk` on each `.chk`.
+
+**Setup tab.**
+- The three `.fchk` files and an optional output folder (blank = next to the N file).
+- Fukui isovalue: blank = 0.005 a.u.
+- ρ(N) mapping surface: blank = 0.01 a.u.
+- Grid spacing: blank = 0.25 bohr.
+- Condensed-index source:
+  - *Run Multiwfn (Hirshfeld)* uses Multiwfn.exe, found from the typed path, the `Multiwfnpath` folder or `PATH`;
+  - *Import Multiwfn CDFT.txt* reads a file from your own Multiwfn run (main function 22, option 2);
+  - *Skip condensed indices*.
+
+  If Multiwfn is missing or fails, the run still finishes and a NOTE explains why.
+- Write cube files: on by default.
+
+**Run** checks the three files (same atoms, geometry, basis set and method; N+1 has one electron more, N−1 one fewer), then computes everything. The Results tab shows the report, which is also saved as `<name>_Fukui.txt`. It contains:
+- the global indices (IP, EA, electronegativity, hardness = I − A, softness, electrophilicity, nucleophilicity);
+- grid integrals: about 1 for f⁺/f⁻/f⁰ and 0 for Δf, a quick check that the files are not swapped;
+- the condensed table q(N), q(N+1), q(N−1), f⁻, f⁺, f⁰, CDD, s⁻, s⁺, s⁰;
+- a site ranking for each kind of attack;
+- the surface extrema of each function on ρ(N) = 0.01 a.u., with the nearest atom;
+- NOTES, e.g. degenerate frontier orbitals, diffuse basis functions, negative condensed values, unusual multiplicities.
+
+Cubes: `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub`, `_dual.cub` (a.u. on a bohr grid; open them in VMD or Multiwfn).
+
+**Show 3D.** Pick a function and a display:
+- *Isosurfaces* at ±isovalue: blue positive, red negative.
+- *Mapped on ρ(N) surface*: colour = value, with extrema markers (cyan minimum, orange maximum).
+
+Canvas background and **Export image...** work as in the ESP tool.
+
+**Reading the results.**
+- Compare only atoms that can actually react.
+- For electrophilic attack, prefer large f⁻ and the most negative Δf. For nucleophilic attack, prefer the most positive Δf: f⁺ alone is the least reliable of the descriptors.
+- If the descriptors disagree, compute the transition states.
+- For degenerate HOMO/LUMO (benzene, C₆₀), use N+p/N−q states or Multiwfn's orbital-weighted Fukui functions (see the NOTE).
+
+Theory and limitations: *Formulas and Methods (Fukui Function tool)* below, and `docs/superpowers/specs/2026-10-16-fukui-function-design.md`.
+
 #### Energy Plots
 
 Use **Tools > Energy plots** to visualize CPMD or gqteaMD energy files.
@@ -3562,6 +3614,44 @@ $$
 Multiwfn prints kcal/mol with the rounded factor 627.51 (relative difference
 8×10⁻⁷, invisible at the printed precision). 1 a.u. of potential is also
 27.211 V, which is not reported.
+
+## Formulas and Methods (Fukui Function tool)
+
+**Real-space functions** (a.u. = e/bohr³), with p = q = 1 for ordinary N±1 states:
+f⁺ = [ρ_{N+p} − ρ_N]/p, f⁻ = [ρ_N − ρ_{N−q}]/q, f⁰ = (f⁺ + f⁻)/2, Δf = f⁺ − f⁻.
+
+The densities are the `Total SCF Density` of each `.fchk`, evaluated exactly at every grid node. On phenol they agree with Multiwfn 2026.7.15's exported cubes to 8×10⁻⁶ a.u.
+
+The grid grows until every face has ρ_N < ρ_surface/10 and |f⁺|, |f⁻| < isovalue/10. Isosurfaces use marching tetrahedra with bisection of the exact function. Surface extrema use Multiwfn's rule: strict comparison against the first and second vertex rings (as in the ESP tool).
+
+**Condensed indices** (Hirshfeld charges q_A from Multiwfn main function 22, option 2):
+f⁻_A = q_A(N−1) − q_A(N), f⁺_A = q_A(N) − q_A(N+1), f⁰_A = [q_A(N−1) − q_A(N+1)]/2, CDD_A = f⁺_A − f⁻_A.
+Each imported row is checked against these relations to ±2×10⁻⁴ (`CDFT.txt` prints 4 decimals). Condensed local softness is s_A = S·f_A.
+
+**Global indices** (Hartree, Multiwfn conventions):
+
+| Index | Formula |
+|---|---|
+| vertical IP | I = E(N−1) − E(N) |
+| vertical EA | A = E(N) − E(N+1) |
+| electronegativity | χ = (I+A)/2 |
+| chemical potential | μ = −χ |
+| hardness | **η = I − A** (no ½) |
+| softness | S = 1/η |
+| electrophilicity | ω = μ²/2η |
+| nucleophilicity | N_Nu = E_HOMO(N) − E_HOMO(TCE), with E_HOMO(TCE) = −0.335198 Ha |
+
+E_HOMO(TCE) is the B3LYP/6-31G\* value. At another level, recompute TCE.
+
+**Not provided** (use Multiwfn):
+- Fukui potential and dual-descriptor potential;
+- orbital-weighted Fukui functions;
+- bond dual descriptor;
+- ω_cubic and ε;
+- condensed indices for N+p/N−q;
+- averages on local atomic surfaces;
+- orbital contributions;
+- spin-polarized Fukui functions.
 
 ## Formulas and Methods (Solvation box builders)
 

@@ -52,6 +52,7 @@ distributions.
 
 - 3D molecular viewer
 - Electrostatic surface potential (ESP) mapped on electron-density isosurfaces from Gaussian `.fchk`/`.fch`, with Multiwfn-style surface extrema
+- Fukui functions f+, f-, f0 and the dual descriptor from Gaussian N/N+1/N-1 .fchk files, with surface extrema, cube export and Multiwfn (Hirshfeld) condensed indices
 - CPMD energy plotting
 - Molecular axis alignment
 - Frame selection
@@ -80,6 +81,7 @@ Each major tool is implemented in its own module, for example:
   `gqteaMDinptBuilder.py` for input generation
 - `molecularViewer.py` for OpenGL-based molecule visualization
 - `electrostaticSurfacePotential.py`, `gaussianWavefunction.py`, `espIntegrals.py`, `molecularSurface.py`, `espViewer.py` (and the optional `espNumba.py`) for the ESP surface tool
+- `fukuiFunctionAnalyze.py` and `cubeFile.py` for the Fukui function tool (optional external program: Multiwfn, for condensed indices)
 - `plotter.py` and `displayPlots.py` for plotting
 - `help.py` for application help text and shared atomic data
 
@@ -191,6 +193,7 @@ Common files used by the toolkit include:
 
 - `.xyz` molecular geometry and trajectory files
 - Gaussian formatted checkpoint files (`.fchk`, `.fch`) and the ESP extrema file `<name>_ESP_extrema.txt`
+- Multiwfn `CDFT.txt` (main function 22, option 2) and Gaussian cube files written by the Fukui tool
 - `TRAJEC.xyz` CPMD trajectory files
 - CPMD `GEOMETRY.xyz` files
 - CPMD energy files
