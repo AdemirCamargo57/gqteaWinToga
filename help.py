@@ -1711,9 +1711,11 @@ WHAT TO PREPARE (Gaussian)
 
 CONDENSED (per-atom) INDICES
   f-_A = q_A(N-1) - q_A(N), f+_A = q_A(N) - q_A(N+1), f0_A = average,
-  CDD_A = f+_A - f-_A, from Hirshfeld charges. They come from Multiwfn
-  (main function 22, option 2): run here when Multiwfn.exe is found, or
-  imported from an existing CDFT.txt.
+  CDD_A = f+_A - f-_A, from Hirshfeld charges of the three states, computed
+  here (no external program): built-in free-atom densities (UB3LYP/cc-pVQZ,
+  elements H-Ar), the same scheme as Multiwfn main function 22, whose values
+  they reproduce to about 0.0001 e. Switch them off on the Setup tab for
+  speed; for other elements the run continues without them, with a NOTE.
 
 OUTPUTS (next to the N file unless another folder is chosen)
   <name>_Fukui.txt  global indices, condensed table, site ranking, surface
@@ -1721,6 +1723,8 @@ OUTPUTS (next to the N file unless another folder is chosen)
   <name>_fplus.cub, _fminus.cub, _fzero.cub, _dual.cub  (a.u., bohr grid)
   Show 3D: isosurfaces (blue +, red -) or the function mapped on the
   rho(N) surface with its extrema (cyan minimum, orange maximum).
+  Atoms (Results tab): Line, Ball and stick (CPK) or Space-filling (vdW),
+  and Show atom numbers (1-based, as in the report); applied at once.
 
 CAVEATS
   Diffuse basis functions with B3LYP-like functionals can make f+ and DD

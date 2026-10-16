@@ -84,3 +84,13 @@ def test_custom_caption_replaces_the_esp_caption():
     assert v.colour_bar_text()[2] == "f- (a.u.)"
     v.set_surface(verts, tri, np.tile([0, 0, 1.0], (3, 1)), [0.01, -0.01, 0.0], 0.01)
     assert v.colour_bar_text()[2].startswith("ESP (a.u.)")
+
+
+def test_atom_view_sets_style_and_numbers():
+    v = ev.ESPSurfaceViewer()
+    v.set_atom_view("CPK style", True)
+    assert v.atom_display_style == "CPK style" and v.show_atom_numbers is True
+    v.set_atom_view("vdW style", False)
+    assert v.atom_display_style == "vdW style" and v.show_atom_numbers is False
+    with pytest.raises(ValueError, match="atom style"):
+        v.set_atom_view("Cartoon", False)

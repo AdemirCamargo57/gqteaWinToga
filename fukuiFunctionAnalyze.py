@@ -12,12 +12,12 @@ section 3.25.4).
     Df  = f+ - f-                        dual descriptor (> 0 nucleophilic,
                                          < 0 electrophilic attack)
 
-Real-space functions are computed here, from the exact densities
-(gaussianWavefunction). Atom-condensed indices come from Multiwfn main
-function 22 option 2 (Hirshfeld charges of the three states), either run here
-as an external engine or imported from an existing CDFT.txt -- this module
-does not compute Hirshfeld charges itself. Global indices follow Multiwfn's
-conventions (hardness = I - A, without the 1/2).
+Everything is computed here, with no external program. Real-space functions
+come from the exact densities (gaussianWavefunction, numba-accelerated when
+installed). Atom-condensed indices come from Hirshfeld charges of the three
+states (hirshfeldCharges: built-in free-atom densities, H-Ar), which reproduce
+Multiwfn's main function 22 values to ~1e-4 e. Global indices follow
+Multiwfn's conventions (hardness = I - A, without the 1/2).
 
 These quantities indicate *likely* reactive regions; they are not
 predictions of reaction outcome.
@@ -26,10 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
-import shutil
-import subprocess
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +38,7 @@ from toga.style.pack import COLUMN, ROW
 
 import cubeFile as cf
 import gaussianWavefunction as gw
+import hirshfeldCharges as hc
 import molecularSurface as ms
 from coordinateConverter import BOHR_RADIUS_ANGSTROM
 from espViewer import ESPSurfaceViewer, SurfaceMarker, UNIT_AU
@@ -55,8 +52,6 @@ DEFAULT_FUKUI_ISOVALUE = 0.005    # a.u.; the manual's examples use 0.005-0.01
 DEFAULT_SURFACE_ISOVALUE = 0.01   # rho isosurface for mapping f (manual 4.12.4)
 DEFAULT_SPACING_BOHR = 0.25
 COORDINATE_TOLERANCE_BOHR = 1e-5
-CONDENSED_TOLERANCE = 2e-4        # CDFT.txt prints 4 decimals
-MULTIWFN_TIMEOUT_S = 1800
 
 FUNCTIONS = ("f+", "f-", "f0", "DD")
 FUNCTION_TITLES = {
@@ -68,10 +63,7 @@ FUNCTION_TITLES = {
 CUBE_SUFFIXES = {"f+": "_fplus.cub", "f-": "_fminus.cub", "f0": "_fzero.cub", "DD": "_dual.cub"}
 REPORT_SUFFIX = "_Fukui.txt"
 
-CONDENSED_MULTIWFN = "Run Multiwfn (Hirshfeld)"
-CONDENSED_IMPORT = "Import Multiwfn CDFT.txt"
-CONDENSED_NONE = "Skip condensed indices"
-CONDENSED_SOURCES = (CONDENSED_MULTIWFN, CONDENSED_IMPORT, CONDENSED_NONE)
+CONDENSED_SOURCE = f"Hirshfeld (built in; sphericalized free atoms {hc.pad.LEVEL})"
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -233,7 +225,7 @@ def homo_energy(w: gw.FchkWavefunction) -> Optional[float]:
 
 
 # ----------------------------------------------------------------------
-# Condensed indices: Multiwfn CDFT.txt
+# Condensed indices (Hirshfeld charges of the three states)
 # ----------------------------------------------------------------------
 @dataclass
 class CondensedRow:
@@ -248,118 +240,16 @@ class CondensedRow:
     cdd: float
 
 
-CDFT_HEADER = ["Atom", "q(N)", "q(N+1)", "q(N-1)", "f-", "f+", "f0", "CDD"]
-_CDFT_ROW = re.compile(r"^\s*(\d+)\(\s*([A-Za-z]{1,3})\s*\)\s+(.*)$")
-_CDFT_GLOBAL = re.compile(r"^\s*([^:]+?)\s*:\s+(-?\d+\.\d+)\s+Hartree")
-CDFT_GLOBAL_KEYS = {
-    "E(N)": "e_n", "E(N+1)": "e_plus", "E(N-1)": "e_minus", "E_HOMO(N)": "homo_n",
-    "First vertical IP": "ip", "Vertical IP": "ip",
-    "First vertical EA": "ea", "Vertical EA": "ea",
-    "Mulliken electronegativity": "chi", "Chemical potential": "mu",
-    "Hardness (=fundamental gap)": "eta", "Softness": "softness",
-    "Electrophilicity index": "omega", "Nucleophilicity index": "nucleophilicity",
-}
-
-
-def parse_cdft_text(text: str) -> Tuple[List[CondensedRow], Dict[str, float]]:
-    """Condensed rows and global values (Hartree) from Multiwfn's CDFT.txt."""
-    lines = text.splitlines()
-    start = next((i for i, l in enumerate(lines) if l.split()[:8] == CDFT_HEADER), None)
-    if start is None:
-        raise ValueError("No 'Atom q(N) q(N+1) q(N-1) f- f+ f0 CDD' table found: this is not a "
-                         "CDFT.txt written by Multiwfn main function 22, option 2.")
-    rows: List[CondensedRow] = []
-    for line in lines[start + 1:]:
-        m = _CDFT_ROW.match(line)
-        if not m:
-            break
-        try:
-            values = [float(x) for x in m.group(3).split()]
-        except ValueError:
-            raise ValueError(f"CDFT.txt: unreadable condensed row '{line.strip()}'.") from None
-        if len(values) != 7:
-            raise ValueError(f"CDFT.txt: row '{line.strip()}' has {len(values)} numbers, expected 7.")
-        rows.append(CondensedRow(int(m.group(1)), m.group(2), *values))
-    if not rows:
-        raise ValueError("CDFT.txt: the condensed table is empty.")
-    found: Dict[str, float] = {}
-    for line in lines:
-        m = _CDFT_GLOBAL.match(line)
-        if m and m.group(1) in CDFT_GLOBAL_KEYS:
-            found[CDFT_GLOBAL_KEYS[m.group(1)]] = float(m.group(2))
-    return rows, found
-
-
-def condensed_inconsistencies(rows: Sequence[CondensedRow], tol: float = CONDENSED_TOLERANCE) -> List[int]:
-    """1-based atoms whose printed f-, f+, f0, CDD disagree with their own charges."""
-    bad = []
-    for r in rows:
-        checks = (r.q_minus - r.q_n - r.f_minus, r.q_n - r.q_plus - r.f_plus,
-                  0.5 * (r.q_minus - r.q_plus) - r.f_zero, r.f_plus - r.f_minus - r.cdd)
-        if max(abs(c) for c in checks) > tol:
-            bad.append(r.index)
-    return bad
-
-
-def check_rows_match(rows: Sequence[CondensedRow], w: gw.FchkWavefunction) -> None:
-    symbols = w.atom_symbols()
-    if len(rows) != len(symbols):
-        raise ValueError(f"CDFT.txt lists {len(rows)} atoms but the N file has {len(symbols)}.")
-    for r, s in zip(rows, symbols):
-        if r.symbol.lower() != s.lower():
-            raise ValueError(f"CDFT.txt atom {r.index} is {r.symbol} but atom {r.index} of the N file is {s}.")
-
-
-# ----------------------------------------------------------------------
-# Condensed indices: running Multiwfn
-# ----------------------------------------------------------------------
-def find_multiwfn(explicit: Optional[str] = None) -> Optional[str]:
-    candidates = []
-    if explicit:
-        candidates.append(explicit)
-    env = os.environ.get("Multiwfnpath")
-    if env:
-        candidates.append(os.path.join(env, "Multiwfn.exe"))
-    for name in ("Multiwfn.exe", "Multiwfn"):
-        found = shutil.which(name)
-        if found:
-            candidates.append(found)
-    for c in candidates:
-        if c and os.path.isfile(c):
-            return c
-    return None
-
-
-def multiwfn_cdft_script(settings_found: bool) -> str:
-    """Keystrokes for main function 22, option 2, with N.fch given on the command line.
-
-    N.wfn is absent, so Multiwfn asks for the N, N+1 and N-1 files in turn
-    (verified with Multiwfn 2026.7.15). Without a settings.ini Multiwfn first
-    pauses for ENTER, so only then does the script start with a blank line.
-    """
-    lead = "" if settings_found else "\n"
-    return lead + "22\n2\nN.fch\nN+1.fch\nN-1.fch\n0\nq\n"
-
-
-def run_multiwfn_cdft(multiwfn: str, paths: Sequence[str], timeout: float = MULTIWFN_TIMEOUT_S) -> str:
-    """CDFT.txt text from Multiwfn; RuntimeError when Multiwfn cannot produce it."""
-    settings = Path(multiwfn).resolve().parent / "settings.ini"
-    with tempfile.TemporaryDirectory() as tmp:
-        for name, src in zip(("N.fch", "N+1.fch", "N-1.fch"), paths):
-            shutil.copyfile(src, Path(tmp) / name)
-        if settings.is_file():  # Multiwfn reads settings.ini from the current folder first
-            shutil.copyfile(settings, Path(tmp) / "settings.ini")
-        try:
-            proc = subprocess.run([multiwfn, "N.fch"], input=multiwfn_cdft_script(settings.is_file()),
-                                  text=True, cwd=tmp, capture_output=True, timeout=timeout,
-                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise RuntimeError(f"Multiwfn could not be run: {exc}") from exc
-        out = Path(tmp) / "CDFT.txt"
-        if not out.is_file():
-            tail = " | ".join((proc.stdout or "").strip().splitlines()[-3:])
-            raise RuntimeError(f"Multiwfn finished without writing CDFT.txt (exit {proc.returncode}): {tail}")
-        return out.read_text(encoding="utf-8", errors="replace")
+def condensed_rows(symbols: Sequence[str], q_n, q_plus, q_minus, p: int = 1, q: int = 1) -> List[CondensedRow]:
+    """f+_A = [q_A(N) - q_A(N+p)]/p, f-_A = [q_A(N-q) - q_A(N)]/q, f0 = mean, CDD = f+ - f-."""
+    rows = []
+    for i, symbol in enumerate(symbols):
+        f_plus = (q_n[i] - q_plus[i]) / p
+        f_minus = (q_minus[i] - q_n[i]) / q
+        rows.append(CondensedRow(i + 1, symbol, float(q_n[i]), float(q_plus[i]), float(q_minus[i]),
+                                 float(f_minus), float(f_plus), float(0.5 * (f_plus + f_minus)),
+                                 float(f_plus - f_minus)))
+    return rows
 
 
 # ----------------------------------------------------------------------
@@ -409,8 +299,7 @@ class FukuiAnalyser:
             fukui_isovalue: float = DEFAULT_FUKUI_ISOVALUE,
             surface_isovalue: float = DEFAULT_SURFACE_ISOVALUE,
             spacing: float = DEFAULT_SPACING_BOHR,
-            condensed_source: str = CONDENSED_MULTIWFN,
-            multiwfn_path: Optional[str] = None, cdft_path: Optional[str] = None,
+            condensed: bool = True,
             progress: Optional[ProgressCallback] = None) -> FukuiResults:
         started = time.perf_counter()
 
@@ -421,8 +310,6 @@ class FukuiAnalyser:
                 except Exception:
                     pass  # reporting must never abort an analysis
 
-        if condensed_source not in CONDENSED_SOURCES:
-            raise ValueError(f"Unknown condensed-index source '{condensed_source}'.")
         paths = (str(n_path), str(plus_path), str(minus_path))
         report(0.02, "Reading the three formatted checkpoints...")
         states = tuple(gw.read_fchk(p) for p in paths)
@@ -492,11 +379,13 @@ class FukuiAnalyser:
             if lobe is None:
                 notes.append(f"{k} never reaches +/-{fukui_isovalue:g} a.u.; lower the Fukui isovalue to see it.")
 
-        report(0.85, "Condensed indices...")
-        condensed, source = self._condensed(condensed_source, paths, n, p, q, multiwfn_path, cdft_path, notes)
+        rows, source = [], ""
+        if condensed:
+            report(0.85, "Condensed indices: Hirshfeld charges of the three states...")
+            rows, source = self._condensed(states, p, q, notes)
         report(1.0, "Done.")
         return FukuiResults(paths, states, p, q, fukui_isovalue, surface_isovalue, spacing, origin,
-                            grids, surface, surface_values, extrema, lobes, globals_, condensed, source,
+                            grids, surface, surface_values, extrema, lobes, globals_, rows, source,
                             notes, time.perf_counter() - started)
 
     @staticmethod
@@ -519,38 +408,22 @@ class FukuiAnalyser:
         return LobeSurface(np.vstack(verts), np.vstack(tris), np.vstack(norms), np.concatenate(vals))
 
     @staticmethod
-    def _condensed(source, paths, n, p, q, multiwfn_path, cdft_path, notes):
-        if source == CONDENSED_NONE:
-            return [], source
-        if (p, q) != (1, 1):
-            notes.append("Condensed indices for N+p / N-q states are not supported here; use Multiwfn "
-                         "main function 22 option -3 then option 2 (manual 3.25.4).")
-            return [], CONDENSED_NONE
+    def _condensed(states, p, q, notes) -> Tuple[List[CondensedRow], str]:
+        """Hirshfeld charges of N, N+p, N-q on one shared grid; a note (never an abort) on failure."""
+        n = states[0]
         try:
-            if source == CONDENSED_IMPORT:
-                if not cdft_path:
-                    raise RuntimeError("no CDFT.txt file was given")
-                text = Path(cdft_path).read_text(encoding="utf-8", errors="replace")
-            else:
-                exe = find_multiwfn(multiwfn_path)
-                if exe is None:
-                    raise RuntimeError("Multiwfn.exe was not found (set its path, or Multiwfnpath, or PATH)")
-                text = run_multiwfn_cdft(exe, paths)
-        except (OSError, RuntimeError) as exc:
-            notes.append(f"Condensed indices were not computed: {exc}.")
-            return [], CONDENSED_NONE
-        rows, _ = parse_cdft_text(text)
-        check_rows_match(rows, n)
-        bad = condensed_inconsistencies(rows)
-        if bad:
-            notes.append(f"CDFT.txt rows for atoms {bad} do not follow f- = q(N-1) - q(N), "
-                         "f+ = q(N) - q(N+1); check the file.")
+            grid = hc.molecular_grid(n.coordinates, n.atom_symbols())
+            charges = [hc.hirshfeld_charges(w, grid) for w in states]
+        except ValueError as exc:
+            notes.append(f"Condensed indices were not computed: {exc}")
+            return [], ""
+        rows = condensed_rows(n.atom_symbols(), *charges, p=p, q=q)
         negative = [r.index for r in rows if r.f_plus < 0 or r.f_minus < 0]
         if negative:
             notes.append(f"Negative condensed f+ or f- on atoms {negative}. Hirshfeld values are usually "
                          "non-negative; negative values can come from orbital relaxation or the partition "
                          "and should not be read as reactivity.")
-        return rows, source
+        return rows, CONDENSED_SOURCE
 
     # --- reporting ------------------------------------------------------
     @staticmethod
@@ -677,6 +550,10 @@ class FukuiAnalyser:
 DISPLAY_LOBES = "Isosurfaces (+/- isovalue)"
 DISPLAY_MAPPED = "Mapped on rho(N) surface"
 DISPLAY_MODES = (DISPLAY_LOBES, DISPLAY_MAPPED)
+# Atom drawing styles of the 3D view: label -> molecularViewer.atom_display_style.
+# "CPK" is ball-and-stick here, as in the 3D Molecular Viewer; space-filling is "vdW".
+ATOM_STYLES = {"Line": "Line style", "Ball and stick (CPK)": "CPK style", "Space-filling (vdW)": "vdW style"}
+DEFAULT_ATOM_STYLE = "Line"
 BACKGROUND_COLOURS = {
     "Black": (0.0, 0.0, 0.0),
     "White": (1.0, 1.0, 1.0),
@@ -733,11 +610,7 @@ class FukuiFunctionAnalyzeUI:
         self.fukui_iso_input = toga.TextInput(placeholder=f"{DEFAULT_FUKUI_ISOVALUE:g}", style=Pack(width=160))
         self.surface_iso_input = toga.TextInput(placeholder=f"{DEFAULT_SURFACE_ISOVALUE:g}", style=Pack(width=160))
         self.spacing_input = toga.TextInput(placeholder=f"{DEFAULT_SPACING_BOHR:g}", style=Pack(width=160))
-        self.condensed_selection = toga.Selection(items=list(CONDENSED_SOURCES), style=Pack(width=260))
-        self.multiwfn_input = toga.TextInput(value=find_multiwfn() or "", placeholder="Multiwfn.exe",
-                                             style=Pack(flex=1))
-        self.cdft_input = toga.TextInput(placeholder="CDFT.txt from Multiwfn main function 22, option 2",
-                                         style=Pack(flex=1))
+        self.condensed_switch = toga.Switch("Compute atom-condensed indices (Hirshfeld charges)", value=True)
         self.cubes_switch = toga.Switch("Write cube files (f+, f-, f0, dual descriptor)", value=True)
         setup = toga.Box(children=[
             self._heading("Real-space functions"),
@@ -747,12 +620,10 @@ class FukuiFunctionAnalyzeUI:
             self._hint("Blank = 0.01, as in Multiwfn manual 4.12.4 (f is too small on rho = 0.001)."),
             self._row(self._label("Grid spacing (bohr):"), self.spacing_input),
             self._hint("Blank = 0.25 bohr. Smaller = smoother and slower."),
-            self._heading("Atom-condensed indices (Hirshfeld, via Multiwfn)"),
-            self._row(self._label("Source:"), self.condensed_selection),
-            self._row(self._label("Multiwfn executable:"), self.multiwfn_input),
-            self._row(self._label("Existing CDFT.txt:"), self.cdft_input,
-                      toga.Button("Browse", on_press=self.browse_cdft, style=Pack(width=90, margin_left=5))),
-            self._hint("If Multiwfn is missing or fails, the run continues without condensed indices."),
+            self._heading("Atom-condensed indices"),
+            self.condensed_switch,
+            self._hint(f"Built-in Hirshfeld partition, free atoms {hc.pad.LEVEL} (elements H-Ar). "
+                       "Other elements: the run continues without them, with a note."),
             self.cubes_switch,
         ], style=Pack(direction=COLUMN, margin=10))
 
@@ -761,6 +632,10 @@ class FukuiFunctionAnalyzeUI:
         self.display_selection = toga.Selection(items=list(DISPLAY_MODES), on_change=self.on_display_change,
                                                 style=Pack(width=240))
         self.extrema_switch = toga.Switch("Show extrema markers", value=True, on_change=self.on_display_change)
+        self.atom_style_selection = toga.Selection(items=list(ATOM_STYLES), on_change=self.on_atom_view_change,
+                                                   style=Pack(width=200))
+        self.atom_numbers_switch = toga.Switch("Show atom numbers", value=False,
+                                               on_change=self.on_atom_view_change)
         self.background_selection = toga.Selection(items=list(BACKGROUND_COLOURS),
                                                    on_change=self.on_background_change, style=Pack(width=140))
         self.export_button = toga.Button("Export image...", on_press=self.export_image,
@@ -770,6 +645,7 @@ class FukuiFunctionAnalyzeUI:
         results = toga.Box(children=[
             self._row(self._label("Function:"), self.function_selection),
             self._row(self._label("Display:"), self.display_selection, self.extrema_switch),
+            self._row(self._label("Atoms:"), self.atom_style_selection, self.atom_numbers_switch),
             self._row(self._label("Canvas background:"), self.background_selection, self.export_button),
             self.summary_output,
         ], style=Pack(direction=COLUMN, margin=10, flex=1))
@@ -814,9 +690,6 @@ class FukuiFunctionAnalyzeUI:
     async def browse_minus(self, widget):
         await self._browse_into(self.minus_input, "Formatted checkpoint of the N-1 state", ["fchk", "fch"])
 
-    async def browse_cdft(self, widget):
-        await self._browse_into(self.cdft_input, "Multiwfn CDFT.txt", ["txt"])
-
     async def browse_output_dir(self, widget):
         try:
             folder = await self.window.dialog(toga.SelectFolderDialog(title="Choose the output folder"))
@@ -836,10 +709,6 @@ class FukuiFunctionAnalyzeUI:
             if not os.path.isfile(path):
                 raise ValueError(f"File not found: {path}")
             paths[key] = path
-        source = self.condensed_selection.value or CONDENSED_MULTIWFN
-        cdft = (self.cdft_input.value or "").strip() or None
-        if source == CONDENSED_IMPORT and (cdft is None or not os.path.isfile(cdft)):
-            raise ValueError("Please select an existing CDFT.txt, or choose another condensed-index source.")
         return {
             **paths,
             "fukui_isovalue": parse_positive_float(self.fukui_iso_input.value, DEFAULT_FUKUI_ISOVALUE,
@@ -848,9 +717,7 @@ class FukuiFunctionAnalyzeUI:
                                                      "rho surface isovalue", 1.0),
             "spacing": parse_positive_float(self.spacing_input.value, DEFAULT_SPACING_BOHR,
                                             "Grid spacing", 0.6),
-            "condensed_source": source,
-            "multiwfn_path": (self.multiwfn_input.value or "").strip() or None,
-            "cdft_path": cdft,
+            "condensed": bool(self.condensed_switch.value),
         }
 
     def _apply_progress(self, fraction: float, message: str):
@@ -908,6 +775,7 @@ class FukuiFunctionAnalyzeUI:
         key = self.selected_function()
         n = self.results.n_state
         self.viewer.set_molecule(n.atom_symbols(), n.coordinates * BOHR_RADIUS_ANGSTROM)
+        self._apply_atom_view()
         self.viewer.set_display_options(unit=UNIT_AU, show_extrema=bool(self.extrema_switch.value))
         if self.display_selection.value == DISPLAY_MAPPED:
             s = self.results.surface
@@ -925,6 +793,17 @@ class FukuiFunctionAnalyzeUI:
         self.viewer.set_surface(lobe.vertices * BOHR_RADIUS_ANGSTROM, lobe.triangles, lobe.normals,
                                 lobe.values, iso, (), half_range=iso,
                                 caption=f"{key} isosurfaces at +/-{iso:g} a.u.: blue positive, red negative")
+
+    def selected_atom_style(self) -> str:
+        return ATOM_STYLES.get(self.atom_style_selection.value, ATOM_STYLES[DEFAULT_ATOM_STYLE])
+
+    def _apply_atom_view(self):
+        self.viewer.set_atom_view(self.selected_atom_style(), bool(self.atom_numbers_switch.value))
+
+    def on_atom_view_change(self, widget):
+        # A view setting, not a result: applies with or without a run.
+        if self.viewer is not None:
+            self._apply_atom_view()
 
     def on_display_change(self, widget):
         if self._syncing or self.results is None or self.viewer is None:

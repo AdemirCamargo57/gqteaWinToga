@@ -34,6 +34,8 @@ UNIT_AU = "a.u."
 UNIT_KCAL = "kcal/mol"
 COLOUR_UNITS = (UNIT_AU, UNIT_KCAL)
 HUE_SPAN_DEGREES = 240.0
+# MolecularViewer.atom_display_style values: lines, ball-and-stick ("CPK"), space-filling ("vdW").
+ATOM_DISPLAY_STYLES = ("Line style", "CPK style", "vdW style")
 
 MINIMUM_MARKER_COLOUR = (0.0, 1.0, 1.0)
 MAXIMUM_MARKER_COLOUR = (1.0, 0.55, 0.0)
@@ -159,6 +161,15 @@ class ESPSurfaceViewer(MolecularViewer):
         with self._state_lock:
             self._surface = None
         self.invalidate_scene_cache()
+
+    def set_atom_view(self, style: str, show_numbers: bool):
+        """How the atoms are drawn (one of ATOM_DISPLAY_STYLES) and whether 1-based numbers are shown."""
+        if style not in ATOM_DISPLAY_STYLES:
+            raise ValueError(f"Unknown atom style '{style}'; expected one of {ATOM_DISPLAY_STYLES}.")
+        self.atom_display_style = style
+        self.show_atom_numbers = bool(show_numbers)
+        self.invalidate_scene_cache()
+        self.request_projection_update()
 
     def set_display_options(self, unit: str = None, opacity: float = None, show_extrema: bool = None):
         if unit is not None:

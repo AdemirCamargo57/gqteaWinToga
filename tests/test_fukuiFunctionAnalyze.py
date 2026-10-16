@@ -1,4 +1,4 @@
-"""Tests for the Fukui function analyser, Multiwfn interop and the UI plumbing."""
+"""Tests for the Fukui function analyser (native Hirshfeld condensed indices) and the UI plumbing."""
 import asyncio
 import inspect
 from dataclasses import replace
@@ -11,7 +11,19 @@ import fukuiFunctionAnalyze as fk
 import gaussianWavefunction as gw
 from fukui_fixtures import CDFT, MINUS, N, PLUS, REFERENCE_DIR
 
-CDFT_TEXT = CDFT.read_text()
+
+
+def multiwfn_condensed():
+    """Reference only: Multiwfn 2026.7.15 CDFT.txt rows q(N) q(N+1) q(N-1) f- f+ f0 CDD (4 decimals)."""
+    lines = CDFT.read_text().splitlines()
+    start = next(i for i, l in enumerate(lines) if l.split()[:2] == ["Atom", "q(N)"])
+    rows = []
+    for line in lines[start + 1:]:
+        parts = line.split()
+        if len(parts) < 8:
+            break
+        rows.append([float(v) for v in parts[-7:]])
+    return np.array(rows)
 
 
 class TestFormulas:
@@ -108,49 +120,26 @@ class TestStates:
         assert fk.frontier_degeneracy(states[1]) is None  # open shell
 
 
-class TestCDFT:
-    def test_parse_condensed_table_and_globals(self):
-        rows, g = fk.parse_cdft_text(CDFT_TEXT)
-        assert len(rows) == 13 and rows[0].symbol == "C" and rows[11].symbol == "O"
-        c1 = rows[0]
-        assert (c1.q_n, c1.q_plus, c1.q_minus, c1.f_minus, c1.f_plus, c1.f_zero, c1.cdd) == \
-               (-0.0587, -0.1185, 0.0852, 0.1439, 0.0598, 0.1018, -0.0841)
-        assert g["e_n"] == -307.464870 and g["eta"] == 0.382666 and g["ip"] == 0.301423
+class TestCondensed:
+    def test_definitions_from_charges(self):
+        r = fk.condensed_rows(["C"], np.array([-0.0587]), np.array([-0.1185]), np.array([0.0852]))[0]
+        assert (r.index, r.symbol, r.q_n, r.q_plus, r.q_minus) == (1, "C", -0.0587, -0.1185, 0.0852)
+        assert r.f_minus == pytest.approx(0.1439) and r.f_plus == pytest.approx(0.0598)
+        assert r.f_zero == pytest.approx(0.10185) and r.cdd == pytest.approx(-0.0841)
 
-    def test_older_vertical_ip_label_is_accepted(self):
-        _, g = fk.parse_cdft_text(CDFT_TEXT.replace("First vertical IP", "Vertical IP"))
-        assert g["ip"] == 0.301423
+    def test_degenerate_states_divide_by_p_and_q(self):
+        r = fk.condensed_rows(["C"], np.array([0.0]), np.array([-0.4]), np.array([0.3]), p=2, q=3)[0]
+        assert r.f_plus == pytest.approx(0.2) and r.f_minus == pytest.approx(0.1)
 
-    def test_phenol_rows_are_self_consistent(self):
-        rows, _ = fk.parse_cdft_text(CDFT_TEXT)
-        assert fk.condensed_inconsistencies(rows) == []
-
-    def test_inconsistent_row_is_found(self):
-        rows, _ = fk.parse_cdft_text(CDFT_TEXT)
-        rows[2] = replace(rows[2], f_plus=rows[2].f_plus + 0.01)
-        assert fk.condensed_inconsistencies(rows) == [3]
-
-    def test_not_a_cdft_file(self):
-        with pytest.raises(ValueError, match="main function 22"):
-            fk.parse_cdft_text("hello\nworld\n")
-
-    def test_rows_must_match_the_molecule(self):
-        rows, _ = fk.parse_cdft_text(CDFT_TEXT)
-        n = gw.read_fchk(N)
-        fk.check_rows_match(rows, n)
-        with pytest.raises(ValueError, match="lists 12 atoms"):
-            fk.check_rows_match(rows[:-1], n)
-
-    def test_script_adds_a_blank_line_only_without_settings(self):
-        assert fk.multiwfn_cdft_script(True).startswith("22\n2\nN.fch\nN+1.fch\nN-1.fch\n")
-        assert fk.multiwfn_cdft_script(False).startswith("\n22\n")
+    def test_multiwfn_is_no_longer_driven(self):
+        for name in ("run_multiwfn_cdft", "find_multiwfn", "parse_cdft_text", "subprocess", "CONDENSED_SOURCES"):
+            assert not hasattr(fk, name), name
 
 
 @pytest.fixture(scope="module")
 def phenol():
     seen = []
     results = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.3,
-                                     condensed_source=fk.CONDENSED_IMPORT, cdft_path=str(CDFT),
                                      progress=lambda f, m: seen.append(f))
     return results, seen
 
@@ -176,8 +165,13 @@ class TestPhenol:
     def test_globals_and_condensed_rows(self, phenol):
         r, _ = phenol
         assert r.global_indices.eta == pytest.approx(0.382666, abs=2e-6)
-        assert len(r.condensed) == 13 and r.condensed_source == fk.CONDENSED_IMPORT
+        assert len(r.condensed) == 13 and r.condensed_source.startswith("Hirshfeld")
         assert r.notes == []
+
+    def test_condensed_indices_reproduce_multiwfn(self, phenol):
+        r, _ = phenol
+        mine = np.array([[c.q_n, c.q_plus, c.q_minus, c.f_minus, c.f_plus, c.f_zero, c.cdd] for c in r.condensed])
+        assert np.max(np.abs(mine - multiwfn_condensed())) < 3e-4  # Multiwfn prints 4 decimals
 
     def test_ranking_matches_the_manual_for_phenol(self, phenol):
         # Multiwfn manual 4.7.3: para C1 most favoured for electrophilic attack among ring carbons
@@ -216,29 +210,18 @@ class TestPhenol:
         assert np.allclose(cube.values, r.grids["f-"], rtol=1e-5, atol=1e-10)
 
 
-class TestCondensedSources:
-    def test_missing_multiwfn_continues_with_a_note(self, monkeypatch):
-        monkeypatch.setattr(fk, "find_multiwfn", lambda explicit=None: None)
+class TestCondensedOptions:
+    def test_condensed_indices_can_be_skipped(self):
+        r = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.4, condensed=False)
+        assert r.condensed == [] and r.condensed_source == "" and r.notes == []
+
+    def test_unsupported_element_continues_with_a_note(self, monkeypatch):
+        def refuse(*args, **kwargs):
+            raise ValueError("No free-atom density for Fe: Hirshfeld charges are available for H-Ar only.")
+        monkeypatch.setattr(fk.hc, "hirshfeld_charges", refuse)
         r = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.4)
-        assert r.condensed == [] and "not found" in r.notes[-1]
-
-    def test_failing_multiwfn_continues_with_a_note(self, monkeypatch):
-        monkeypatch.setattr(fk, "find_multiwfn", lambda explicit=None: "C:/fake/Multiwfn.exe")
-
-        def broken(*args, **kwargs):
-            raise RuntimeError("Multiwfn finished without writing CDFT.txt (exit 24): test")
-        monkeypatch.setattr(fk, "run_multiwfn_cdft", broken)
-        r = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.4)
-        assert r.condensed == [] and "without writing CDFT.txt" in r.notes[-1]
-
-    @pytest.mark.skipif(fk.find_multiwfn() is None, reason="Multiwfn not installed")
-    def test_multiwfn_engine_reproduces_the_reference(self):
-        text = fk.run_multiwfn_cdft(fk.find_multiwfn(), [str(N), str(PLUS), str(MINUS)])
-        assert fk.parse_cdft_text(text)[0] == fk.parse_cdft_text(CDFT_TEXT)[0]
-
-    def test_unknown_source(self):
-        with pytest.raises(ValueError):
-            fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), condensed_source="magic")
+        assert r.condensed == [] and "No free-atom density for Fe" in r.notes[-1]
+        assert r.grids["f-"].size > 0  # real-space results are still there
 
 
 def make_ui():
@@ -250,9 +233,11 @@ def make_ui():
     ui.viewer = None
     ui._syncing = False
     for name in ("n_input", "plus_input", "minus_input", "output_dir_input", "fukui_iso_input",
-                 "surface_iso_input", "spacing_input", "multiwfn_input", "cdft_input"):
+                 "surface_iso_input", "spacing_input"):
         setattr(ui, name, SimpleNamespace(value=""))
-    ui.condensed_selection = SimpleNamespace(value=fk.CONDENSED_NONE)
+    ui.condensed_switch = SimpleNamespace(value=False)
+    ui.atom_style_selection = SimpleNamespace(value=fk.DEFAULT_ATOM_STYLE)
+    ui.atom_numbers_switch = SimpleNamespace(value=False)
     ui.cubes_switch = SimpleNamespace(value=False)
     ui.function_selection = SimpleNamespace(value="f-")
     ui.display_selection = SimpleNamespace(value=fk.DISPLAY_LOBES)
@@ -295,6 +280,9 @@ class StubViewer:
     def clear_surface(self):
         self.surfaces.append(None)
 
+    def set_atom_view(self, style, show_numbers):
+        self.atom_view = (style, show_numbers)
+
     def viewer_window_is_open(self):
         return False
 
@@ -304,13 +292,6 @@ class TestUI:
         ui = make_ui()
         asyncio.run(ui.workflow(None))
         assert ui.errors and ui.errors[0][0] == "Input Error" and "N state" in ui.errors[0][1]
-
-    def test_import_without_a_file_is_an_input_error(self, tmp_path):
-        ui = make_ui()
-        fill(ui, tmp_path)
-        ui.condensed_selection.value = fk.CONDENSED_IMPORT
-        with pytest.raises(ValueError, match="CDFT.txt"):
-            ui._collect_inputs()
 
     def test_every_run_parameter_is_supplied_by_the_ui(self, tmp_path):
         ui = make_ui()
@@ -347,6 +328,32 @@ class TestUI:
         args, kwargs = ui.viewer.surfaces[-1]
         assert kwargs["caption"].startswith("f- (a.u.)") and args[5]  # extrema markers
         assert ui.default_image_name() == "phenol_N_fminus.png"
+        assert ui.viewer.atom_view == ("Line style", False)  # the default view is pushed too
+
+    def test_atom_style_and_numbers_reach_the_viewer(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        ui.viewer = StubViewer()
+        ui.atom_style_selection.value = "Space-filling (vdW)"
+        ui.atom_numbers_switch.value = True
+        ui.on_atom_view_change(None)
+        assert ui.viewer.atom_view == ("vdW style", True)
+        ui.atom_style_selection.value = "Ball and stick (CPK)"
+        ui.atom_numbers_switch.value = False
+        ui.on_atom_view_change(None)
+        assert ui.viewer.atom_view == ("CPK style", False)
+
+    def test_atom_view_applies_without_results(self):
+        ui = make_ui()
+        ui.viewer = StubViewer()
+        ui.atom_style_selection.value = "Ball and stick (CPK)"
+        ui.on_atom_view_change(None)
+        assert ui.viewer.atom_view == ("CPK style", False)
+
+    def test_three_atom_styles_line_is_the_default(self):
+        assert list(fk.ATOM_STYLES) == ["Line", "Ball and stick (CPK)", "Space-filling (vdW)"]
+        assert fk.DEFAULT_ATOM_STYLE == "Line"
 
     def test_clear_resets_results(self, tmp_path):
         ui = make_ui()
