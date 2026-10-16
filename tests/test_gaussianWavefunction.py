@@ -115,3 +115,33 @@ class TestCdftFields:
     def test_open_shell_counts(self):
         w = gw.read_fchk(fchk_path("ch3_ub3lyp_631gd"))
         assert w.method == "UB3LYP" and (w.n_alpha, w.n_beta) == (5, 4)
+
+
+class TestNumbaDensity:
+    """densityNumba must reproduce the numpy density path on every basis-set kind."""
+
+    @pytest.mark.skipif(not gw.numba_available(), reason="numba not installed (optional)")
+    @pytest.mark.parametrize("name", REFERENCE_FIXTURES + ["benzene_631gd"])
+    def test_kernel_matches_numpy(self, name):
+        w = gw.read_fchk(fchk_path(name))
+        points, _, _ = load_reference(name) if name in REFERENCE_FIXTURES else (
+            np.random.default_rng(1).normal(scale=3.0, size=(500, 3)), None, None)
+        points = np.vstack([points, w.coordinates, w.coordinates + 0.05])  # include nuclei
+        fast = gw.electron_density(w, points, use_numba=True)
+        slow = gw.electron_density(w, points, use_numba=False)
+        assert np.max(np.abs(fast - slow)) <= 1e-12 * np.max(np.abs(slow))
+
+    @pytest.mark.skipif(not gw.numba_available(), reason="numba not installed (optional)")
+    def test_aos_match_numpy_including_far_points(self):
+        w = gw.read_fchk(fchk_path("water_ccpvqz"))
+        points = np.array([[0.0, 0.0, 0.0], [0.3, -0.2, 0.1], [4.0, 1.0, -2.0], [40.0, 0.0, 0.0]])
+        fast = gw.evaluate_cartesian_aos(w, points, use_numba=True)
+        slow = gw.evaluate_cartesian_aos(w, points, use_numba=False)
+        assert np.allclose(fast, slow, rtol=1e-12, atol=1e-20)
+
+    def test_forcing_numba_without_it_is_an_error(self, monkeypatch):
+        monkeypatch.setattr(gw, "densityNumba", None)
+        w = gw.read_fchk(fchk_path("water_631gd_6d"))
+        with pytest.raises(ValueError, match="numba"):
+            gw.electron_density(w, np.zeros((1, 3)), use_numba=True)
+        assert gw.electron_density(w, np.zeros((1, 3))).shape == (1,)  # automatic -> numpy

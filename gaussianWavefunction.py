@@ -30,6 +30,11 @@ import numpy as np
 
 from help import AtomicData
 
+try:  # optional compiled kernel (pip install numba); same numbers as the numpy path
+    import densityNumba
+except ImportError:
+    densityNumba = None
+
 # Cartesian component order written to the fchk for each angular momentum
 # (Multiwfn define.f90: s, p, d as Gaussian pop=full; f and g in the fch
 # order, which is not the .wfn order). Entries are powers (i, j, k) of x, y, z.
@@ -219,6 +224,7 @@ class FchkWavefunction:
     n_beta: int = 0
     alpha_orbital_energies: Optional[np.ndarray] = None  # Hartree
     other_densities: List[str] = field(default_factory=list)  # e.g. ["Total MP2 Density"]
+    packed: Optional["PackedShells"] = field(default=None, repr=False, compare=False)  # numba layout cache
 
     @property
     def n_atoms(self) -> int:
@@ -327,9 +333,70 @@ def basis_transform(shells: List[Shell]) -> np.ndarray:
     return t
 
 
-def evaluate_cartesian_aos(wfn: FchkWavefunction, points: np.ndarray) -> np.ndarray:
+def numba_available() -> bool:
+    return densityNumba is not None
+
+
+def _resolve_numba(use_numba: Optional[bool]) -> bool:
+    """None = use the compiled kernel when numba is installed; True insists on it."""
+    if use_numba is None:
+        return numba_available()
+    if use_numba and not numba_available():
+        raise ValueError("use_numba=True but numba is not installed (pip install numba).")
+    return bool(use_numba)
+
+
+@dataclass
+class PackedShells:
+    """Flat per-shell arrays for densityNumba (built once per wavefunction)."""
+    n_cart: int
+    centers: np.ndarray       # (n_shell, 3)
+    prim_start: np.ndarray    # (n_shell,) into exponents/coefficients
+    prim_count: np.ndarray
+    min_exponent: np.ndarray  # most diffuse primitive of each shell, for screening
+    exponents: np.ndarray
+    coefficients: np.ndarray  # contraction coefficient x primitive_norm
+    comp_start: np.ndarray    # (n_shell,) first Cartesian column
+    comp_count: np.ndarray
+    powers: np.ndarray        # (n_cart, 3) int
+    comp_norm: np.ndarray     # (n_cart,)
+
+
+def pack_shells(wfn: FchkWavefunction) -> PackedShells:
+    if wfn.packed is None:
+        powers, norms, prim_start, comp_start = [], [], [], []
+        p = c = 0
+        for s in wfn.shells:
+            prim_start.append(p)
+            comp_start.append(c)
+            p += len(s.exponents)
+            for comp in cartesian_components(s.l):
+                powers.append(comp)
+                norms.append(component_angular_norm(comp))
+            c += s.n_cart
+        wfn.packed = PackedShells(
+            n_cart=c,
+            centers=np.array([s.center for s in wfn.shells], dtype=float).reshape(-1, 3),
+            prim_start=np.array(prim_start, dtype=np.int64),
+            prim_count=np.array([len(s.exponents) for s in wfn.shells], dtype=np.int64),
+            min_exponent=np.array([s.exponents.min() for s in wfn.shells], dtype=float),
+            exponents=np.concatenate([s.exponents for s in wfn.shells]).astype(float),
+            coefficients=np.concatenate([s.coefficients * primitive_norm(s.exponents, s.l)
+                                         for s in wfn.shells]).astype(float),
+            comp_start=np.array(comp_start, dtype=np.int64),
+            comp_count=np.array([s.n_cart for s in wfn.shells], dtype=np.int64),
+            powers=np.array(powers, dtype=np.int64).reshape(-1, 3),
+            comp_norm=np.array(norms, dtype=float),
+        )
+    return wfn.packed
+
+
+def evaluate_cartesian_aos(wfn: FchkWavefunction, points: np.ndarray,
+                           use_numba: Optional[bool] = None) -> np.ndarray:
     """(n_points, n_cartesian) values of every normalised Cartesian component."""
     points = np.asarray(points, dtype=float)
+    if _resolve_numba(use_numba):
+        return densityNumba.cartesian_aos(points, pack_shells(wfn))
     out = np.empty((points.shape[0], sum(s.n_cart for s in wfn.shells)))
     col = 0
     for s in wfn.shells:
@@ -343,11 +410,17 @@ def evaluate_cartesian_aos(wfn: FchkWavefunction, points: np.ndarray) -> np.ndar
     return out
 
 
-def electron_density(wfn: FchkWavefunction, points: np.ndarray, chunk: int = 20000) -> np.ndarray:
-    """rho(r) = sum_ab P_ab chi_a(r) chi_b(r) at every point (a.u.)."""
+def electron_density(wfn: FchkWavefunction, points: np.ndarray, chunk: int = 20000,
+                     use_numba: Optional[bool] = None) -> np.ndarray:
+    """rho(r) = sum_ab P_ab chi_a(r) chi_b(r) at every point (a.u.).
+
+    ``use_numba`` None means "if installed": the AO values then come from the
+    compiled densityNumba kernel (same numbers to ~1e-15 relative).
+    """
+    use_numba = _resolve_numba(use_numba)
     points = np.asarray(points, dtype=float).reshape(-1, 3)
     rho = np.empty(points.shape[0])
     for a in range(0, points.shape[0], chunk):
-        ao = evaluate_cartesian_aos(wfn, points[a:a + chunk])
+        ao = evaluate_cartesian_aos(wfn, points[a:a + chunk], use_numba)
         rho[a:a + chunk] = np.einsum("ij,ij->i", ao @ wfn.cart_density, ao)
     return rho
