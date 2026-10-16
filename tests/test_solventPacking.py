@@ -132,11 +132,17 @@ def test_resolve_engine():
         sp.resolve_engine("gpu")
 
 
-def test_numba_is_only_imported_by_its_kernel_module():
-    hits = [p.name for p in SRC.glob("*.py")
-            if p.name != "espNumba.py" and "import numba" in p.read_text(encoding="utf-8", errors="ignore")
-            or (p.name != "espNumba.py" and "from numba" in p.read_text(encoding="utf-8", errors="ignore"))]
-    assert hits == ["solventPackingNumba.py"]
+# The only modules allowed to import numba (CLAUDE.md); every caller keeps a numpy fallback.
+NUMBA_KERNEL_MODULES = {"espNumba.py", "densityNumba.py", "solventPackingNumba.py"}
+
+
+def test_numba_is_only_imported_by_its_kernel_modules():
+    hits = set()
+    for p in SRC.glob("*.py"):
+        text = p.read_text(encoding="utf-8", errors="ignore")
+        if "import numba" in text or "from numba" in text:
+            hits.add(p.name)
+    assert hits == NUMBA_KERNEL_MODULES
 
 
 def test_module_does_not_import_toga():
