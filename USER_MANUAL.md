@@ -54,6 +54,7 @@
   - [General Tools](#general-tools)
     - [3D Molecular Viewer](#3d-molecular-viewer)
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
+    - [Analysis of Fukui Functions](#analysis-of-fukui-functions)
       - [Molecular Design](#molecular-design)
         - [Opening and using the two windows](#opening-and-using-the-two-windows)
         - [Creating and modifying bonds](#creating-and-modifying-bonds)
@@ -82,6 +83,7 @@
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
 - [Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool)
+- [Formulas and Methods (Fukui Function tool)](#formulas-and-methods-fukui-function-tool)
 - [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
@@ -197,7 +199,7 @@ stripped-down or Server Core installation may not include it.
 
 None of these is needed to run the toolkit.
 
-To speed up two tools with compiled kernels (identical results):
+To speed up three tools with compiled kernels (identical results):
 
 ```powershell
 python -m pip install numba
@@ -206,6 +208,9 @@ python -m pip install numba
 - The ESP calculation of the
   [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
   tool becomes about five times faster.
+- Electron densities on grids become about four times faster. This speeds up
+  the density grid of the ESP tool, and the grids and Hirshfeld charges of the
+  [Analysis of Fukui Functions](#analysis-of-fukui-functions) tool.
 - Solvent packing in the three solvation-box builders
   ([Single Solute](#single-solute-solvent-box),
   [Mixture](#mixture-of-two-solvent-box),
@@ -1950,7 +1955,7 @@ Canvas background and **Export image...** work as in the ESP tool.
 - If the descriptors disagree, compute the transition states.
 - For degenerate HOMO/LUMO (benzene, C₆₀), use N+p/N−q states or Multiwfn's orbital-weighted Fukui functions (see the NOTE).
 
-Theory and limitations: *Formulas and Methods (Fukui Function tool)* below, and `docs/superpowers/specs/2026-10-16-fukui-function-design.md`.
+Theory, algorithms, validation and limitations: [Formulas and Methods (Fukui Function tool)](#formulas-and-methods-fukui-function-tool), and `docs/superpowers/specs/2026-10-16-fukui-function-design.md` for the verified Multiwfn workflow.
 
 #### Energy Plots
 
@@ -3614,49 +3619,521 @@ Multiwfn prints kcal/mol with the rounded factor 627.51 (relative difference
 
 ## Formulas and Methods (Fukui Function tool)
 
-**Real-space functions** (a.u. = e/bohr³), with p = q = 1 for ordinary N±1 states:
-f⁺ = [ρ_{N+p} − ρ_N]/p, f⁻ = [ρ_N − ρ_{N−q}]/q, f⁰ = (f⁺ + f⁻)/2, Δf = f⁺ − f⁻.
+This section documents the theory and every algorithm behind the
+[Analysis of Fukui Functions](#analysis-of-fukui-functions) tool, in the order
+the tool evaluates them. The code is split by responsibility:
+- [fukuiFunctionAnalyze.py](fukuiFunctionAnalyze.py): the three-state checks, the formulas, the grids and surfaces, the report, and the window;
+- [gaussianWavefunction.py](gaussianWavefunction.py): the `.fchk` reader and the electron density;
+- [densityNumba.py](densityNumba.py): the optional compiled kernels;
+- [hirshfeldCharges.py](hirshfeldCharges.py) with [proatomDensities.py](proatomDensities.py): the Hirshfeld charges;
+- [molecularSurface.py](molecularSurface.py): grids, isosurfaces and extrema, shared with the ESP tool;
+- [cubeFile.py](cubeFile.py): cube output;
+- [espViewer.py](espViewer.py): the 3D view.
 
-The densities are the `Total SCF Density` of each `.fchk`, evaluated exactly at every grid node. On phenol they agree with Multiwfn 2026.7.15's exported cubes to 8×10⁻⁶ a.u.
+Everything except the window and the viewer runs headless. It is tested by:
+- `tests/test_fukuiFunctionAnalyze.py`, `test_hirshfeldCharges.py`, `test_gaussianWavefunction.py` and `test_cubeFile.py`;
+- against reference values produced by Multiwfn 2026.7.15 and Gaussian 09.
 
-The grid grows until every face has ρ_N < ρ_surface/10 and |f⁺|, |f⁻| < isovalue/10. Isosurfaces use marching tetrahedra with bisection of the exact function. Surface extrema use Multiwfn's rule: strict comparison against the first and second vertex rings (as in the ESP tool).
+No external program is needed at run time.
 
-**Condensed indices** from Hirshfeld charges q_A of the three states:
-f⁻_A = [q_A(N−q) − q_A(N)]/q, f⁺_A = [q_A(N) − q_A(N+p)]/p, f⁰_A = (f⁺_A + f⁻_A)/2, CDD_A = f⁺_A − f⁻_A (p = q = 1 for ordinary states). Condensed local softness is s_A = S·f_A.
+**Status of the results.** Fukui functions and the quantities derived from
+them indicate *where* a molecule is most susceptible to a given kind of
+attack. They do not predict reaction outcomes, rates or selectivities: steric
+hindrance, solvent, distortion of the reactants and transition-state energies
+are outside the model (subsection 13).
 
-The Hirshfeld charges are computed inside the tool, by the scheme of Multiwfn's population analysis:
-- **Free-atom densities** (`proatomDensities.py`): neutral ground-state atoms H–Ar at UB3LYP/cc-pVQZ, the level Multiwfn uses for its built-in densities with Z ≤ 18 (Multiwfn manual, Appendix 3). Each is spherically averaged and tabulated at 600 radii from 10⁻⁵ to 40 bohr; between radii, log ρ is interpolated linearly. They are regenerated only with `tools/make_proatom_densities.py`, which needs Gaussian.
-- **Weights:** w_A(r) = ρ_A⁰(|r − R_A|) / Σ_B ρ_B⁰(|r − R_B|), and p_A = ∫ w_A(r) ρ(r) dr.
-- **Integration:** a Becke multicentre grid, with 75 Gauss–Chebyshev radial points (r = r_m(1+x)/(1−x), r_m = covalent radius) × 434 Lebedev points per atom. It recovers the electron count to about 10⁻⁵.
-- **Normalization:** populations are scaled to the exact electron count, then q_A = Z_A − p_A, as for Multiwfn's "Final atomic charges".
-- **Agreement with Multiwfn 2026.7.15:** within 1.4×10⁻⁴ e on molecules containing H, Li, B–F and Na–Cl, and within 10⁻⁴ (its printed precision) on the phenol N, N+1 and N−1 states.
+**Units.** Hartree atomic units throughout: lengths in bohr, energies in
+Hartree, densities and Fukui functions in e/bohr³ (written "a.u."), charges in
+units of the elementary charge e. Å and eV appear only in the report
+($1\ \text{bohr} = 0.529177210544$ Å, $1\ E_h = 27.211386245988$ eV, CODATA).
 
-**Speed:** with `numba` installed, densities and Becke weights use compiled kernels (`densityNumba.py`), giving about 4× faster densities and the same numbers. Phenol at 0.25 bohr takes about 8 s in total, including the condensed indices.
+**Symbols used throughout.**
 
-**Global indices** (Hartree, Multiwfn conventions):
+| Symbol | Meaning |
+| --- | --- |
+| $N$ | number of electrons of the reference (N) state |
+| $v(\mathbf{r})$ | external potential (the nuclei, at fixed positions) |
+| $\rho_N(\mathbf{r})$ | electron density of the state with $N$ electrons (fchk `Total SCF Density`, α + β) |
+| $E(N)$ | total energy of the state with $N$ electrons (fchk `Total Energy`) |
+| $f^+, f^-, f^0$ | Fukui functions for nucleophilic, electrophilic and radical attack |
+| $\Delta f$ | dual descriptor (DD, or CDD when condensed) |
+| $p, q$ | electrons added (N+p state) and removed (N−q state); 1 normally |
+| $q_A,\ Z_A,\ \mathbf{R}_A$ | charge, atomic number and position of atom $A$ |
+| $\rho_A^0(r)$ | spherically averaged density of the free neutral atom $A$ |
+| $w_A(\mathbf{r})$ | Hirshfeld weight of atom $A$ at $\mathbf{r}$ |
+| $I,\ A$ | vertical ionization potential and electron affinity |
+| $\mu,\ \eta,\ S,\ \omega$ | chemical potential, hardness, softness, electrophilicity |
+| $h$ | spacing of the uniform grid (bohr) |
 
-| Index | Formula |
-|---|---|
-| vertical IP | I = E(N−1) − E(N) |
-| vertical EA | A = E(N) − E(N+1) |
-| electronegativity | χ = (I+A)/2 |
-| chemical potential | μ = −χ |
-| hardness | **η = I − A** (no ½) |
-| softness | S = 1/η |
-| electrophilicity | ω = μ²/2η |
-| nucleophilicity | N_Nu = E_HOMO(N) − E_HOMO(TCE), with E_HOMO(TCE) = −0.335198 Ha |
+### 1. Conceptual DFT: response of the density to the electron number
 
-E_HOMO(TCE) is the B3LYP/6-31G\* value. At another level, recompute TCE.
+Conceptual density functional theory treats the energy as a functional of
+the electron number and the external potential, $E = E[N, v]$. Its first
+derivatives are the chemical potential and the density:
 
-**Not provided** (use Multiwfn):
-- Fukui potential and dual-descriptor potential;
-- orbital-weighted Fukui functions;
-- bond dual descriptor;
-- ω_cubic and ε;
-- condensed indices for N+p/N−q;
-- averages on local atomic surfaces;
-- orbital contributions;
-- spin-polarized Fukui functions.
+$$
+\mu = \left(\frac{\partial E}{\partial N}\right)_{v},
+\qquad
+\rho(\mathbf{r}) = \left(\frac{\delta E}{\delta v(\mathbf{r})}\right)_{N}.
+$$
+
+The mixed second derivative is the **Fukui function** (Parr and Yang, 1984).
+By the Maxwell relation it is both the response of the density to a change in
+$N$ at fixed nuclei, and the response of $\mu$ to a local change in the
+potential:
+
+$$
+f(\mathbf{r})
+= \left(\frac{\partial \rho(\mathbf{r})}{\partial N}\right)_{v}
+= \left(\frac{\delta \mu}{\delta v(\mathbf{r})}\right)_{N},
+\qquad
+\int f(\mathbf{r})\, d^3r = 1 .
+$$
+
+The normalization follows from $\int \rho\, d^3r = N$.
+
+A region where $f$ is large is where electron density is gained or lost most
+readily when the molecule accepts or donates charge. In the frontier-orbital
+picture, it is where an incoming reagent can interact most strongly.
+"Fixed $v$" means fixed nuclei, which is why all three states must share one
+geometry (subsection 4).
+
+### 2. Finite differences: f⁺, f⁻ and f⁰
+
+$E(N)$ and $\rho_N$ have a derivative discontinuity at integer $N$, so the
+derivative is replaced by one-sided finite differences between states that
+differ by whole electrons:
+
+$$
+f^{+}(\mathbf{r}) = \rho_{N+1}(\mathbf{r}) - \rho_{N}(\mathbf{r}),
+\qquad
+f^{-}(\mathbf{r}) = \rho_{N}(\mathbf{r}) - \rho_{N-1}(\mathbf{r}),
+\qquad
+f^{0}(\mathbf{r}) = \tfrac12\left[f^{+}(\mathbf{r}) + f^{-}(\mathbf{r})\right]
+= \tfrac12\left[\rho_{N+1}(\mathbf{r}) - \rho_{N-1}(\mathbf{r})\right].
+$$
+
+| Function | Change of the molecule | Large where the site is susceptible to |
+| --- | --- | --- |
+| $f^{+}$ | accepts an electron | **nucleophilic** attack (an electron donor attacks here) |
+| $f^{-}$ | donates an electron | **electrophilic** attack (an electron acceptor attacks here) |
+| $f^{0}$ | average of both | **radical** attack (little net charge transfer) |
+
+The names describe the **attacking reagent**. A site "susceptible to
+electrophilic attack" is a nucleophilic site.
+
+**Frozen orbitals.** If the orbitals did not relax when an electron is added
+or removed, $f^+ = |\varphi_\text{LUMO}|^2$ and $f^- = |\varphi_\text{HOMO}|^2$
+(frontier-orbital theory). The tool always uses the relaxed densities of
+separate calculations, which include orbital relaxation.
+
+**Reliability.** Comparison studies by the Multiwfn author find $f^-$
+reasonably reliable for electrophilic-attack sites, and $f^+$ the weakest
+descriptor for nucleophilic-attack sites. The dual descriptor (subsection 3)
+and Hirshfeld charges do better there.
+
+### 3. The dual descriptor
+
+The second derivative of the density with respect to $N$, also the response
+of the hardness to the potential, is the **dual descriptor** (Morell, Grand and
+Toro-Labbé, 2005). Its finite-difference form is
+
+$$
+\Delta f(\mathbf{r})
+= \left(\frac{\partial f(\mathbf{r})}{\partial N}\right)_{v}
+\;\approx\; f^{+}(\mathbf{r}) - f^{-}(\mathbf{r})
+= \rho_{N+1}(\mathbf{r}) - 2\rho_{N}(\mathbf{r}) + \rho_{N-1}(\mathbf{r}),
+\qquad \int \Delta f\, d^3r = 0 .
+$$
+
+$\Delta f > 0$ marks regions favouring **nucleophilic** attack and
+$\Delta f < 0$ regions favouring **electrophilic** attack. One function thus
+shows both kinds of site. When ranking competing sites, compare how positive
+or how negative $\Delta f$ is, not only its sign.
+
+### 4. The three states and how they are checked
+
+The tool reads three Gaussian formatted checkpoints. For each it takes:
+- the atoms and coordinates;
+- the basis set, which gives the density through equation 2 of the ESP section;
+- `Total SCF Density`, `Total Energy` and the electron counts;
+- the alpha orbital energies;
+- the method and basis names on line 2 of the fchk.
+
+The finite difference is only meaningful when the three files differ in
+nothing but the electron count. A **ValueError**, shown as a dialog, is raised
+when:
+
+| Check | Tolerance / rule |
+| --- | --- |
+| same atoms, in the same order | atomic numbers equal |
+| same geometry | every coordinate within $10^{-5}$ bohr; message: run single points, do not re-optimize the ions |
+| same basis set | shells, angular momenta, centres and exponents equal (relative $10^{-10}$) |
+| same method | method names equal after removing the R / U / RO prefix (`RB3LYP` = `UB3LYP`) |
+| electron counts | $N_{+} > N > N_{-}$; otherwise the files are probably swapped |
+
+With $p = N_{+} - N$ and $q = N - N_{-}$ (subsection 5), a **NOTE**, which is not an
+error, is written when:
+- the multiplicity changes by anything other than $p$ (or $q$);
+- the file also contains a correlated density (e.g. `Total MP2 Density`). The SCF density is used.
+- the basis set has diffuse functions (subsection 13);
+- the N state has degenerate frontier orbitals that the files do not account for (subsection 5).
+
+**Charge and multiplicity of the ions** for ordinary organic molecules:
+
+| Reference state | N | N+1 | N−1 |
+| --- | --- | --- | --- |
+| closed-shell neutral | 0 1 | −1 2 | +1 2 |
+| neutral radical | 0 2 | −1 1 | +1 1 |
+| closed-shell cation | +1 1 | 0 2 | +2 2 |
+| closed-shell anion | −1 1 | −2 2 | 0 2 |
+
+For transition-metal systems, compute the lowest few spin states of each ion
+and use the lowest in energy.
+
+### 5. Degenerate frontier orbitals: N+p and N−q states
+
+If the LUMO is $p$-fold and the HOMO $q$-fold degenerate, as in benzene or
+C₆₀, adding or removing one electron breaks the molecular symmetry, and $f^\pm$
+come out misleading. The remedy (Multiwfn manual, section 3.25.4) spreads the
+change over the whole degenerate set:
+
+$$
+f^{+}_{Q} = \frac{\rho_{N+p} - \rho_{N}}{p},
+\qquad
+f^{-}_{Q} = \frac{\rho_{N} - \rho_{N-q}}{q},
+\qquad
+f^{0}_{Q} = \tfrac12\left(f^{+}_{Q} + f^{-}_{Q}\right),
+\qquad
+\Delta f_{Q} = f^{+}_{Q} - f^{-}_{Q}.
+$$
+
+The multiplicities are $p+1$ and $q+1$ for a closed-shell N state. The tool
+infers $p$ and $q$ from the electron counts of the files, so no option needs
+setting, and it applies the same division to the condensed indices
+(subsection 7).
+
+For a closed-shell N state it also measures the degeneracy itself, by
+Multiwfn's rule: the number of occupied (virtual) orbitals within
+**0.01 eV** of the HOMO (LUMO), counting the HOMO (LUMO) itself. If this
+disagrees with the $p, q$ of the files, a NOTE suggests N+p/N−q states or
+Multiwfn's orbital-weighted Fukui functions.
+
+The global indices of subsection 6 need $E(N\pm1)$, so they are computed only
+when $p = q = 1$.
+
+### 6. Global indices
+
+Fit $E$ by a parabola through $E(N-1)$, $E(N)$ and $E(N+1)$, with the vertical
+energies $I = E(N-1) - E(N)$ and $A = E(N) - E(N+1)$. Its first derivative is
+the chemical potential and its second derivative the hardness:
+
+$$
+\mu \approx -\frac{I + A}{2} = -\chi,
+\qquad
+\eta = \frac{\partial^2 E}{\partial N^2} \approx I - A,
+\qquad
+S = \frac{1}{\eta},
+\qquad
+\omega = \frac{\mu^2}{2\eta},
+\qquad
+N_\text{Nu} = E_\text{HOMO}(N) - E_\text{HOMO}(\text{TCE}).
+$$
+
+- $\chi$ is Mulliken's electronegativity.
+- **Hardness convention.** Many papers write $\eta = (I-A)/2$. Like Multiwfn, this tool uses $\eta = I - A$, the finite-difference second derivative itself (the fundamental gap). $S$ and $\omega$ follow from it, so compare only with values computed by the same convention.
+- $\omega$ is Parr's electrophilicity index.
+- $N_\text{Nu}$ is the nucleophilicity index of Domingo and co-workers, referenced to tetracyanoethylene. The tool uses Multiwfn's $E_\text{HOMO}(\text{TCE}) = -0.335198\ E_h$, computed at B3LYP/6-31G\*. At any other level, compute TCE yourself and subtract.
+- $N_\text{Nu}$ is reported only for a closed-shell N state, where the HOMO is unambiguous.
+- If $I - A \le 0$, $S$ and $\omega$ are left undefined and a NOTE asks you to check the charges and multiplicities.
+
+**Local versions.** The Fukui functions compare sites **within one molecule**:
+$\int f = 1$, so $f$ thins out as molecules grow. To compare sites of
+different molecules, scale $f$ by a global index. The local softness is
+$s^{\pm,0}(\mathbf{r}) = S\, f^{\pm,0}(\mathbf{r})$; the report gives its
+condensed form, $s_A = S\, f_A$.
+
+### 7. Atom-condensed indices
+
+Integrating a Fukui function over the region that belongs to atom $A$ turns it
+into a difference of atomic populations $p_A = Z_A - q_A$ (Yang and Mortier,
+1986). The nuclear charges cancel, leaving charge differences:
+
+$$
+f^{+}_{A} = \frac{q_A(N) - q_A(N+p)}{p},
+\qquad
+f^{-}_{A} = \frac{q_A(N-q) - q_A(N)}{q},
+\qquad
+f^{0}_{A} = \tfrac12\left(f^{+}_{A} + f^{-}_{A}\right),
+\qquad
+\text{CDD}_A = f^{+}_{A} - f^{-}_{A}.
+$$
+
+The values depend on how space is divided among atoms. **Hirshfeld charges**
+are the recommended partition for this purpose: in a comparison of 15 charge
+schemes they predicted regioselectivity best (Wang, Rong, Chattaraj and Liu,
+2019), and Multiwfn uses them in its conceptual-DFT module. Mulliken charges
+are discouraged. Hirshfeld condensed values are usually non-negative;
+negative values can still occur (orbital relaxation, the partition). The tool
+lists them in a NOTE, because they should not be read as reactivity.
+
+The **site ranking** in the report lists, for each kind of attack, the five
+atoms with the largest $f^-$, $f^+$ or $f^0$, and the most negative and most
+positive CDD. Consider only atoms that can actually react: the ipso carbon of
+phenol, for example, scores high but does not take part in substitution.
+
+### 8. Hirshfeld (stockholder) partition
+
+Hirshfeld (1977) shares the molecular density among the atoms in proportion to
+the density each free atom would have at that point. The free atoms are placed
+at the molecular geometry; their sum is the "promolecule":
+
+$$
+w_A(\mathbf{r}) = \frac{\rho_A^0\!\left(\lvert \mathbf{r}-\mathbf{R}_A\rvert\right)}
+                       {\sum_B \rho_B^0\!\left(\lvert \mathbf{r}-\mathbf{R}_B\rvert\right)},
+\qquad
+\sum_A w_A(\mathbf{r}) = 1,
+\qquad
+p_A = \int w_A(\mathbf{r})\, \rho(\mathbf{r})\, d^3r,
+\qquad
+q_A = Z_A - p_A .
+$$
+
+**Free-atom densities** ([proatomDensities.py](proatomDensities.py)) are a
+generated data module that must not be edited by hand.
+- **Level.** Neutral ground-state atoms H–Ar at UB3LYP/cc-pVQZ: the level of Multiwfn's built-in densities for $Z \le 18$ (Multiwfn manual, Appendix 3). Ground-state multiplicities are H, Li, B, F, Na, Al, Cl 2; C, O, Si, S 3; N, P 4; the noble gases and Be, Mg 1.
+- **Sphericalization.** Open-shell atoms, such as C with two p electrons, have non-spherical densities, so each density is averaged over a 110-point Lebedev sphere (exact for the angular dependence of an s–g density):
+  $\rho_A^0(r) = \sum_k \omega_k\, \rho_A(r\,\hat{\mathbf{n}}_k)$, with $\sum_k \omega_k = 1$.
+- **Table.** 600 radii, log-spaced from $10^{-5}$ to 40 bohr, evaluated without the shell screening of subsection 11, so that the tails stay positive.
+- **Interpolation.** $\ln\rho_A^0$ is interpolated linearly in $r$. Inside $10^{-5}$ bohr the first value is used; beyond 40 bohr the density is zero.
+- **Normalization check.** Each table integrates to $Z_A$ within $3\times10^{-4}$ relative (`test_each_table_holds_its_electrons`).
+- **Rebuilding.** `tools/make_proatom_densities.py` regenerates the tables; it needs Gaussian 09.
+
+**Final normalization.** The integrated populations are scaled so that they
+sum exactly to the wavefunction's electron count:
+$p_A \leftarrow p_A\, N / \sum_B p_B$. Then $\sum_A q_A$ equals the molecular
+charge to rounding, as in Multiwfn's "Final atomic charges".
+
+**Restrictions** (ValueError; the tool turns it into a NOTE and keeps all
+real-space results):
+- **Elements beyond Ar.** They have no table.
+- **Files with effective core potentials** (nuclear charges ≠ atomic numbers). Their density lacks the core electrons, so comparing it with all-electron free atoms would give wrong charges.
+
+### 9. Becke multicentre integration
+
+The integral of equation (8) runs over a sum of atom-centred grids. A smooth
+partition of unity removes the cusps and overlaps between them (Becke, 1988).
+
+**Fuzzy cells.** For atoms $A \ne B$ at distance $R_{AB}$, and a point at
+distances $r_A$, $r_B$ from them,
+
+$$
+\mu_{AB} = \frac{r_A - r_B}{R_{AB}},
+\qquad
+g(\mu) = \tfrac32\mu - \tfrac12\mu^3,
+\qquad
+s(\mu) = \tfrac12\left[1 - g\big(g(g(\mu))\big)\right],
+$$
+
+$$
+P_A(\mathbf{r}) = \prod_{B \ne A} s(\mu_{AB}),
+\qquad
+W_A(\mathbf{r}) = \frac{P_A(\mathbf{r})}{\sum_C P_C(\mathbf{r})}.
+$$
+
+The three-fold iteration of $g$ makes $s$ a smooth step: 1 near atom $A$, 0
+near atom $B$. Becke's atomic-size adjustment is not applied; the
+normalization of subsection 8 absorbs the small integration error.
+
+**Atom-centred quadrature.** Around each atom, the radial coordinate uses
+Gauss–Chebyshev quadrature of the second kind, mapped to $[0, \infty)$:
+
+$$
+x_i = \cos\theta_i,\ \ \theta_i = \frac{i\pi}{n+1},\ \ i = 1..n,
+\qquad
+r_i = r_m \frac{1 + x_i}{1 - x_i},
+\qquad
+w_i = \frac{\pi}{n+1}\,\sin\theta_i\;\frac{2 r_m}{(1 - x_i)^2}\; r_i^{2}.
+$$
+
+$r_m$ is the atom's covalent radius (Cordero et al., 2008). The angular part
+is a 434-point Lebedev sphere, exact for spherical harmonics up to degree 35.
+With $n = 75$ these are Multiwfn's default 75 × 434 = 32 550 points per atom:
+
+$$
+\int F(\mathbf{r})\, d^3r \;\approx\; \sum_{A}\sum_{i,k}
+w_i\, \omega_k\, W_A(\mathbf{r}_{A,ik})\, F(\mathbf{r}_{A,ik}),
+\qquad
+\mathbf{r}_{A,ik} = \mathbf{R}_A + r_i \hat{\mathbf{n}}_k .
+$$
+
+For phenol (13 atoms, 423 150 points) the grid integrates $\rho_N$ to the
+electron count within $10^{-5}$. **One grid serves all three states**, because
+they share the geometry.
+
+### 10. The density on grids and surfaces
+
+The density at any point is the exact expression of the ESP section,
+equation 2: $\rho(\mathbf{r}) = \sum_{\mu\nu} P_{\mu\nu}\chi_\mu(\mathbf{r})\chi_\nu(\mathbf{r})$.
+Every value used by the tool comes from this formula, not from interpolating
+a grid: the grid nodes, the isosurface refinement, the surface vertices and
+the Hirshfeld points.
+
+**Uniform grid (for the isosurfaces and the cube files).** One cubic grid of
+spacing $h$ (default 0.25 bohr) holds $\rho_N$, $\rho_{N+p}$ and $\rho_{N-q}$,
+and from them $f^+$, $f^-$, $f^0$ and $\Delta f$.
+- **Starting box.** The atoms ± 1.7 van der Waals radii, as in the ESP tool.
+- **Growth.** Each face moves out by 1 bohr until it satisfies, at every face node,
+  $$
+  \max\!\left(\frac{\rho_N}{\rho_\text{s}},\ \frac{|f^+|}{f_\text{iso}},\ \frac{|f^-|}{f_\text{iso}}\right) < 0.1 .
+  $$
+  Here $\rho_\text{s}$ is the mapping-surface isovalue (default 0.01 a.u.) and $f_\text{iso}$ the Fukui isovalue (default 0.005 a.u.). Since $|f^0| \le \max|f^\pm|$ and $|\Delta f| \le |f^+| + |f^-|$, no isosurface of any of the four functions is cut by the box.
+
+**Diagnostic integrals.** The report prints $h^3 \sum f$ over the grid. It
+should be close to 1 for $f^{\pm,0}$ (about 0.999 for phenol) and to 0 for
+$\Delta f$. A value near −1 means the N+1 and N−1 files were swapped.
+
+**Isosurfaces ("lobes").** For each function and each sign $s = \pm1$, the
+surface $s f(\mathbf{r}) = f_\text{iso}$ is built by the ESP tool's algorithm:
+- marching tetrahedra on the grid of $s f$, with vertices shared through edge identities;
+- three bisections of the **exact** $s f$ along each cut edge;
+- vertex merging (closer than $0.5h$) and elimination;
+- triangles oriented along $-\nabla(s f)$.
+
+The positive and negative surfaces are drawn as one mesh.
+
+**Mapped surface and extrema.** The four functions are also evaluated exactly
+at the vertices of the isosurface $\rho_N = \rho_\text{s}$. The default
+0.01 a.u. follows Multiwfn's manual, section 4.12.4: on the usual 0.001 a.u.
+van der Waals surface the Fukui functions are too small to discriminate.
+Minima and maxima on that surface use the ESP tool's rule: a vertex is a
+minimum (maximum) if it is strictly below (above) all its first- and
+second-ring neighbours, and the global extremum is always reported. Each
+extremum is labelled with its nearest atom.
+
+**Cube files.** `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub` and
+`_dual.cub` contain the four grids in the standard Gaussian cube layout:
+bohr, the atoms' numbers and positions, values `%13.5E`, six per line, z
+fastest. VMD, Multiwfn and GaussView read them.
+
+### 11. Compiled kernels (Numba)
+
+The grid work is dominated by evaluating the Cartesian basis functions
+
+$$
+\chi_j(\mathbf{r}) = N_j\, x_c^{a}\, y_c^{b}\, z_c^{c}
+\sum_k d_k\, N(\alpha_k)\, e^{-\alpha_k r_c^2}
+$$
+
+at many points ($x_c, y_c, z_c$ relative to the shell centre). With `numba`
+installed, [densityNumba.py](densityNumba.py) evaluates them in one compiled,
+multi-threaded loop over points.
+- **Screening.** A shell is set to zero at a point when even its most diffuse primitive satisfies $\alpha_\text{min} r_c^2 > 50$, i.e. it is below $e^{-50} \approx 2\times10^{-22}$ of its coefficient.
+- **Contraction.** The step $\rho = \sum_{\mu\nu}P_{\mu\nu}\chi_\mu\chi_\nu$ stays a matrix product (BLAS) on blocks of 20 000 points.
+- **Becke weights.** The same module computes the Becke weights of subsection 9.
+
+Without `numba`, the numpy path runs and gives the same numbers:
+
+| Quantity | Agreement, compiled vs numpy |
+| --- | --- |
+| density, every basis type (pure/Cartesian d, f, g; SP shells; open shell) | ≤ $10^{-12}$ of the largest density |
+| Becke weights | ≤ $10^{-12}$ of the largest weight |
+| Hirshfeld populations | ≤ $10^{-9}$ e |
+
+The Becke weights cannot agree to the last digit where they are tiny. Near a
+cell boundary $\mu \to 1$, and the step $\tfrac12(1 - \mu)$ amplifies
+differences in rounding order; those points carry negligible weight.
+
+**Timing** (phenol, 0.25 bohr grid, 222 300 points):
+- density: 0.83 s with numpy, 0.20 s compiled;
+- whole run, including the condensed indices: about 8 s.
+
+The first run after installing `numba` spends a few seconds compiling; later
+runs load the cache.
+
+### 12. The 3D view
+
+Surfaces use the ESP tool's colour scale, red → yellow → green (0) →
+cyan → blue.
+- **Isosurfaces.** The bar spans $\pm f_\text{iso}$, so negative lobes are red and positive lobes blue.
+- **Mapped surface.** The bar spans $\pm\max|f|$ on that surface. A function that is positive everywhere, like $f^-$ on phenol, therefore uses only the green-to-blue half.
+
+Extremum markers are cyan (minimum) and orange (maximum), larger for the
+global ones, and numbered as in the report.
+
+**Atoms row** (Results tab), applied at once with or without results:
+
+| Choice | Atom radius (Å) | Bonds |
+| --- | --- | --- |
+| Line | 0.18 × visual radius, at least 0.06 | lines |
+| Ball and stick (CPK) | visual radius (e.g. H 0.25, C 0.42, O 0.40) | cylinders |
+| Space-filling (vdW) | van der Waals radius (e.g. H 1.20, C 1.70, O 1.52) | none needed |
+
+"CPK" means ball-and-stick here, as in the 3D Molecular Viewer. **Show atom
+numbers** labels every atom with its 1-based index, the numbering of the
+report and the condensed table.
+
+The surfaces are opaque. The Fukui lobes lie inside the van der Waals radii,
+so space-filling atoms hide them; use that style to judge how exposed a site
+is, then switch back. With atom numbers on, some labels may sit behind a lobe.
+
+### 13. Limitations
+
+- **Level of theory.** Removing or adding a whole electron is a large perturbation, and the result depends on how well the method describes the ions.
+  - B3LYP-like functionals over-delocalize the extra electron of the anion (self-interaction error).
+  - With **diffuse basis functions** the N+1 density can become Rydberg-like, so $f^+$ and $\Delta f$ lose chemical meaning (Multiwfn manual, section 4.22.3.1). The tool writes a NOTE when the basis set has diffuse functions.
+  - Diffuse functions are, however, what makes $E(N+1)$, and so $A$, $\chi$ and $\omega$, accurate.
+  - Multiwfn's manual recommends a range-separated functional (ωB97XD) with a triple-ζ basis without diffuse functions for $f^+$ and $\Delta f$, and calls B3LYP/6-31G\* the lowest acceptable level.
+- **Unbound anions.** A negative vertical EA (phenol: −2.21 eV at B3LYP/6-31G\*) means the extra electron is unbound at that level. Read $f^+$ and $\Delta f$ with care.
+- **Density.** Only the SCF (HF/DFT) density is used. Open-shell states contribute their total (α + β) density; spin-resolved Fukui functions are not computed.
+- **Partition.** Condensed values depend on the partition (subsection 7). The real-space functions and the surface extrema do not.
+- **Elements.** Hirshfeld charges cover H–Ar. Heavier elements and ECP files give a NOTE, and the real-space functions are still produced.
+- **Not provided** (use Multiwfn main function 22 or 12):
+  - Fukui potential and dual-descriptor potential;
+  - orbital-weighted Fukui functions;
+  - bond dual descriptor;
+  - $\omega_\text{cubic}$ and the electrophilic descriptor;
+  - averages over local atomic surfaces;
+  - orbital contributions to $f$.
+- **What Fukui functions cannot say.** Sterics, distortion of the reactants, non-covalent steering, solvent, concerted mechanisms and kinetics. When descriptors disagree, or when the answer matters, compare transition-state free-energy barriers.
+
+### 14. Validation
+
+| Quantity | Reference | Agreement | Test |
+| --- | --- | --- | --- |
+| $f^+, f^-, f^0, \Delta f$ at 300 grid nodes (phenol) | Multiwfn 2026.7.15 cubes, main function 22 option 3 | ≤ $2\times10^{-5}$ a.u. (measured $8\times10^{-6}$) | `test_grid_matches_multiwfn` |
+| Global indices (phenol) | Multiwfn `CDFT.txt` | every printed digit | `test_global_indices_reproduce_multiwfn` |
+| Hirshfeld charges, 8 molecules (H, Li, B–F, Na–Cl) | Multiwfn main function 7, option 1 | ≤ $3\times10^{-4}$ e (measured $1.4\times10^{-4}$) | `TestAgainstMultiwfn` |
+| Hirshfeld charges, phenol N, N+1, N−1 | Multiwfn `CDFT.txt` | ≤ $2\times10^{-4}$ e | `test_phenol_three_states` |
+| Condensed $q$, $f^\pm$, $f^0$, CDD (phenol) | Multiwfn `CDFT.txt` | ≤ $3\times10^{-4}$ (4 printed decimals) | `test_condensed_indices_reproduce_multiwfn` |
+| Density, compiled vs numpy | the numpy path | ≤ $10^{-12}$ relative | `TestNumbaDensity` |
+
+Multiwfn is not needed by the tool or the tests. The two dev-only scripts
+`tests/data/fukui/make_reference.py` and `tests/data/hirshfeld/make_reference.py`
+regenerate the reference files.
+
+### 15. References
+
+- R. G. Parr, W. Yang, *J. Am. Chem. Soc.* **106**, 4049 (1984): the Fukui function.
+- W. Yang, W. J. Mortier, *J. Am. Chem. Soc.* **108**, 5708 (1986): condensed Fukui functions.
+- C. Morell, A. Grand, A. Toro-Labbé, *J. Phys. Chem. A* **109**, 205 (2005): the dual descriptor.
+- R. G. Parr, R. G. Pearson, *J. Am. Chem. Soc.* **105**, 7512 (1983): absolute hardness.
+- W. Yang, R. G. Parr, *Proc. Natl. Acad. Sci. USA* **82**, 6723 (1985): softness and local softness.
+- R. G. Parr, L. v. Szentpály, S. Liu, *J. Am. Chem. Soc.* **121**, 1922 (1999): the electrophilicity index.
+- L. R. Domingo et al., *J. Org. Chem.* **73**, 4615 (2008): the nucleophilicity index.
+- F. L. Hirshfeld, *Theor. Chim. Acta* **44**, 129 (1977): stockholder partitioning.
+- A. D. Becke, *J. Chem. Phys.* **88**, 2547 (1988): multicentre integration.
+- V. I. Lebedev, D. N. Laikov, *Dokl. Math.* **59**, 477 (1999): Lebedev quadrature.
+- B. Cordero et al., *Dalton Trans.* 2832 (2008): covalent radii.
+- B. Wang, C. Rong, P. K. Chattaraj, S. Liu, *Theor. Chem. Acc.* **138**, 124 (2019): Hirshfeld charges for regioselectivity.
+- P. Fuentealba, P. Pérez, R. Contreras, *J. Chem. Phys.* **113**, 2544 (2000): condensed Fukui functions and their sign.
+- P. Geerlings, F. De Proft, W. Langenaeker, *Chem. Rev.* **103**, 1793 (2003): conceptual DFT review.
+- T. Lu, F. Chen, *J. Comput. Chem.* **33**, 580 (2012); T. Lu, *J. Chem. Phys.* **161**, 082503 (2024): Multiwfn.
+- T. Lu, Q. Chen, in *Conceptual Density Functional Theory*, Wiley-VCH (2022), pp. 631–647: conceptual DFT in Multiwfn.
+- T. Lu, *Multiwfn Manual* 2026.7.10: sections 3.25, 4.5.4, 4.7.3, 4.12.4, 4.22 and Appendix 3.
+
+The full methodological discussion, with the verified Multiwfn workflow, is in
+`docs/superpowers/specs/2026-10-16-fukui-function-design.md`.
 
 ## Formulas and Methods (Solvation box builders)
 
