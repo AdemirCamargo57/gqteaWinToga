@@ -326,6 +326,14 @@ class TestUI:
         assert not list(tmp_path.glob("*.cub"))  # cubes switch off
         assert ui.tabs.current_tab == 1 and ui.run_button.enabled
 
+    def test_status_line_names_the_report_without_its_folder(self, tmp_path):
+        # A full path in the status line widens the window, and Toga never shrinks it back.
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        assert "phenol_N_Fukui.txt" in ui.status_label.text
+        assert str(tmp_path) not in ui.status_label.text
+
     def test_viewer_gets_lobes_or_the_mapped_surface(self, tmp_path):
         ui = make_ui()
         fill(ui, tmp_path)

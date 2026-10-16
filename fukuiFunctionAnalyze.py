@@ -881,7 +881,9 @@ class FukuiFunctionAnalyzeUI:
             self.results = results
             self.summary_output.value = self.analyser.report_text(results, self.written)
             self.tabs.current_tab = 1
-            self.status_label.text = f"Done in {results.elapsed:.1f} s. Report: {self.written[0]}"
+            # File name only: a long path would widen the window, and Toga never shrinks it.
+            self.status_label.text = (f"Done in {results.elapsed:.1f} s. Report: {Path(self.written[0]).name} "
+                                      "(full paths at the end of the report)")
             self.progress_bar.value = 100
             if self.viewer is not None and self.viewer.viewer_window_is_open():
                 self._push_to_viewer()
