@@ -1923,12 +1923,7 @@ Limitations:
 - Fukui isovalue: blank = 0.005 a.u.
 - ρ(N) mapping surface: blank = 0.01 a.u.
 - Grid spacing: blank = 0.25 bohr.
-- Condensed-index source:
-  - *Run Multiwfn (Hirshfeld)* uses Multiwfn.exe, found from the typed path, the `Multiwfnpath` folder or `PATH`;
-  - *Import Multiwfn CDFT.txt* reads a file from your own Multiwfn run (main function 22, option 2);
-  - *Skip condensed indices*.
-
-  If Multiwfn is missing or fails, the run still finishes and a NOTE explains why.
+- Atom-condensed indices: on by default. They are computed inside the tool from Hirshfeld charges of the three states (built-in free-atom densities, elements H–Ar); no external program is needed. Switch them off to save a few seconds. For other elements, or files that use effective core potentials, the run still finishes and a NOTE explains why.
 - Write cube files: on by default.
 
 **Run** checks the three files (same atoms, geometry, basis set and method; N+1 has one electron more, N−1 one fewer), then computes everything. The Results tab shows the report, which is also saved as `<name>_Fukui.txt`. It contains:
@@ -1944,6 +1939,8 @@ Cubes: `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub`, `_dual.cub` (a.u. on a b
 **Show 3D.** Pick a function and a display:
 - *Isosurfaces* at ±isovalue: blue positive, red negative.
 - *Mapped on ρ(N) surface*: colour = value, with extrema markers (cyan minimum, orange maximum).
+
+**Atoms** (Results tab): *Line*, *Ball and stick (CPK)* or *Space-filling (vdW)*, and *Show atom numbers* (1-based, the numbering used in the report). Both apply at once, with or without results. Space-filling spheres are larger than the Fukui lobes and hide them: use that style to judge how exposed a site is, then switch back.
 
 Canvas background and **Export image...** work as in the ESP tool.
 
@@ -3624,9 +3621,17 @@ The densities are the `Total SCF Density` of each `.fchk`, evaluated exactly at 
 
 The grid grows until every face has ρ_N < ρ_surface/10 and |f⁺|, |f⁻| < isovalue/10. Isosurfaces use marching tetrahedra with bisection of the exact function. Surface extrema use Multiwfn's rule: strict comparison against the first and second vertex rings (as in the ESP tool).
 
-**Condensed indices** (Hirshfeld charges q_A from Multiwfn main function 22, option 2):
-f⁻_A = q_A(N−1) − q_A(N), f⁺_A = q_A(N) − q_A(N+1), f⁰_A = [q_A(N−1) − q_A(N+1)]/2, CDD_A = f⁺_A − f⁻_A.
-Each imported row is checked against these relations to ±2×10⁻⁴ (`CDFT.txt` prints 4 decimals). Condensed local softness is s_A = S·f_A.
+**Condensed indices** from Hirshfeld charges q_A of the three states:
+f⁻_A = [q_A(N−q) − q_A(N)]/q, f⁺_A = [q_A(N) − q_A(N+p)]/p, f⁰_A = (f⁺_A + f⁻_A)/2, CDD_A = f⁺_A − f⁻_A (p = q = 1 for ordinary states). Condensed local softness is s_A = S·f_A.
+
+The Hirshfeld charges are computed inside the tool, by the scheme of Multiwfn's population analysis:
+- **Free-atom densities** (`proatomDensities.py`): neutral ground-state atoms H–Ar at UB3LYP/cc-pVQZ, the level Multiwfn uses for its built-in densities with Z ≤ 18 (Multiwfn manual, Appendix 3). Each is spherically averaged and tabulated at 600 radii from 10⁻⁵ to 40 bohr; between radii, log ρ is interpolated linearly. They are regenerated only with `tools/make_proatom_densities.py`, which needs Gaussian.
+- **Weights:** w_A(r) = ρ_A⁰(|r − R_A|) / Σ_B ρ_B⁰(|r − R_B|), and p_A = ∫ w_A(r) ρ(r) dr.
+- **Integration:** a Becke multicentre grid, with 75 Gauss–Chebyshev radial points (r = r_m(1+x)/(1−x), r_m = covalent radius) × 434 Lebedev points per atom. It recovers the electron count to about 10⁻⁵.
+- **Normalization:** populations are scaled to the exact electron count, then q_A = Z_A − p_A, as for Multiwfn's "Final atomic charges".
+- **Agreement with Multiwfn 2026.7.15:** within 1.4×10⁻⁴ e on molecules containing H, Li, B–F and Na–Cl, and within 10⁻⁴ (its printed precision) on the phenol N, N+1 and N−1 states.
+
+**Speed:** with `numba` installed, densities and Becke weights use compiled kernels (`densityNumba.py`), giving about 4× faster densities and the same numbers. Phenol at 0.25 bohr takes about 8 s in total, including the condensed indices.
 
 **Global indices** (Hartree, Multiwfn conventions):
 

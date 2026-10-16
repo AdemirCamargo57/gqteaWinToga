@@ -23,8 +23,8 @@
 #     matplotlib 3.10.8        glfw 2.10.0         PyOpenGL 3.1.10
 #     PyOpenGL-accelerate 3.1.10                   PyMuPDF 1.27.2.2
 # Optional, also verified: numba 0.68.0 (with llvmlite 0.50.0), which
-# accepts numpy 2.4.2 without downgrading it; it speeds up the ESP tool and
-# the solvent-box packing (see the optional block below).
+# accepts numpy 2.4.2 without downgrading it; it speeds up the ESP and Fukui
+# tools and the solvent-box packing (see the optional block below).
 # ======================================================================
 
 # ----------------------------------------------------------------------
@@ -78,13 +78,17 @@ PyOpenGL-accelerate
 PyMuPDF
 
 # ----------------------------------------------------------------------
-# Optional: faster ESP surface tool and solvent-box packing
+# Optional: faster ESP surface and Fukui tools and solvent-box packing
 #
 #     python -m pip install numba
 #
-# Compiles two optional kernels, each used automatically whenever
-# "import numba" succeeds; without numba both tools run their numpy path
+# Compiles three optional kernel modules, each used automatically whenever
+# "import numba" succeeds; without numba the tools run their numpy paths
 # and give the same results:
+#   - densityNumba.py - electron densities on grids (ESP and Fukui tools)
+#     and the Becke weights of the Hirshfeld charges. Agreement 1e-12
+#     relative; about 4x faster (phenol, 222 000 points: 0.20 s instead of
+#     0.83 s).
 #   - espNumba.py - the electrostatic-potential sum of the ESP surface
 #     tool. Agreement 1e-10 a.u., about 5x faster (benzene, 20 000 surface
 #     points: 0.9 s instead of 4.7 s).

@@ -350,7 +350,7 @@ Fukui functions also do not rank *reactivity between molecules* without a global
 
 1. **Input: three Gaussian `.fchk`/`.fch`** (N, N+1, N−1). This reuses `gaussianWavefunction`, which the ESP tool already verified against cubegen.
    - The real-space functions are computed natively. They match Multiwfn's cubes to ≤ 8×10⁻⁶ a.u. [RUN].
-2. **Condensed indices come from Multiwfn, never from a reimplementation.** Hirshfeld needs free-atom reference densities, which the project does not have; a home-made partition would silently disagree with the literature's values. Three sources:
+2. **[Superseded by §9 — kept for the record.]** **Condensed indices come from Multiwfn, never from a reimplementation.** Hirshfeld needs free-atom reference densities, which the project does not have; a home-made partition would silently disagree with the literature's values. Three sources:
    - **(a)** run Multiwfn as an external engine (scripted option 2, verified [RUN]);
    - **(b)** import an existing `CDFT.txt`;
    - **(c)** skip.
@@ -373,6 +373,21 @@ Fukui functions also do not rank *reactivity between molecules* without a global
    - spin-polarized CDFT.
 
 ---
+
+## 9. Revision (2026-10-16, same day): no Multiwfn at run time, Numba, atom view
+
+At the user's request the tool no longer uses Multiwfn. Decision 2 of §7 is reversed. The premise behind it ("Hirshfeld needs free-atom densities the project does not have") was removed by generating those densities. The evidence:
+
+- **Free-atom densities** [RUN]. Multiwfn's built-in densities for Z ≤ 18 are UB3LYP/cc-pVQZ ground-state atoms, sphericalized [M §6.3, Appendix 3, pp. 1123–1124]. The same 18 atoms (H–Ar) were run in G09W and spherically averaged with the project's own fchk reader. They are stored as `proatomDensities.py` and rebuilt by `tools/make_proatom_densities.py`.
+- **Hirshfeld integration** (`hirshfeldCharges.py`) uses a Becke grid of 75 radial × 434 Lebedev points per atom, the values Multiwfn printed [RUN], with populations normalised to N as in Multiwfn's "Final atomic charges".
+- **Agreement with Multiwfn 2026.7.15** [RUN]:
+  - max |Δq| = 1.4×10⁻⁴ e over 8 molecules spanning H, Li, B–F and Na–Cl;
+  - ≤ 10⁻⁴ for phenol N, N+1 and N−1;
+  - condensed f⁻ and f⁺ within 5×10⁻⁵ of `CDFT.txt`.
+- **Scope.** Hirshfeld charges cover elements H–Ar. Heavier elements and ECP files give a NOTE; the real-space results are still produced. Condensed values for N+p/N−q states are now supported, with the same /p and /q formulas as §5.5.
+- **Speed.** `densityNumba.py`, used automatically when Numba is installed and falling back to numpy, makes densities about 4× faster, with agreement ≤ 10⁻¹² of max ρ. Phenol at 0.25 bohr now takes about 8 s for everything, against about 11 s with Multiwfn.
+- **3D view.** Atom style Line / Ball and stick ("CPK", as named in the project's viewer) / Space-filling (vdW), plus 1-based atom numbers, selectable on the Results tab.
+- **Multiwfn's remaining role** is to produce the test references through the dev-only `make_reference.py` scripts. §3 still documents the Multiwfn workflow for users who want its extra quantities.
 
 ## 8. Sources
 
