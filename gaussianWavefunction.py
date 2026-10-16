@@ -212,6 +212,13 @@ class FchkWavefunction:
     dipole: Optional[np.ndarray] = None
     transform: np.ndarray = field(default=None, repr=False)     # fchk -> Cartesian
     cart_density: np.ndarray = field(default=None, repr=False)  # T^T P T
+    total_energy: Optional[float] = None        # Hartree, "Total Energy"
+    method: str = ""                            # line 2, e.g. "RB3LYP"
+    basis_set: str = ""                         # line 2, e.g. "6-31G(d)"
+    n_alpha: int = 0
+    n_beta: int = 0
+    alpha_orbital_energies: Optional[np.ndarray] = None  # Hartree
+    other_densities: List[str] = field(default_factory=list)  # e.g. ["Total MP2 Density"]
 
     @property
     def n_atoms(self) -> int:
@@ -278,6 +285,8 @@ def read_fchk(path) -> FchkWavefunction:
     density = density + density.T - np.diag(np.diag(density))
 
     lines = text.splitlines()
+    line2 = lines[1].split() if len(lines) > 1 else []
+    energies = sections.get("Alpha Orbital Energies")
     wfn = FchkWavefunction(
         path=str(path),
         title=lines[0].strip() if lines else "",
@@ -290,6 +299,14 @@ def read_fchk(path) -> FchkWavefunction:
         charge=int(sections.get("Charge", 0)),
         multiplicity=int(sections.get("Multiplicity", 1)),
         dipole=np.asarray(sections["Dipole Moment"]) if "Dipole Moment" in sections else None,
+        total_energy=float(sections["Total Energy"]) if "Total Energy" in sections else None,
+        method=line2[1] if len(line2) > 1 else "",
+        basis_set=line2[2] if len(line2) > 2 else "",
+        n_alpha=int(sections.get("Number of alpha electrons", 0)),
+        n_beta=int(sections.get("Number of beta electrons", 0)),
+        alpha_orbital_energies=np.asarray(energies, dtype=float) if energies is not None else None,
+        other_densities=sorted(k for k in sections
+                               if k.startswith("Total ") and k.endswith(" Density") and k != DENSITY_SECTION),
     )
     wfn.transform = basis_transform(shells)
     wfn.cart_density = wfn.transform.T @ density @ wfn.transform

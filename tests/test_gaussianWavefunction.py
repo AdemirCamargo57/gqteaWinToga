@@ -100,3 +100,18 @@ class TestDensity:
         w = gw.read_fchk(fchk_path("water_ccpvtz"))
         points, _, _ = load_reference("water_ccpvtz")
         assert np.allclose(gw.electron_density(w, points, chunk=7), gw.electron_density(w, points))
+
+
+class TestCdftFields:
+    """Fields added for the Fukui tool: energy, method/basis, electron counts, orbital energies."""
+
+    def test_energy_method_basis_and_orbitals(self):
+        w = gw.read_fchk(fchk_path("eteno_b3lyp_631g"))
+        assert w.method == "RB3LYP" and w.basis_set == "6-31G"
+        assert w.total_energy == pytest.approx(-78.572035869, abs=1e-8)
+        assert (w.n_alpha, w.n_beta) == (8, 8) and w.other_densities == []
+        assert w.alpha_orbital_energies[w.n_alpha - 1] == pytest.approx(-0.26819427, abs=1e-8)
+
+    def test_open_shell_counts(self):
+        w = gw.read_fchk(fchk_path("ch3_ub3lyp_631gd"))
+        assert w.method == "UB3LYP" and (w.n_alpha, w.n_beta) == (5, 4)
