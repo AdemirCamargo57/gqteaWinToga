@@ -1,0 +1,14 @@
+%chk=ch3scl.chk
+%mem=500MB
+#p B3LYP/6-31G(d) scf=tight
+
+ch3scl Hirshfeld validation
+
+0 1
+C 0.0 0.0 0.0
+S 1.82 0.0 0.0
+Cl 2.174 2.009 0.0
+H -0.363 1.028 0.0
+H -0.363 -0.514 0.890
+H -0.363 -0.514 -0.890
+

@@ -1,0 +1,10 @@
+%chk=nah.chk
+%mem=500MB
+#p B3LYP/6-31G(d) scf=tight
+
+nah Hirshfeld validation
+
+0 1
+Na 0.0 0.0 0.0
+H 0.0 0.0 1.89
+

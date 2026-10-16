@@ -1,0 +1,11 @@
+%chk=mgh2.chk
+%mem=500MB
+#p B3LYP/6-31G(d) scf=tight
+
+mgh2 Hirshfeld validation
+
+0 1
+Mg 0.0 0.0 0.0
+H 0.0 0.0 1.70
+H 0.0 0.0 -1.70
+

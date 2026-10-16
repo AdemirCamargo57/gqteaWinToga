@@ -1,0 +1,10 @@
+%chk=lih.chk
+%mem=500MB
+#p B3LYP/6-31G(d) scf=tight
+
+lih Hirshfeld validation
+
+0 1
+Li 0.0 0.0 0.0
+H 0.0 0.0 1.60
+

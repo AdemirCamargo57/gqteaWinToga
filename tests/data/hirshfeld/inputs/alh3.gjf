@@ -1,0 +1,12 @@
+%chk=alh3.chk
+%mem=500MB
+#p B3LYP/6-31G(d) scf=tight
+
+alh3 Hirshfeld validation
+
+0 1
+Al 0.0 0.0 0.0
+H 1.580000 0.000000 0.0
+H -0.790000 1.368320 0.0
+H -0.790000 -1.368320 0.0
+
