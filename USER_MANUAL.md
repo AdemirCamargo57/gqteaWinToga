@@ -80,6 +80,7 @@
   - [Example 5: Analyze All Solute Bond Distances](#example-5-analyze-all-solute-bond-distances)
   - [Example 6: Analyze All Solute Bond Angles](#example-6-analyze-all-solute-bond-angles)
   - [Example 7: Analyze All Solute Dihedral Angles](#example-7-analyze-all-solute-dihedral-angles)
+  - [Example 8: Read a Fukui Function Figure (phenol, f⁺)](#example-8-read-a-fukui-function-figure-phenol-f)
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
@@ -2492,6 +2493,78 @@ The combined file carries the run metadata and one row per quadruplet (identity 
 ```
 
 Dihedrals are reported as signed degrees using the range `(-180, 180]`. To apply periodic boundaries, also set **Cell lattices a b c**; the header then records `# cell_lengths a b c`.
+
+### Example 8: Read a Fukui Function Figure (phenol, f⁺)
+
+This example explains one figure from **Tools > Analysis of Fukui Functions**: the f⁺ isosurfaces of phenol (C₆H₅OH) at B3LYP/6-31G(d). The three `.fchk` files came from one [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder) job:
+- the neutral molecule, optimized: charge 0, multiplicity 1, 50 electrons;
+- the anion: −1 2, 51 electrons;
+- the cation: +1 2, 49 electrons.
+
+Because the builder names the files `<name>_N.fchk`, `<name>_Np1.fchk` and `<name>_Nm1.fchk`, choosing the N file filled in the other two automatically.
+
+Settings on the *Results* tab:
+- **Function**: `f+`;
+- **Display**: *Isosurfaces (+/- isovalue)*;
+- **Atoms**: *Line*;
+- **Canvas background**: *Black*;
+- Fukui isovalue: 0.005 a.u. (the default).
+
+#### What the figure shows
+
+f⁺(r) = ρ(N+1) − ρ(N) is the electron density of the anion minus that of the neutral molecule, both at the same geometry. It shows where an **added electron goes**, so its large positive regions mark the sites most susceptible to **nucleophilic attack**.
+
+| Element of the figure | Meaning |
+|---|---|
+| **Blue** lobes | f⁺ ≥ +0.005 a.u.: the density *increases* when the electron is added. |
+| **Red** lobes | f⁺ ≤ −0.005 a.u.: the density *decreases* (the other electrons relax away). |
+| Colour bar `−5.000e-3 … 5.000e-3` | Only the ±isovalue thresholds. In this mode each lobe has a single colour, so the intermediate colours of the bar are not used. |
+| Axis triad | x to the right, y up, z out of the screen. Phenol lies in the screen (xy) plane, so the ring is seen face-on. |
+| Thin lines | The bonds (*Line* atom style). Here the OH group is at the upper right. |
+
+#### How to read the lobes
+
+1. **Four ring carbons carry large blue lobes: the two *ortho* and the two *meta* carbons.**
+   - The carbon bearing OH (*ipso*) and the one opposite it (*para*) have almost no f⁺; only a small red dot sits near the para carbon.
+   - This is the shape of phenol's lowest unoccupied orbital (LUMO). It is a π* orbital whose nodal plane passes through the ipso and para carbons, and the added electron mostly enters it.
+2. **The lobes are π lobes, above and below the ring plane.**
+   - Seen face-on, the lobe above the plane and the one below overlap on top of each carbon, so each looks like a single blob.
+   - Rotate the view to look along the ring plane (edge-on) to see both halves.
+3. **The red regions are relaxation, not a second site.**
+   - The added π electron repels the other electrons, so the density falls slightly beside the ring carbons and around the oxygen.
+   - These changes are smaller than the blue lobes.
+4. **The small blue spheres on the hydrogens** are a minor spill-over of the added density onto the H atoms.
+
+The condensed (per-atom) indices in the report put numbers on this picture; scroll the *Results* tab to the condensed table. As a reference, the verification run of the same calculation in Gaussian 16 gave:
+
+| | ipso C (bears OH) | ortho C | meta C | para C | O |
+|---|---|---|---|---|---|
+| f⁺ | lower | 0.128, 0.123 | 0.128, 0.131 | lower | lower |
+| f⁻ | 0.100 | 0.092 (one ortho C) | lower | 0.144 | **0.146** |
+
+"lower" means the atom is not among the four largest values of that function. That run used the atom order of `tests/data/fukui/inputs/phenol_N.gjf`: C1 para, C2/C6 meta, C3/C5 ortho, C4 ipso, O12. Check the atom numbers of your own file (*Show atom numbers*) before comparing.
+
+#### The global indices in the report
+
+| Quantity | Value | Meaning |
+|---|---|---|
+| E(N), E(N+1), E(N−1) | −307.464861, −307.383596, −307.163412 Hartree | total energies of the three states |
+| Vertical IP = E(N−1) − E(N) | 0.301449 Ha = 8.20 eV | energy to remove an electron |
+| Vertical EA = E(N) − E(N+1) | **−0.081265 Ha = −2.21 eV** | **negative**: the anion lies *above* the neutral molecule |
+| Electronegativity χ = (I + A)/2; chemical potential μ = −χ | 2.996 eV; −2.996 eV | |
+| Hardness η = I − A | 0.382714 Ha = 10.41 eV | Multiwfn convention, without the factor ½ |
+
+#### Cautions
+
+- **The negative electron affinity limits how literally f⁺ can be read.**
+  - Phenol does not bind an extra electron in the gas phase. In this calculation the anion holds together only because 6-31G(d) has no diffuse functions that would let the electron leave.
+  - f⁺ is still a fair picture of the π* orbital that accepts an electron, and that is how it is normally used, but treat it qualitatively.
+  - Adding diffuse functions is not a simple fix: with B3LYP-type functionals the N+1 density then tends to become over-diffuse. The analysis tool writes a NOTE when the basis has diffuse functions; see *Formulas and Methods (Fukui Function tool)*, subsection 13.
+- **For phenol, f⁻ and the dual descriptor are usually more informative than f⁺.**
+  - Phenol is an electron-rich ring that reacts mainly with electrophiles. Set **Function** to `f-` to see where electrophiles attack: the condensed f⁻ above is largest on O and on the para carbon, then on the ipso and ortho carbons, in line with OH directing substitution to the ortho and para positions.
+  - `DD` (the dual descriptor, f⁺ − f⁻) shows both in one figure: positive where nucleophiles attack, negative where electrophiles attack.
+- **Show extrema markers** has no effect in the *Isosurfaces* display. The markers appear with *Mapped on ρ(N) surface*.
+- The mapping surface used in this run was ρ(N) = 0.001 a.u. (shown as `surface` in the report header). The default and recommended value is 0.01 a.u., because the Fukui functions are very small on the 0.001 surface. Use 0.01 when you switch to the mapped display.
 
 ## Formulas and Methods (All Bond / Angle / Dihedral tools)
 
