@@ -55,6 +55,7 @@ from gqteaMDinputBuilder import GqteaMDInputBuilderUI
 from MolGeomComparator import MolGeomComparatorUI
 from electrostaticSurfacePotential import ElectrostaticSurfacePotentialUI
 from fukuiFunctionAnalyze import FukuiFunctionAnalyzeUI
+from fukuiInputBuilder import FukuiInputBuilderUI
 
 class gqteaWin(toga.App):
     def startup(self):
@@ -112,6 +113,7 @@ class gqteaWin(toga.App):
             ("cp.x Input Builder", CPInputBuilderUI),
             ("ORCA Input Builder", ORCAInputBuilderUI),
             ("gqteaMD Input Builder", GqteaMDInputBuilderUI),
+            ("Gaussian Fukui Input Builder", FukuiInputBuilderUI),
             ("Vanderbilt runatom.x Input Builder", RunatomGenerator),
         ]
 

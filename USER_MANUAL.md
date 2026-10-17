@@ -38,6 +38,7 @@
     - [Quantum ESPRESSO cp.x Input Builder](#quantum-espresso-cpx-input-builder)
     - [ORCA Input Builder](#orca-input-builder)
     - [gqteaMD Input Builder](#gqteamd-input-builder)
+    - [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder)
     - [Vanderbilt runatom.x Input Builder](#vanderbilt-runatomx-input-builder)
   - [Structural Tools](#structural-tools)
     - [Radial Distribution Function](#radial-distribution-function)
@@ -101,6 +102,7 @@
   - [Plot windows do not appear](#plot-windows-do-not-appear)
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
   - [ESP tool messages](#esp-tool-messages)
+  - [Fukui input builder messages](#fukui-input-builder-messages)
   - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
 - [Version, Contributors, and License](#version-contributors-and-license)
 
@@ -895,6 +897,75 @@ Common settings:
 - Time step, number of steps, temperature, output intervals, restart behavior, and force-field sections.
 - For xTB force provider, **OMP threads** writes `omp_num_threads` to the TOML so gqteaMD can set `OMP_NUM_THREADS` before xTB runs.
 - Optional UFF or classical parameter blocks.
+
+#### Gaussian Fukui Input Builder
+
+Use **Inputs > Gaussian Fukui Input Builder** to prepare the three Gaussian calculations that [Tools > Analysis of Fukui Functions](#analysis-of-fukui-functions) needs. The input is written for **Gaussian 16 (Rev. C.01) under Linux**, either in WSL or on a computing cluster. It is **one** input file with three linked jobs, separated by `--Link1--`:
+
+| Job | State | Calculation | Charge | Multiplicity | Checkpoints |
+|---|---|---|---|---|---|
+| 1 | N | `Opt` | Q | M | `%Chk=<name>_N.chk` |
+| 2 | N+p | single point, `Geom=Check Guess=Read` | Q − p | M₊ | `%OldChk=<name>_N.chk`, `%Chk=<name>_Np1.chk` |
+| 3 | N−q | single point, `Geom=Check Guess=Read` | Q + q | M₋ | `%OldChk=<name>_N.chk`, `%Chk=<name>_Nm1.chk` |
+
+Job 1 optimizes the N state from the geometry you give. Jobs 2 and 3 read the **optimized** geometry (and, by default, the orbitals as the initial guess) from `<name>_N.chk`. The ions are **not** re-optimized, because the Fukui functions are derivatives at fixed nuclei. Gaussian copies the `%OldChk` file into each job's own `%Chk` before the job starts, so `<name>_N.chk` keeps the optimized N state. All jobs share the same method, basis set and extra keywords.
+
+**What you must supply.** Some values cannot be safely defaulted:
+- the starting geometry;
+- the charge of the N state;
+- **all three spin multiplicities** (N, N+p, N−q). The builder never assumes a spin state. A blank multiplicity stops Preview and Save with a message that names the state and lists the values its electron count allows;
+- `%Mem` and `%NProcShared` for the machine that runs Gaussian;
+- the output folder.
+
+**Setup tab.**
+
+| Field | Default | Notes |
+|---|---|---|
+| Job name | name of the loaded file (`molecule` otherwise) | Letters, digits, `.`, `_`, `-`; it becomes the file names. Loading `<name>_N.fchk` gives `<name>`. |
+| Output folder | folder of the loaded file | Must exist. |
+| `%Mem` | `2GB` | Integer plus a unit (`KB`, `MB`, `GB`, `TB`, `KW`, …). A bare number is refused: Gaussian would read it as 8-byte *words*. |
+| `%NProcShared` | 4 | Cores of the WSL machine or the cluster node. |
+| Print level | `#P` | `#P`, `#`, `#N`, `#T`. |
+| Method | `B3LYP` | No R/U prefix is needed: Gaussian uses R for a closed-shell state and U for an open-shell one. An `R` prefix with an open-shell state warns. |
+| Basis set | `6-31G(d)` | A diffuse basis (`+`, `aug-`) warns; see the analysis tool's caveats. |
+| Extra keywords (all jobs) | `SCF=Tight NoSymm` | `NoSymm` keeps one orientation in all three jobs. |
+| Optimization (job 1) | `Opt` | One `Opt` keyword towards a minimum, e.g. `Opt=Tight` or `Opt=(Tight,CalcFC)`. `TS`, `QST2`/`QST3`, `ModRedundant`, `ReadFC` and options that read input are refused. |
+
+The **Route** lines show the route of job 1 and of jobs 2–3 as they will be written.
+
+Some keywords are **refused** in *Extra keywords*:
+- `Opt` (it belongs in the Optimization field, so that only the N state is optimized);
+- `IRC`, `Scan`;
+- `Geom=` and `Guess=` (the builder writes them for the ions);
+- `Units=` (the coordinates are written in Å);
+- `Gen`/`GenECP`, `ExtraBasis`, `Pseudo`/ECPs, and any option that reads an extra input section.
+
+Others only produce a **warning**:
+- `Freq` (it would run on all three jobs and is not needed);
+- post-SCF methods and `TD` (the analysis reads only the `Total SCF Density`);
+- diffuse basis sets.
+
+**Molecule & states tab.**
+- **Load geometry...** reads `.xyz`, `.gjf`/`.com`, `.fchk`/`.fch`, `.pdb`, `.mol`, `.mol2` and `.hin`. A `.gjf` or `.fchk` also sets the charge and multiplicity of the N state; the ion multiplicities are cleared. You can also paste or type `Element x y z` lines in Å; an element symbol, a numbered label (`C1`) or an atomic number is accepted. Z-matrices, freeze flags and fragment tags are refused, with the line number in the message. This is the **starting** geometry: job 1 optimizes it.
+- **Charge of the N state**: blank = 0.
+- **Multiplicity of the N state, of N+p and of N−q**: required. For ordinary organic molecules the lowest states are usually 1, 2, 2 for a closed-shell neutral and 2, 1, 1 for a neutral radical, but you must enter them. For transition-metal systems, compute several spin states of each ion and use the lowest in energy.
+- **p / q**: 1 for ordinary f⁺/f⁻. Larger values are for degenerate frontier orbitals (see *Formulas and Methods (Fukui Function tool)*, subsection 5).
+- The **states** lines show the charge, electron count, `.chk` name and multiplicity of each state as you type. A missing multiplicity shows as `?` with the values allowed; an impossible one is flagged.
+- **Start the ions from the optimized N-state orbitals (Guess=Read)**: on by default. When off, the ions get Gaussian's default initial guess; `Geom=Check` is written either way.
+
+**Buttons.**
+- **Preview** shows the input on the *Preview* tab, with any warnings.
+- **Save input** writes `<name>_fukui.gjf` and `<name>_formchk.sh`, asking before it replaces existing files. Both files use relative file names and Linux (LF) line endings. The *Preview* tab then lists the commands to run.
+
+**Typical workflow.**
+1. Load or paste the starting geometry, enter the three multiplicities, and check the Setup tab.
+2. Press **Save input**.
+3. In a Linux shell with Gaussian 16 set up, go to the folder that holds the input. Under WSL, `C:\jobs\phenol` is `/mnt/c/jobs/phenol`. On a cluster, copy the folder there first.
+4. Run `g16 < <name>_fukui.gjf > <name>_fukui.log`, or submit the job through the cluster's queue.
+5. Run `bash <name>_formchk.sh`. It runs `formchk <name>_N.chk <name>_N.fchk`, and the same for the other two, and reports any missing checkpoint.
+6. Copy the three `.fchk` files back if they were made on a cluster. In *Tools > Analysis of Fukui Functions*, choose `<name>_N.fchk`. The other two files are filled in automatically, and the analysis checks that the three states share the same geometry, basis set and method.
+
+If one linked job fails, Gaussian does not run the jobs after it. The script then reports which `.chk` is missing; the reason is in the `.log` file.
 
 #### Vanderbilt runatom.x Input Builder
 
@@ -1923,8 +1994,10 @@ Limitations:
 
 3. Run `formchk` on each `.chk`.
 
+Steps 1–3 can be prepared by [Inputs > Gaussian Fukui Input Builder](#gaussian-fukui-input-builder): one Gaussian 16 linked job (optimization of N, then `Geom=Check` single points on N+1 and N−1) plus a formchk script.
+
 **Setup tab.**
-- The three `.fchk` files and an optional output folder (blank = next to the N file).
+- The three `.fchk` files and an optional output folder (blank = next to the N file). Choosing a `<name>_N.fchk` with **Browse** fills in `<name>_Np1.fchk` and `<name>_Nm1.fchk` when those files exist and the fields are empty (the names the input builder writes).
 - Fukui isovalue: blank = 0.005 a.u.
 - ρ(N) mapping surface: blank = 0.01 a.u.
 - Grid spacing: blank = 0.25 bohr.
@@ -4508,6 +4581,19 @@ appear as `NOTE:` lines at the end of the results summary.
 | `NOTE: cubegen was not found; …` / `NOTE: cubegen failed: …` | The cubegen engine was chosen but cubegen is missing, or it failed on this file (for example a file written by a newer Gaussian than the cubegen). | Nothing required: the built-in engine was used. Fix the cubegen path to use cubegen. |
 | `Could not write …` | The output folder is read-only or missing. | Choose another output folder. |
 | `The 3D viewer could not be opened` | OpenGL/GLFW problem, as for the 3D molecular viewer. | See [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view). |
+
+### Fukui input builder messages
+
+| Message | Cause | What to do |
+|---|---|---|
+| `%Mem = '2000': a number without a unit means 8-byte words` | A memory value without a unit. | Type e.g. `2GB` or `500MB`. |
+| `Keyword Opt: Optimization keywords go in the 'Optimization (job 1)' field …` | `Opt` was typed in *Extra keywords*, which apply to all three jobs. | Put it (with its options) in *Optimization (job 1)*. |
+| `The N+1 state: enter its spin multiplicity; it is not assumed (51 electrons allow 2, 4, 6, ...)` | A multiplicity field is blank. | Enter the multiplicity of the lowest-energy spin state of that state. |
+| `The N+1 state: multiplicity 1 is impossible (…)` | The multiplicity does not fit the electron count (even count: 1, 3, …; odd: 2, 4, …). | Correct it. |
+| `<name>_Np1.chk not found: did that job run?` (from `<name>_formchk.sh`) | Gaussian stopped before that linked job (an earlier job failed, e.g. the optimization did not converge). | Read the end of the `.log` file, fix the cause and rerun. |
+| `formchk not found: set up Gaussian 16 first` | The shell has no Gaussian environment. | `module load gaussian` on a cluster, or source `$g16root/g16/bsd/g16.profile`. |
+| `Error parsing percent card` (in the Gaussian `.log`) | The input was run with Gaussian 09 Rev. A.02, which does not know `%OldChk`. | Run it with Gaussian 16 (or a later Gaussian 09 revision). |
+| `$'\r': command not found` when running the `.sh` | The script was edited and saved with Windows line endings. | Save the input again from the builder, or run `dos2unix <name>_formchk.sh`. |
 
 ### Packaged Windows executable cannot find GLFW
 

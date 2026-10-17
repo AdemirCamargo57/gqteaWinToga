@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -34,6 +33,7 @@ import molecularSurface as ms
 from coordinateConverter import BOHR_RADIUS_ANGSTROM
 from espIntegrals import HARTREE_TO_KCAL_MOL
 from espViewer import COLOUR_UNITS, ESPSurfaceViewer, SurfaceMarker, UNIT_AU, symmetric_range
+from gaussianUtilities import find_gaussian_utility
 from help import AtomicData, HelpGqteaWin
 from molecularViewer import save_canvas_image
 
@@ -100,20 +100,7 @@ def resolve_output_dir(fchk_path: str, chosen: Optional[str]) -> str:
 # ----------------------------------------------------------------------
 def find_cubegen(explicit: Optional[str] = None) -> Optional[str]:
     """Path of Gaussian's cubegen: explicit, $GAUSS_EXEDIR, PATH, usual folders."""
-    candidates = []
-    if explicit and explicit.strip():
-        candidates.append(explicit.strip())
-    exedir = os.environ.get("GAUSS_EXEDIR")
-    if exedir:
-        candidates += [os.path.join(d, "cubegen.exe") for d in exedir.split(os.pathsep)]
-    which = shutil.which("cubegen")
-    if which:
-        candidates.append(which)
-    candidates += list(DEFAULT_CUBEGEN_LOCATIONS)
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return None
+    return find_gaussian_utility("cubegen", explicit)
 
 
 def cubegen_potential(fchk_path: str, points_bohr: np.ndarray, cubegen: str,

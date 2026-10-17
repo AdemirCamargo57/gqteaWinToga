@@ -288,6 +288,26 @@ class StubViewer:
 
 
 class TestUI:
+    def test_choosing_an_n_file_fills_in_the_ion_files(self, tmp_path):
+        import shutil
+        for tag, source in (("N", N), ("Np1", PLUS), ("Nm1", MINUS)):
+            shutil.copy(source, tmp_path / f"phenol_{tag}.fchk")
+        ui = make_ui()
+        ui.n_input.value = str(tmp_path / "phenol_N.fchk")
+        ui.fill_sibling_states()
+        assert ui.plus_input.value == str(tmp_path / "phenol_Np1.fchk")
+        assert ui.minus_input.value == str(tmp_path / "phenol_Nm1.fchk")
+
+    def test_auto_fill_keeps_typed_ion_files(self, tmp_path):
+        import shutil
+        for tag, source in (("N", N), ("Np1", PLUS), ("Nm1", MINUS)):
+            shutil.copy(source, tmp_path / f"phenol_{tag}.fchk")
+        ui = make_ui()
+        ui.n_input.value = str(tmp_path / "phenol_N.fchk")
+        ui.plus_input.value = "mine.fchk"
+        ui.fill_sibling_states()
+        assert ui.plus_input.value == "mine.fchk" and ui.minus_input.value.endswith("phenol_Nm1.fchk")
+
     def test_missing_files_are_an_input_error(self):
         ui = make_ui()
         asyncio.run(ui.workflow(None))

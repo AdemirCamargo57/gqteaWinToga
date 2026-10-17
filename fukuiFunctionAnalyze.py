@@ -42,6 +42,7 @@ import hirshfeldCharges as hc
 import molecularSurface as ms
 from coordinateConverter import BOHR_RADIUS_ANGSTROM
 from espViewer import ESPSurfaceViewer, SurfaceMarker, UNIT_AU
+from fukuiInput import sibling_state_files
 from help import AtomicData, HelpGqteaWin
 from molecularViewer import save_canvas_image
 
@@ -683,6 +684,14 @@ class FukuiFunctionAnalyzeUI:
 
     async def browse_n(self, widget):
         await self._browse_into(self.n_input, "Formatted checkpoint of the N state", ["fchk", "fch"])
+        self.fill_sibling_states()
+
+    def fill_sibling_states(self):
+        """<stem>_N.fchk chosen: fill the empty N+1 / N-1 fields with the Fukui input builder's names."""
+        plus, minus = sibling_state_files((self.n_input.value or "").strip())
+        for widget, path in ((self.plus_input, plus), (self.minus_input, minus)):
+            if path is not None and not (widget.value or "").strip():
+                widget.value = str(path)
 
     async def browse_plus(self, widget):
         await self._browse_into(self.plus_input, "Formatted checkpoint of the N+1 state", ["fchk", "fch"])
