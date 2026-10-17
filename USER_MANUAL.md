@@ -116,7 +116,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.8.0 Molecular Analysis Toolkit
+gQTEA-0.8.5 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -4681,16 +4681,18 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.8.0 Molecular Analysis Toolkit
+gQTEA-0.8.5 Molecular Analysis Toolkit
 ```
 
-Version 0.8.0 (October 2026) adds the [Analysis of Fukui Functions](#analysis-of-fukui-functions) tool. From the N, N+1 and N−1 Gaussian `.fchk` files of one molecule it computes:
+Version 0.8.5 (October 2026) adds the [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder) on the Inputs tab. It writes the Gaussian 16 job that the Fukui analysis needs:
 
-- the Fukui functions f⁺, f⁻ and f⁰ and the dual descriptor, written as reports and cube files;
-- the global indices;
-- atom-condensed indices from built-in Hirshfeld charges, with no external program needed.
+- one input file with three linked jobs: an optimization of the N state, then single points on N+1 and N−1 that read the optimized geometry from its checkpoint (`%OldChk` + `Geom=Check`), each into its own `.chk`;
+- charges set from the electron count; all three spin multiplicities must be entered, none is assumed;
+- a `formchk` script that converts the checkpoints to the `.fchk` files the analysis tool reads.
 
-Results can be viewed in 3D as isosurfaces or mapped on the molecular surface, with a choice of atom style and atom numbering. With `numba` installed, a new compiled density kernel also speeds up the ESP tool's density grid.
+The files use relative names and Linux line endings, for Gaussian 16 under WSL or on a cluster. In *Analysis of Fukui Functions*, choosing the builder's `<name>_N.fchk` now fills in the N+1 and N−1 files. The manual gains [Example 8](#example-8-read-a-fukui-function-figure-phenol-f), which explains how to read an f⁺ figure of phenol.
+
+Version 0.8.0 (October 2026) added the [Analysis of Fukui Functions](#analysis-of-fukui-functions) tool. From the N, N+1 and N−1 `.fchk` files it computes f⁺, f⁻, f⁰ and the dual descriptor, the global indices and built-in Hirshfeld condensed indices, with 3D views, atom styles and numbering, and a compiled density kernel when `numba` is installed.
 
 Version 0.7.5 (October 2026) added the Electrostatic Surface Potential (ESP) tool and the solvation-box improvements: faster packing, optional periodic pre-optimization, system properties (atoms, electrons, spin multiplicity) and a live construction view.
 
