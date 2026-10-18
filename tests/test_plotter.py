@@ -12,7 +12,9 @@ The JSON accepted here is the *plot manifest* every gQTEA analysis tool already
 writes for the interactive viewer (see ``displayPlots.save_plots``), so a file
 produced by any tool in the suite can be re-opened and re-plotted later.
 """
+import asyncio
 import json
+import os
 
 import pytest
 
@@ -745,6 +747,7 @@ class TestSectionVisibility:
         PlotterBase.GQTEAMD_PLOT_TYPE: {"gqtea_column_box"},
         PlotterBase.JSON_PLOT_TYPE: set(),
         PlotterBase.TABLE_PLOT_TYPE: {"table_options_box"},
+        PlotterBase.BAR_PLOT_TYPE: {"table_options_box"},
     }
 
     @pytest.mark.parametrize("plot_type", list(SECTIONS))
@@ -776,3 +779,260 @@ class TestSectionVisibility:
             ui.plot_type_selection.value = plot_type
             ui.on_plot_type_change(ui.plot_type_selection)
         assert all(len(slot.children) <= 1 for slot in ui._section_slots.values())
+
+
+# --------------------------------------------------------------------------- #
+# Bar-chart plot type: column 1 = categories (text or numbers), grouped bars   #
+# --------------------------------------------------------------------------- #
+FUKUI_FIXTURE = os.path.join(os.path.dirname(__file__), "data", "plotter",
+                             "fukui_condensed_phenol.txt")
+
+
+def _bar_table():
+    return PlotterBase.parse_table_text(
+        "atom q f+ f-\nC1 -0.04 0.13 0.07\nO7 -0.20 0.05 0.15\n",
+        categorical_x=True)
+
+
+class TestParseBarTable:
+    def test_text_labels_in_column_1(self):
+        table = _bar_table()
+        assert table["x"] == ["C1", "O7"]
+        assert table["xlabel"] == "atom"
+        assert table["labels"] == ["q", "f+", "f-"]
+        assert table["ys"] == [[-0.04, -0.20], [0.13, 0.05], [0.07, 0.15]]
+        assert table["categorical_x"] is True
+
+    def test_numeric_column_1_keeps_the_text_as_written(self):
+        table = PlotterBase.parse_table_text("1 10 20\n2.50 30 40\n1e3 5 6\n",
+                                             categorical_x=True)
+        assert table["x"] == ["1", "2.50", "1e3"]
+        assert table["ys"] == [[10.0, 30.0, 5.0], [20.0, 40.0, 6.0]]
+        assert table["has_header"] is False
+        assert table["xlabel"] == "Column 1"
+
+    def test_numeric_parser_is_unchanged(self):
+        table = PlotterBase.parse_table_text("1 10\n2 20\n")
+        assert table["x"] == [1.0, 2.0]
+        assert table["categorical_x"] is False
+
+    def test_title_line_before_the_header_is_ignored(self):
+        text = "My results, a title\nlabel a b\nX 1 2\nY 3 4\n"
+        table = PlotterBase.parse_table_text(text, categorical_x=True)
+        assert table["labels"] == ["a", "b"]
+        assert table["x"] == ["X", "Y"]
+
+    def test_csv_and_comments(self):
+        text = "# comment\nsite, alpha, beta\nN1, 1, 2   # inline\n\nC2, 3, 4\n"
+        table = PlotterBase.parse_table_text(text, categorical_x=True)
+        assert table["x"] == ["N1", "C2"]
+        assert table["labels"] == ["alpha", "beta"]
+
+    def test_text_in_a_value_column_after_data_names_the_line(self):
+        with pytest.raises(ValueError, match="Line 3.*columns 2"):
+            PlotterBase.parse_table_text("C1 1 2\nC2 3 4\nC3 x 5\n",
+                                         categorical_x=True)
+
+    def test_ragged_row_names_the_line(self):
+        with pytest.raises(ValueError, match="Line 3.*2 values.*3 columns"):
+            PlotterBase.parse_table_text("C1 1 2\nC2 3 4\nC3 5\n",
+                                         categorical_x=True)
+
+    def test_label_only_line_inside_data_is_ragged(self):
+        with pytest.raises(ValueError, match="Line 2.*1 values.*3 columns"):
+            PlotterBase.parse_table_text("C1 1 2\nC2\n", categorical_x=True)
+
+    def test_no_data_rows(self):
+        with pytest.raises(ValueError, match="no data rows"):
+            PlotterBase.parse_table_text("atom a b\n# c\n", categorical_x=True)
+
+    def test_non_finite_rejected(self):
+        with pytest.raises(ValueError, match="Line 1.*finite"):
+            PlotterBase.parse_table_text("C1 inf 2\n", categorical_x=True)
+
+    def test_header_column_count_mismatch(self):
+        with pytest.raises(ValueError, match="header.*2 names.*3 columns"):
+            PlotterBase.parse_table_text("atom a\nC1 1 2\n", categorical_x=True)
+
+    def test_load_bar_table_file(self, tmp_path):
+        path = tmp_path / "bars.txt"
+        path.write_text("atom a b\nC1 1 2\n", encoding="utf-8")
+        table = PlotterBase.load_table_file(str(path), categorical_x=True)
+        assert table["x"] == ["C1"]
+
+
+class TestFukuiExampleFile:
+    """The representative input: a Fukui-tool condensed-index table."""
+
+    def test_reads_every_atom_and_column(self):
+        table = PlotterBase.load_table_file(FUKUI_FIXTURE, categorical_x=True)
+        assert table["x"][0] == "C1" and table["x"][-1] == "H13"
+        assert len(table["x"]) == 13
+        assert table["xlabel"] == "atom"
+        assert table["labels"] == ["q(N)", "q(N+1)", "q(N-1)", "f-", "f+",
+                                   "f0", "CDD", "s-", "s+", "s0"]
+        assert table["ys"][4][0] == pytest.approx(0.1285)  # f+ on C1
+        assert table["ys"][6][2] == pytest.approx(-0.0480)  # CDD on C3
+
+    def test_the_numeric_table_type_rejects_it(self):
+        # Line plots need a numeric x; only the bar type reads text labels.
+        with pytest.raises(ValueError):
+            PlotterBase.load_table_file(FUKUI_FIXTURE)
+
+    def test_fukui_selection_renders_grouped_bars(self):
+        import matplotlib.pyplot as plt
+        from plotViewer import build_figures
+        table = PlotterBase.load_table_file(FUKUI_FIXTURE, categorical_x=True)
+        include = [label in ("f-", "f+", "f0") for label in table["labels"]]
+        figure = PlotterBase.bar_table_to_figure(table, include=include)
+        PlotterBase.validate_plot_manifest([figure])
+        build_figures([figure])
+        axes = plt.gcf().axes[0]
+        assert len(axes.patches) == 3 * 13
+        assert [t.get_text() for t in axes.get_legend().get_texts()] == ["f-", "f+", "f0"]
+        assert [t.get_text() for t in axes.get_xticklabels()][:2] == ["C1", "C2"]
+        plt.close("all")
+
+
+class TestBarTableToFigure:
+    def test_all_columns_by_default(self):
+        figure = PlotterBase.bar_table_to_figure(_bar_table(), title="t.txt")
+        assert figure["type"] == "bars"
+        assert figure["categories"] == ["C1", "O7"]
+        assert [g["label"] for g in figure["groups"]] == ["q", "f+", "f-"]
+        assert figure["title"] == "t.txt"
+        assert figure["xlabel"] == "atom" and figure["ylabel"] == "Value"
+        PlotterBase.validate_plot_manifest([figure])
+
+    def test_selected_columns_only_in_column_order(self):
+        figure = PlotterBase.bar_table_to_figure(_bar_table(),
+                                                 include=[False, True, True])
+        assert [g["label"] for g in figure["groups"]] == ["f+", "f-"]
+        assert figure["groups"][1]["values"] == [0.07, 0.15]
+
+    def test_single_column_selected(self):
+        figure = PlotterBase.bar_table_to_figure(_bar_table(),
+                                                 include=[True, False, False])
+        assert len(figure["groups"]) == 1
+        PlotterBase.validate_plot_manifest([figure])
+
+    def test_custom_and_blank_axis_labels(self):
+        figure = PlotterBase.bar_table_to_figure(_bar_table(), xlabel="Atom",
+                                                 ylabel="  ")
+        assert figure["xlabel"] == "Atom" and figure["ylabel"] == "Value"
+
+    def test_no_error_bars_and_no_line(self):
+        figure = PlotterBase.bar_table_to_figure(_bar_table())
+        assert "line" not in figure
+        assert all("errors" not in g for g in figure["groups"])
+
+    def test_nothing_selected_rejected(self):
+        with pytest.raises(ValueError, match="at least one column"):
+            PlotterBase.bar_table_to_figure(_bar_table(),
+                                            include=[False, False, False])
+
+    def test_wrong_number_of_flags_rejected(self):
+        with pytest.raises(ValueError, match="3 data columns.*2 plot selections"):
+            PlotterBase.bar_table_to_figure(_bar_table(), include=[True, False])
+
+    def test_numeric_categories_render(self):
+        import matplotlib.pyplot as plt
+        from plotViewer import build_figures
+        table = PlotterBase.parse_table_text("x a b\n1 1 2\n2 3 -4\n5 5 6\n",
+                                             categorical_x=True)
+        figure = PlotterBase.bar_table_to_figure(table)
+        build_figures([figure])
+        axes = plt.gcf().axes[0]
+        assert len(axes.patches) == 6
+        assert [t.get_text() for t in axes.get_xticklabels()] == ["1", "2", "5"]
+        plt.close("all")
+
+    def test_static_fallback_draws_the_bars(self, tmp_path):
+        from plotter import PlotterUI
+        ui = PlotterUI.__new__(PlotterUI)
+        ui.output_dir = str(tmp_path)
+        shown = []
+        ui.show_plot = shown.append
+        figure = PlotterBase.bar_table_to_figure(_bar_table())
+        asyncio.run(ui.render_figures_static([figure]))
+        assert len(shown) == 1 and os.path.getsize(shown[0]) > 0
+
+    def test_describe_bar_table(self):
+        text = PlotterBase.describe_table(_bar_table())
+        assert "2 data rows" in text
+        assert "3 bar series" in text
+        assert "C1" in text
+
+
+class TestBarModeWiring:
+    def test_five_plot_types_are_distinct(self):
+        types = {PlotterBase.CPMD_PLOT_TYPE, PlotterBase.GQTEAMD_PLOT_TYPE,
+                 PlotterBase.JSON_PLOT_TYPE, PlotterBase.TABLE_PLOT_TYPE,
+                 PlotterBase.BAR_PLOT_TYPE}
+        assert len(types) == 5
+
+    def test_bar_type_is_detected(self):
+        obj = PlotterBase.__new__(PlotterBase)
+        obj.plot_type_selection = FakeWidget(value=PlotterBase.BAR_PLOT_TYPE)
+        assert obj.is_bar_plot_type()
+        assert not obj.is_table_plot_type()
+        assert not obj.is_json_plot_type()
+        assert not obj.is_gqtea_plot_type()
+
+    @staticmethod
+    def _bar_ui():
+        ui = TestControlSwitching.bare_ui()
+        ui.table_data = None
+        ui.plot_type_selection.value = PlotterBase.BAR_PLOT_TYPE
+        ui.on_plot_type_change(ui.plot_type_selection)
+        return ui
+
+    def test_bar_mode_disables_every_other_option(self):
+        ui = self._bar_ui()
+        for switch in ui.get_cpmd_switches():
+            assert switch.enabled is False and switch.value is False
+        for widget in (ui.text_input_time_step, ui.unit_selection,
+                       ui.gqtea_x_axis_label, ui.gqtea_y_columns_label):
+            assert widget.enabled is False
+        assert "bar" in ui.file_label.text.lower()
+        assert ui.table_xlabel_input.enabled is True
+        assert ui.table_ylabel_input.enabled is True
+        assert "bar" in ui.table_styles_label.text.lower()
+
+    def test_bar_mode_shows_only_the_table_options_section(self):
+        ui = self._bar_ui()
+        shown = {name for name, slot in ui._section_slots.items()
+                 if getattr(ui, name) in slot.children}
+        assert shown == {"table_options_box"}
+
+    def test_switching_to_the_line_table_restores_its_heading(self):
+        ui = self._bar_ui()
+        ui.plot_type_selection.value = PlotterBase.TABLE_PLOT_TYPE
+        ui.on_plot_type_change(ui.plot_type_selection)
+        assert "line style" in ui.table_styles_label.text.lower()
+
+    def test_changing_type_clears_the_loaded_bar_table(self):
+        ui = self._bar_ui()
+        ui.table_data = _bar_table()
+        ui.plot_type_selection.value = PlotterBase.CPMD_PLOT_TYPE
+        ui.on_plot_type_change(ui.plot_type_selection)
+        assert ui.table_data is None
+
+    def test_bar_plot_hands_a_bars_manifest_to_the_viewer(self, monkeypatch):
+        import plotter
+        ui = self._bar_ui()
+        ui.table_data = _bar_table()
+        ui.energy_file = "condensed.txt"
+        ui.table_column_switches = [FakeWidget(value=False), FakeWidget(value=True),
+                                    FakeWidget(value=True)]
+        launched = []
+        monkeypatch.setattr(plotter, "launch_plot_viewer",
+                            lambda path: launched.append(path) or True)
+        asyncio.run(ui.workflow(None))
+        assert len(launched) == 1
+        with open(launched[0], encoding="utf-8") as handle:
+            (figure,) = json.load(handle)
+        os.remove(launched[0])
+        assert figure["type"] == "bars"
+        assert figure["title"] == "condensed.txt"
+        assert [g["label"] for g in figure["groups"]] == ["f+", "f-"]

@@ -2123,6 +2123,25 @@ Labels and styles are reset when you load another file or change the plot type.
 
 After **Browse**, the message panel lists the row count and the column names it found. Problems are reported with the line at fault, for example `Line 7 has 2 values, but the table has 3 columns.`, `Line 12 is not numeric: ...`, or `The column-name header (line 2) has 2 names, but the data has 3 columns.`
 
+##### Bar chart data file
+
+The fifth **Plot type**, **Bar chart data file**, draws a table with any number of columns as a **grouped bar chart**. **Column 1 gives one bar group per row** and may hold text labels (atom symbols such as `C1`, `O7`) or numbers; either way the values are shown on the x axis exactly as written. **Every other column is one bar series.** With several columns selected, each row's bars are drawn side by side and a legend names each series. As with the other table types, every other plot option is disabled while this type is selected.
+
+A typical input is the condensed-index table written by **Analysis of Fukui Functions**:
+
+```text
+CONDENSED INDICES  (source: Hirshfeld ...)        <- title line, ignored
+  atom      q(N)   q(N+1)   q(N-1)       f-       f+  ...   <- column-name header
+   C1     -0.0390  -0.1675   0.0268   0.0658   0.1285  ...
+   O7     -0.1978  -0.2444  -0.0518   0.1460   0.0465  ...
+```
+
+The layout rules are those of the multi-column data file (spaces, tabs or commas; comment and blank lines skipped; the header is the last text line before the first data row). The one difference is that a data row is a label **followed by numbers**: once the data starts, columns 2 onward must hold finite numbers, and a row with a different number of columns is reported with its line number (`Line 9: columns 2 onward must be numbers: ...`). A title line before the header must contain some text after its first word. A line such as `Step 5` reads as a label followed by a number, that is, as a data row, so put a `#` in front of it.
+
+**Customising the figure.** The same **Table x-axis label** and **Table y-axis label** fields apply (blank: the first column's name and `Value`). Below them, **Columns to plot as bar series** shows one switch per data column once a file is loaded. All are on by default, at least one must stay on, and the series appear in the file's column order. Bars have no line style, so these rows have no style dropdown. For the Fukui example, switching on only `f-`, `f+` and `f0` compares the three Fukui functions atom by atom, and `CDD` on its own shows the dual descriptor's sign on each atom.
+
+The figure opens in the interactive viewer (zoom, pan, save). As for the multi-column type, no file is written next to your data.
+
 #### Molecular Axis Alignment
 
 Use **Tools > Molecular Axis Alignment** to align an XYZ molecule along a chosen axis and save a new XYZ file.

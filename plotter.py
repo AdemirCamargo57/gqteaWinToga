@@ -18,6 +18,7 @@ class PlotterBase:
     GQTEAMD_PLOT_TYPE = "gqteaMD energy file"
     JSON_PLOT_TYPE = "JSON plot file"
     TABLE_PLOT_TYPE = "Multi-column data file"
+    BAR_PLOT_TYPE = "Bar chart data file"
 
     def __init__(self):
         # Initialize x_axis to avoid attribute error
@@ -252,6 +253,9 @@ class PlotterBase:
         "Markers only": ("none", "*"),
     }
     DEFAULT_TABLE_LINE_STYLE = "Solid"
+    # Heading of the per-column rows, which the line and bar types share.
+    TABLE_COLUMNS_HEADING = "Y columns to plot and their line styles:"
+    BAR_COLUMNS_HEADING = "Columns to plot as bar series:"
     # Values accepted for a series' optional 'linestyle'/'marker' keys.
     SERIES_LINESTYLES = ("-", "--", ":", "-.", "none")
     SERIES_MARKERS = ("o", "s", "^", "v", "D", "x", "+", "*", ".")
@@ -279,15 +283,21 @@ class PlotterBase:
             return None
 
     @classmethod
-    def parse_table_text(cls, text: str) -> dict:
-        """Parse a multi-column numeric table.
+    def parse_table_text(cls, text: str, categorical_x: bool = False) -> dict:
+        """Parse a multi-column table.
 
-        Returns {"x", "ys", "xlabel", "labels", "has_header", "n_rows"};
-        raises ValueError naming the offending line when the table is unusable.
+        With ``categorical_x`` (the bar-chart type) column 1 is a label kept
+        as the text written in the file -- a symbol such as "C1" or a number
+        such as "2.50" -- and only columns 2 onward must be numeric; a data row
+        is then a label followed by numbers. Otherwise every column is numeric.
+
+        Returns {"x", "ys", "xlabel", "labels", "has_header", "n_rows",
+        "categorical_x"}; raises ValueError naming the offending line when the
+        table is unusable.
         """
         header = None
         header_line_no = None
-        x_values: List[float] = []
+        x_values: list = []
         ys: List[List[float]] = []
         n_columns = None
 
@@ -300,41 +310,68 @@ class PlotterBase:
                 continue
 
             tokens = cls._split_table_line(line)
-            values = cls._parse_numeric_tokens(tokens)
+            if categorical_x:
+                numbers = cls._parse_numeric_tokens(tokens[1:])
+                is_data = numbers is not None and len(tokens) >= 2
+            else:
+                numbers = cls._parse_numeric_tokens(tokens)
+                is_data = numbers is not None
 
-            if values is None:
+            if not is_data:
                 if n_columns is None:
                     header, header_line_no = tokens, line_no
                     continue
+                if numbers is not None:
+                    # A lone label: a row with its values missing.
+                    raise ValueError(
+                        f"Line {line_no} has {len(tokens)} values, but the table "
+                        f"has {n_columns} columns."
+                    )
+                if categorical_x:
+                    raise ValueError(
+                        f"Line {line_no}: columns 2 onward must be numbers: "
+                        f"'{raw.strip()}'. Text is only allowed in column 1, or "
+                        "before the data as comments or a column-name header."
+                    )
                 raise ValueError(
                     f"Line {line_no} is not numeric: '{raw.strip()}'. Text is only "
                     "allowed before the data, as comments or a column-name header."
                 )
 
-            if any(math.isnan(v) or math.isinf(v) for v in values):
+            if any(math.isnan(v) or math.isinf(v) for v in numbers):
                 raise ValueError(
                     f"Line {line_no} must contain only finite numbers: '{raw.strip()}'."
                 )
 
             if n_columns is None:
-                n_columns = len(values)
+                n_columns = len(tokens)
                 if n_columns < 2:
                     raise ValueError(
                         f"The table needs at least two columns (x and one y); "
                         f"line {line_no} has {n_columns}."
                     )
                 ys = [[] for _ in range(n_columns - 1)]
-            elif len(values) != n_columns:
+            elif len(tokens) != n_columns:
                 raise ValueError(
-                    f"Line {line_no} has {len(values)} values, but the table has "
+                    f"Line {line_no} has {len(tokens)} values, but the table has "
                     f"{n_columns} columns."
                 )
 
-            x_values.append(values[0])
-            for column, value in zip(ys, values[1:]):
+            if categorical_x:
+                x_values.append(tokens[0])
+                row_values = numbers
+            else:
+                x_values.append(numbers[0])
+                row_values = numbers[1:]
+            for column, value in zip(ys, row_values):
                 column.append(value)
 
         if n_columns is None:
+            if categorical_x:
+                raise ValueError(
+                    "The file contains no data rows (a label or number in "
+                    "column 1 followed by numbers)."
+                )
             raise ValueError("The file contains no numeric data rows.")
 
         if header is not None:
@@ -355,10 +392,11 @@ class PlotterBase:
             "labels": labels,
             "has_header": header is not None,
             "n_rows": len(x_values),
+            "categorical_x": categorical_x,
         }
 
     @classmethod
-    def load_table_file(cls, filepath: str) -> dict:
+    def load_table_file(cls, filepath: str, categorical_x: bool = False) -> dict:
         """Read and parse a multi-column table from disk."""
         if not filepath or not os.path.isfile(filepath):
             raise ValueError(f"Data file not found: {filepath}")
@@ -367,7 +405,7 @@ class PlotterBase:
                 text = handle.read()
         except OSError as exc:
             raise ValueError(f"Could not read the data file: {exc}") from exc
-        return cls.parse_table_text(text)
+        return cls.parse_table_text(text, categorical_x=categorical_x)
 
     @classmethod
     def table_to_figure(cls, table: dict, title: str = "", xlabel: str = "",
@@ -418,16 +456,58 @@ class PlotterBase:
             "title": title,
         }
 
+    @classmethod
+    def bar_table_to_figure(cls, table: dict, title: str = "", xlabel: str = "",
+                            ylabel: str = "", include: List[bool] = None) -> dict:
+        """Express a table parsed with ``categorical_x`` as one grouped-bar
+        plotViewer figure ({"type": "bars"}, drawn by
+        displayPlots.draw_bar_comparison in the viewer and the PNG fallback).
+
+        Column 1 gives the bar positions' labels; each included column is one
+        bar series (a legend entry), in column order. Blank xlabel/ylabel fall
+        back to the header's first name and "Value", as in table_to_figure.
+        """
+        n_series = len(table["ys"])
+        if include is None:
+            include = [True] * n_series
+        if len(include) != n_series:
+            raise ValueError(
+                f"The table has {n_series} data columns but {len(include)} plot "
+                f"selections were given."
+            )
+        if not any(include):
+            raise ValueError("Select at least one column to plot as bars.")
+
+        groups = [
+            {"label": label, "values": values}
+            for values, label, wanted in zip(table["ys"], table["labels"], include)
+            if wanted
+        ]
+        return {
+            "type": "bars",
+            "categories": [str(category) for category in table["x"]],
+            "groups": groups,
+            "xlabel": (xlabel or "").strip() or table["xlabel"],
+            "ylabel": (ylabel or "").strip() or "Value",
+            "title": title,
+        }
+
     @staticmethod
     def describe_table(table: dict) -> str:
         """Readable summary of a loaded table, for the message panel."""
         source = "column-name header" if table["has_header"] else "no header (generic names)"
+        bars = table.get("categorical_x", False)
+        series = "bar series" if bars else "y-axis series"
         lines = [
-            f"Loaded {table['n_rows']} data rows, {len(table['ys'])} y-axis series.",
+            f"Loaded {table['n_rows']} data rows, {len(table['ys'])} {series}.",
             f"Column names: {source}",
             "",
             f"  x-axis: {table['xlabel']}",
         ]
+        if bars:
+            shown = ", ".join(table["x"][:12])
+            more = f", ... ({table['n_rows']} in all)" if table["n_rows"] > 12 else ""
+            lines.append(f"    labels: {shown}{more}")
         lines += [f"  y{i}: {label}" for i, label in enumerate(table["labels"], start=1)]
         lines += ["", "Press Plot to open the figure in the interactive viewer."]
         return "\n".join(lines)
@@ -435,17 +515,24 @@ class PlotterBase:
     def is_table_plot_type(self):
         return self.plot_type_selection.value == self.TABLE_PLOT_TYPE
 
+    def is_bar_plot_type(self):
+        return self.plot_type_selection.value == self.BAR_PLOT_TYPE
+
     async def open_file_dialog(self, widget):
         try:
             is_gqtea = self.is_gqtea_plot_type()
             is_json = self.is_json_plot_type()
             is_table = self.is_table_plot_type()
+            is_bar = self.is_bar_plot_type()
             if is_json:
                 dialog_title = "Open JSON plot file"
                 file_types = ["json"]
             elif is_table:
                 dialog_title = "Open multi-column data file"
                 file_types = ["dat", "txt", "csv", "xvg"]
+            elif is_bar:
+                dialog_title = "Open bar chart data file"
+                file_types = ["dat", "txt", "csv"]
             elif is_gqtea:
                 dialog_title = "Open gqteaMD energy file"
                 file_types = ["*.csv", "*.dat", "*.log", "*.txt", "*.*"]
@@ -471,7 +558,7 @@ class PlotterBase:
             self.data = []
             if is_json:
                 await self.parse_json_plot_file()
-            elif is_table:
+            elif is_table or is_bar:
                 await self.parse_table_file()
             elif is_gqtea:
                 await self.parse_gqtea_energy_file()
@@ -705,11 +792,12 @@ class PlotterBase:
         await self.json_plot_static()
 
     async def parse_table_file(self):
-        """Load the selected multi-column table, or report what is wrong."""
+        """Load the selected table (line or bar type), or report what is wrong."""
+        is_bar = self.is_bar_plot_type()
         self.table_data = None
-        self.update_table_style_controls([])
+        self.update_table_style_controls([], with_styles=not is_bar)
         try:
-            table = self.load_table_file(self.energy_file)
+            table = self.load_table_file(self.energy_file, categorical_x=is_bar)
         except ValueError as exc:
             self.multi_line_text.value = f"Could not load the data file.\n\n{exc}"
             await self.main_window.dialog(
@@ -718,7 +806,7 @@ class PlotterBase:
             return
 
         self.table_data = table
-        self.update_table_style_controls(table["labels"])
+        self.update_table_style_controls(table["labels"], with_styles=not is_bar)
         self.multi_line_text.value = self.describe_table(table)
 
     async def table_plot(self):
@@ -744,10 +832,38 @@ class PlotterBase:
         except ValueError as exc:
             await self.main_window.dialog(toga.ErrorDialog("Plot Error", str(exc)))
             return
+        await self.show_table_figure(figure, "gqtea_table_plot_")
+
+    async def bar_plot(self):
+        """Draw the selected columns as grouped bars, one group per column-1 label."""
+        if not self.table_data:
+            await self.main_window.dialog(
+                toga.InfoDialog(
+                    "No data",
+                    "Load a bar chart data file first, using the Browse button.",
+                )
+            )
+            return
+
+        try:
+            figure = self.bar_table_to_figure(
+                self.table_data,
+                title=os.path.basename(self.energy_file),
+                xlabel=self.table_xlabel_input.value,
+                ylabel=self.table_ylabel_input.value,
+                include=self.selected_table_columns(),
+            )
+        except ValueError as exc:
+            await self.main_window.dialog(toga.ErrorDialog("Plot Error", str(exc)))
+            return
+        await self.show_table_figure(figure, "gqtea_bar_plot_")
+
+    async def show_table_figure(self, figure: dict, prefix: str):
+        """Open one figure built from a table in the interactive viewer."""
         # plotViewer reads a manifest from disk; keep it in the temp dir so
         # nothing is left next to the user's data.
         with tempfile.NamedTemporaryFile(
-            "w", delete=False, suffix=".json", prefix="gqtea_table_plot_",
+            "w", delete=False, suffix=".json", prefix=prefix,
             encoding="utf-8",
         ) as handle:
             json.dump([figure], handle)
@@ -1054,6 +1170,7 @@ class PlotterUI(PlotterBase):
                 self.GQTEAMD_PLOT_TYPE,
                 self.JSON_PLOT_TYPE,
                 self.TABLE_PLOT_TYPE,
+                self.BAR_PLOT_TYPE,
             ],
             on_change=self.on_plot_type_change,
             style=Pack(flex=1, margin=(0,5,0,5)),
@@ -1229,7 +1346,7 @@ class PlotterUI(PlotterBase):
             self.table_options_box.add(row)
 
         self.table_styles_label = toga.Label(
-            "Y columns to plot and their line styles:",
+            self.TABLE_COLUMNS_HEADING,
             style=Pack(margin=(5,5,0,10), text_align=LEFT),
         )
         self.table_styles_box = toga.Box(style=Pack(direction=COLUMN))
@@ -1288,6 +1405,10 @@ class PlotterUI(PlotterBase):
             await self.table_plot()
             return
 
+        if self.is_bar_plot_type():
+            await self.bar_plot()
+            return
+
         if not self.data:
             await self.main_window.dialog(toga.InfoDialog("Error", "No data available. Please load a valid ENERGY file."))
             return
@@ -1329,10 +1450,13 @@ class PlotterUI(PlotterBase):
         is_gqtea = self.is_gqtea_plot_type()
         is_json = self.is_json_plot_type()
         is_table = self.is_table_plot_type()
+        is_bar = self.is_bar_plot_type()
+        # The line and bar table types share the table options section.
+        uses_table = is_table or is_bar
 
         # In JSON and table modes the figure is fully described by the file,
         # so every other plot-specific control is switched off.
-        is_cpmd = not is_gqtea and not is_json and not is_table
+        is_cpmd = not is_gqtea and not is_json and not uses_table
 
         if is_json:
             self.file_label.text = "Select JSON plot file:"
@@ -1340,6 +1464,9 @@ class PlotterUI(PlotterBase):
         elif is_table:
             self.file_label.text = "Select multi-column data file:"
             self.text_input_file.placeholder = "Click Browse to select a data table (x, y1, y2, ...)"
+        elif is_bar:
+            self.file_label.text = "Select bar chart data file:"
+            self.text_input_file.placeholder = "Click Browse to select a data table (label, y1, y2, ...)"
         elif is_gqtea:
             self.file_label.text = "Select gqteaMD data file:"
             self.text_input_file.placeholder = "Click Browse to select gqteaMD energy file"
@@ -1373,6 +1500,8 @@ class PlotterUI(PlotterBase):
             self.multi_line_text.value = HelpGqteaWin.Json_Plot_Options
         elif is_table:
             self.multi_line_text.value = HelpGqteaWin.Table_Plot_Options
+        elif is_bar:
+            self.multi_line_text.value = HelpGqteaWin.Bar_Plot_Options
         else:
             self.multi_line_text.value = HelpGqteaWin.Plotting_Options
 
@@ -1380,9 +1509,12 @@ class PlotterUI(PlotterBase):
         self.table_xlabel_input.value = ""
         self.table_ylabel_input.value = ""
         self.update_table_style_controls([])
-        self.table_xlabel_input.enabled = is_table
-        self.table_ylabel_input.enabled = is_table
-        self.table_styles_label.enabled = is_table
+        self.table_xlabel_input.enabled = uses_table
+        self.table_ylabel_input.enabled = uses_table
+        self.table_styles_label.enabled = uses_table
+        self.table_styles_label.text = (
+            self.BAR_COLUMNS_HEADING if is_bar else self.TABLE_COLUMNS_HEADING
+        )
 
         # Only the active type's section takes up room: stacking all of them
         # (disabled) made the window taller than a laptop screen.
@@ -1391,7 +1523,7 @@ class PlotterUI(PlotterBase):
             "time_step_box": is_cpmd,
             "units_box": is_cpmd,
             "gqtea_column_box": is_gqtea,
-            "table_options_box": is_table,
+            "table_options_box": uses_table,
         })
 
     def _add_section(self, main_box, name):
@@ -1417,15 +1549,26 @@ class PlotterUI(PlotterBase):
             if shown and section not in slot.children:
                 slot.add(section)
 
-    def update_table_style_controls(self, labels):
+    def update_table_style_controls(self, labels, with_styles=True):
         """Rebuild one row per y column (in column order): a Switch choosing
-        whether to plot it and a line-style Selection."""
+        whether to plot it and, for line plots (``with_styles``), a line-style
+        Selection. Bars have no line style, so their rows hold the switch only."""
         for child in list(self.table_styles_box.children):
             self.table_styles_box.remove(child)
         self.table_style_selections = []
         self.table_column_switches = []
         for label in labels:
             row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(0,5,0,5)))
+            if not with_styles:
+                switch = toga.Switch(
+                    label,
+                    value=True,
+                    style=Pack(margin=(0,5,0,5), text_align=LEFT, width=190),
+                )
+                row.add(switch)
+                self.table_styles_box.add(row)
+                self.table_column_switches.append(switch)
+                continue
             selection = toga.Selection(
                 items=list(self.TABLE_LINE_STYLES),
                 style=Pack(flex=1, margin=(0,5,0,5)),

@@ -183,7 +183,7 @@ h3 { font-size: 1.2rem; }
   background: var(--honey);
 }
 
-/* Feature spotlight (ESP) */
+/* Feature spotlights (ESP, Fukui) */
 .feature-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; align-items: center; }
 @media (min-width: 900px) { .feature-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; } }
 .feature-text > p { max-width: 62ch; }
@@ -205,6 +205,8 @@ h3 { font-size: 1.2rem; }
   width: 9px; height: 9px; border-radius: 50%;
   background: var(--honey);
 }
+.feature-subhead { margin: 26px 0 8px; }
+.feature-note { color: var(--muted); font-style: italic; }
 .feature-figure { margin: 0; }
 .feature-figure img {
   display: block; width: 100%; height: auto;

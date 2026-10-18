@@ -1420,6 +1420,52 @@ CUSTOMISING THE FIGURE
   is changed.
 """
 
+    Bar_Plot_Options = """
+BAR CHART DATA FILE
+
+Draws a table with any number of columns as a bar chart:
+
+    column 1          -> x axis: one bar group per row. It may hold text
+                         labels (atom symbols such as C1, O7, H8) or
+                         numbers; either way they are shown as written.
+    columns 2, 3, ... -> one bar series each (numbers only)
+
+Pick a file with Browse, check the column list that appears here, choose
+the columns to plot, then press Plot. With several columns selected, the
+bars of each row are drawn side by side and a legend names each series.
+All other options in this panel are disabled for this type.
+
+ACCEPTED LAYOUT
+
+    CONDENSED INDICES (Hirshfeld)          <- title line, ignored
+    atom    q(N)     f-       f+           <- optional column-name header
+    C1     -0.0390   0.0658   0.1285
+    O7     -0.1978   0.1460   0.0465   # trailing comments are ignored
+
+- Columns may be separated by spaces, tabs or commas (CSV).
+- Blank lines and comment lines (starting with # ! % @ //) are skipped.
+- The header is the last text line before the first data row; its names
+  label the series in the legend and the first name labels the x axis.
+  Without one, the series are called "Column 2", "Column 3", ...
+- A data row is a label (or number) followed by numbers. Once the data
+  starts, every row must have the same number of columns and finite
+  numbers in columns 2 onward; otherwise the message names the line.
+- A title line before the header must contain some text after its first
+  word (e.g. "Step 5" alone would be read as a data row): comment it out
+  with # if in doubt.
+
+CUSTOMISING THE FIGURE
+
+- Table x-axis label / Table y-axis label: type your own axis titles.
+  Left blank, the x axis uses the first column's name (or "Column 1") and
+  the y axis reads "Value".
+- Columns to plot as bar series: after a file is loaded, one switch per
+  data column appears (all on by default; at least one must stay on).
+  Series keep the file's column order in the legend.
+- These settings are reset when another file is loaded or the plot type
+  is changed.
+"""
+
     Plotting_Options = """
 Choose from multiple plot types, including:
     - Fictitious and Ionic Kinetic Energy
