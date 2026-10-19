@@ -1010,3 +1010,57 @@ def test_a_molecule_without_frames_gets_bonds_too():
 
     assert len(frame) == 3 and bonds == [(0, 1)]
     assert viewer.frames == []  # the temporary frame is not left behind
+
+
+# ----------------------------------------------------------------------
+# Cube tab integration
+# ----------------------------------------------------------------------
+def _cube_item(radius_bohr=10.0):
+    import volumeData as vd
+    from cubeRender import surface_item
+    vertices = np.array([[radius_bohr, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    triangles = np.array([[0, 1, 2]])
+    return surface_item(vd.IsoMesh(vertices, triangles, vd.vertex_normals(vertices, triangles)), (1, 0, 0), 1.0)
+
+
+def test_base_viewer_hooks_stay_empty_and_the_structure_is_shown_by_default():
+    viewer = MolecularViewer()
+    assert viewer.show_structure is True
+    assert viewer.render_scene_extras() is None and viewer.draw_screen_overlay() is None
+    assert MolecularViewer.render_scene_extras is not MolecularViewerUI.render_scene_extras
+    assert "ESPSurfaceViewer" not in [c.__name__ for c in MolecularViewerUI.__mro__]
+
+
+def test_atoms_cannot_be_picked_while_the_structure_is_hidden():
+    viewer = _viewer_with_view()
+    viewer.show_structure = False
+    assert viewer._pick_atom_at(150, 100) is None
+    viewer.show_structure = True
+    assert viewer._pick_atom_at(150, 100) == 0
+
+
+def test_ui_draws_the_cube_layer_and_frames_it():
+    from cubeRender import CubeSceneLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.frames = []
+    ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
+    plain = ui.get_scene_radius()
+    ui.render_scene_extras()  # no layer yet: nothing happens
+    ui.cube_layer = CubeSceneLayer()
+    assert ui.get_scene_radius() == pytest.approx(plain)
+    drawn = []
+    ui.cube_layer.draw = lambda: drawn.append(True)
+    ui.render_scene_extras()
+    assert drawn == [True]
+    ui.cube_layer = CubeSceneLayer()
+    ui.cube_layer.set_items([_cube_item()])
+    assert ui.get_scene_radius() > 10.0 * 0.529 > plain
+
+
+def test_the_cube_tab_follows_design_and_keeps_the_other_tabs_in_order():
+    import inspect
+    source = inspect.getsource(MolecularViewerUI.layout_main_window)
+    order = [source.index(f'("{name}"') for name in
+             ("Display", "Dynamics", "Measure", "Design", "Cube", "Box & Performance")]
+    assert order == sorted(order)

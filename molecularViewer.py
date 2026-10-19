@@ -17,6 +17,8 @@ from OpenGL.GLUT import *
 from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
+from cubeRender import CubeSceneLayer
+from cubeTab import CubeTabController
 from help import AtomicData
 from molecularDesign import MolecularDesignController
 
@@ -280,6 +282,10 @@ class MolecularViewer:
         self.box_sizes = (4.0, 4.0, 4.0)
         self.box_centering_mode = "Geometric center"
         self.show_box = False
+
+        # Atoms and bonds are drawn (and pickable) only while this is True;
+        # the Cube tab's "Show molecule" switch clears it to see the volume alone.
+        self.show_structure = True
 
         # UI-loop pointer (set by subclass)
         self.loop = None
@@ -861,8 +867,8 @@ class MolecularViewer:
         several overlap, the one closest to the camera (smallest depth) wins.
         """
         view = self._pick_view
-        if view is None:
-            return None
+        if view is None or not self.show_structure:
+            return None  # hidden atoms cannot be clicked
         modelview, projection, viewport = view
         frame_data = self.get_current_frame_data()
         if not frame_data:
@@ -1835,7 +1841,8 @@ class MolecularViewer:
                         np.array(glGetDoublev(GL_PROJECTION_MATRIX), dtype=float),
                         tuple(int(v) for v in glGetIntegerv(GL_VIEWPORT)),
                     )
-                    self.render_frame(frame_data, bonds)
+                    if self.show_structure:
+                        self.render_frame(frame_data, bonds)
                     if self.show_box and not self.fast_playback_mode:
                         self.draw_box(frame_data)
                     self.render_scene_extras()
@@ -2013,6 +2020,10 @@ class MolecularViewerUI(MolecularViewer):
         # Molecular design (molecularDesign.MolecularDesignController)
         self.design_controller = None
 
+        # Cube tab: what it draws (render thread) and its controller.
+        self.cube_layer = CubeSceneLayer()
+        self.cube_controller = None
+
         self.layout_main_window()
 
     # ------------------------------------------------------------------
@@ -2088,6 +2099,7 @@ class MolecularViewerUI(MolecularViewer):
                 ("Dynamics", self._tab_page(self._build_dynamics_tab())),
                 ("Measure", self._tab_page(self._build_measure_tab())),
                 ("Design", self._tab_page(self._build_design_tab())),
+                ("Cube", self._tab_page(self._build_cube_tab())),
                 ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
             ],
             style=Pack(flex=1),
@@ -2490,6 +2502,28 @@ class MolecularViewerUI(MolecularViewer):
         """
         self.design_controller = MolecularDesignController(viewer=self)
         return self.design_controller.build_launcher_tab()
+
+    def _build_cube_tab(self) -> toga.Box:
+        """Gaussian cube files as isosurfaces and slices (cubeTab.CubeTabController)."""
+        self.cube_controller = CubeTabController(viewer=self)
+        return self.cube_controller.build_tab()
+
+    # The two hooks below draw the Cube tab's volume. They are overridden
+    # here, not in MolecularViewer, whose hooks must stay empty for
+    # subclasses such as espViewer.ESPSurfaceViewer.
+    def render_scene_extras(self):
+        layer = getattr(self, "cube_layer", None)
+        if layer is not None:
+            layer.draw()
+
+    def get_scene_radius(self, frame_data: Optional[Frame] = None) -> float:
+        base = super().get_scene_radius(frame_data)
+        layer = getattr(self, "cube_layer", None)
+        if layer is None or not layer.items():
+            return base
+        if frame_data is None:
+            frame_data = self.get_current_frame_data()
+        return max(base, layer.radius_about(self.get_system_center(frame_data)) + 0.3)
 
     def _on_main_window_close(self, window, **kwargs) -> bool:
         """Design windows must not outlive the viewer that owns them."""

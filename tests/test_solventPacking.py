@@ -133,7 +133,7 @@ def test_resolve_engine():
 
 
 # The only modules allowed to import numba (CLAUDE.md); every caller keeps a numpy fallback.
-NUMBA_KERNEL_MODULES = {"espNumba.py", "densityNumba.py", "solventPackingNumba.py"}
+NUMBA_KERNEL_MODULES = {"espNumba.py", "densityNumba.py", "solventPackingNumba.py", "volumeNumba.py"}
 
 
 def test_numba_is_only_imported_by_its_kernel_modules():
