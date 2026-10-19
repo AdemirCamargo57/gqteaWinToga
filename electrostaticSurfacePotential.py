@@ -680,7 +680,10 @@ class ESPTabController:
         if self.results is None or self._structure_settled_for is self.results:
             return
         frame = self.fchk_frame()
-        current = self.viewer.get_current_frame_data()
+        # Only a loaded structure counts (XYZ, Design, a cube, a previous ESP
+        # run): a fresh MolecularViewer keeps a 5-atom placeholder in
+        # molecule_data with no frames, and that is never worth a question.
+        current = self.viewer.get_current_frame_data() if self.viewer.frames else []
         if not current:
             self.viewer.load_designed_molecule(frame)
         elif not same_structure(current, frame):

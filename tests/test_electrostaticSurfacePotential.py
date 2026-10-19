@@ -241,6 +241,11 @@ class StubViewer:
         self.frame = list(frame or [])
         self.loaded = []
 
+    @property
+    def frames(self):
+        """Loaded structures, as on MolecularViewer (its built-in placeholder is not one)."""
+        return [list(self.frame)] if self.frame else []
+
     def get_current_frame_data(self):
         return list(self.frame)
 
@@ -471,6 +476,19 @@ class TestTabDisplay:
         assert water_ui.questions == [] and len(water_ui.viewer.loaded) == 1
         assert [s for s, _ in water_ui.viewer.loaded[0]] == ["O", "H", "H"]
         assert water_ui.viewer.esp_layer.get() is not None and water_ui.viewer.background == (0.0, 0.0, 0.0)
+
+    def test_a_fresh_viewers_placeholder_molecule_is_not_asked_about(self, water_ui):
+        """Regression: a new MolecularViewer holds a built-in 5-atom placeholder in
+        molecule_data (no frames loaded); it must not trigger the replace question."""
+        from espSurfaceLayer import ESPSurfaceLayer
+        from molecularViewer import MolecularViewer
+        viewer = MolecularViewer()
+        viewer.esp_layer = ESPSurfaceLayer()
+        assert viewer.frames == [] and len(viewer.get_current_frame_data()) == 5  # the placeholder
+        water_ui.viewer = viewer
+        asyncio.run(water_ui._settle_structure())
+        assert water_ui.questions == []
+        assert [s for s, _ in viewer.get_current_frame_data()] == ["O", "H", "H"]
 
     def test_the_same_molecule_is_kept_without_a_question(self, water_ui):
         water_ui.viewer = StubViewer(frame=water_ui.fchk_frame())
