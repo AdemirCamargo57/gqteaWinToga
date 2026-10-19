@@ -20,13 +20,15 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import toga
+from scipy.spatial import cKDTree
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW
 
+import cubeFile as cf
 import espIntegrals as ei
 import gaussianWavefunction as gw
 import molecularSurface as ms
@@ -158,6 +160,34 @@ class ESPResults:
     surfaces: List[SurfaceResult]
     notes: List[str] = field(default_factory=list)
     elapsed: float = 0.0
+    # The density grid the surfaces were built from (bohr); the ESP cube uses it too.
+    grid_origin: Optional[np.ndarray] = None
+    grid_shape: Optional[Tuple[int, int, int]] = None
+    density_grid: Optional[np.ndarray] = None
+    cubegen_path: Optional[str] = None  # the cubegen that ran, when that engine was used
+
+
+ESP_CUBE_SUFFIX = "_ESP.cube"
+DENSITY_CUBE_SUFFIX = "_density.cube"
+CUBE_FILE_TYPES = ["cube"]
+ON_NUCLEUS_DISTANCE = 1e-6  # bohr: a grid point this close to a nucleus has V = infinity
+NUCLEUS_SHIFT = 1e-3        # bohr: such a point is evaluated this far away along +x
+
+
+def default_esp_cube_name(fchk_path: str) -> str:
+    return Path(fchk_path).stem + ESP_CUBE_SUFFIX
+
+
+def density_cube_path(esp_cube_path) -> Path:
+    """'<name>_ESP.cube' -> '<name>_density.cube' beside it; any other name gets '_density' appended."""
+    path = Path(esp_cube_path)
+    stem = path.stem[:-len("_ESP")] if path.stem.endswith("_ESP") else path.stem
+    return path.with_name(stem + DENSITY_CUBE_SUFFIX)
+
+
+def _ascii(text: str) -> str:
+    """Cube header lines are ASCII (cubeFile.write_cube writes ascii)."""
+    return text.encode("ascii", "replace").decode("ascii")
 
 
 class ESPSurfaceAnalyser:
@@ -230,7 +260,73 @@ class ESPSurfaceAnalyser:
 
         report(1.0, "Done.")
         return ESPResults(str(fchk_path), wfn, spacing, engine, surfaces, notes,
-                          time.perf_counter() - started)
+                          time.perf_counter() - started, grid_origin=np.asarray(origin, dtype=float),
+                          grid_shape=tuple(int(n) for n in shape), density_grid=values,
+                          cubegen_path=cubegen if engine == ENGINE_CUBEGEN else None)
+
+    # --- ESP and density cubes --------------------------------------------
+    def esp_on_grid(self, results: ESPResults, progress: Optional[Callable[[float], None]] = None):
+        """(V on every point of the run's density grid, shape grid_shape; notes).
+
+        Uses the run's engine (cubegen falls back to the built-in engine with
+        a note). V is infinite on a nucleus, so a grid point within
+        ON_NUCLEUS_DISTANCE of one is evaluated NUCLEUS_SHIFT away along +x
+        and a note says so: the cube never holds inf or nan.
+        """
+        if results.grid_origin is None or results.grid_shape is None:
+            raise ValueError("These results hold no density grid; run the calculation again.")
+        wfn = results.wavefunction
+        points = ms.grid_points(results.grid_origin, results.spacing, results.grid_shape)
+        distance, _ = cKDTree(wfn.coordinates).query(points)
+        on_nucleus = distance < ON_NUCLEUS_DISTANCE
+        points[on_nucleus, 0] += NUCLEUS_SHIFT
+        notes: List[str] = []
+        values = None
+        if results.engine == ENGINE_CUBEGEN and results.cubegen_path:
+            try:
+                values = cubegen_potential(results.fchk_path, points, results.cubegen_path)
+            except RuntimeError as exc:
+                notes.append(f"{exc} The built-in exact engine was used for the cube.")
+        if values is None:
+            values = ei.electrostatic_potential(wfn, points, ei.build_hermite_batches(wfn), progress=progress)
+        if on_nucleus.any():
+            notes.append(f"{int(on_nucleus.sum())} grid point(s) lie on a nucleus, where V is infinite; "
+                         f"they hold V evaluated {NUCLEUS_SHIFT:g} bohr away along +x.")
+        if not np.all(np.isfinite(values)):
+            raise ValueError("The ESP is not finite at some grid points.")
+        if progress is not None:
+            try:
+                progress(1.0)
+            except Exception:
+                pass
+        return np.asarray(values, dtype=float).reshape(results.grid_shape), notes
+
+    def _cube(self, results: ESPResults, title: str, comment: str, values: np.ndarray) -> cf.CubeData:
+        wfn = results.wavefunction
+        return cf.CubeData(_ascii(title), _ascii(comment), wfn.atomic_numbers, wfn.nuclear_charges,
+                           wfn.coordinates, results.grid_origin, results.spacing, values)
+
+    def esp_cube(self, results: ESPResults, values: np.ndarray) -> cf.CubeData:
+        stem = Path(results.fchk_path).stem
+        return self._cube(results, f"{stem} electrostatic potential V(r)",
+                          f"gQTEA ESP, a.u. (Hartree/e), {results.engine} engine", values)
+
+    def density_cube(self, results: ESPResults) -> cf.CubeData:
+        stem = Path(results.fchk_path).stem
+        return self._cube(results, f"{stem} electron density rho(r)",
+                          f"gQTEA ESP, {gw.DENSITY_SECTION}, a.u. (e/bohr^3)", results.density_grid)
+
+    def write_cubes(self, results: ESPResults, esp_path, with_density: bool = True,
+                    progress: Optional[Callable[[float], None]] = None):
+        """Write the ESP cube (and the density cube on the same grid); (paths, notes)."""
+        path = Path(esp_path)
+        if not path.suffix:
+            path = path.with_suffix(".cube")
+        values, notes = self.esp_on_grid(results, progress)
+        paths = [cf.write_cube(path, self.esp_cube(results, values))]
+        if with_density:
+            paths.append(cf.write_cube(density_cube_path(path), self.density_cube(results)))
+        return paths, notes
 
     # --- reporting ------------------------------------------------------
     @staticmethod

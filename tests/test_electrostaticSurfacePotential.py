@@ -337,3 +337,82 @@ class TestExportImage:
         ui._ask_image_path = ask
         asyncio.run(ui.export_image(None))
         assert ui.errors[-1][0] == "Export Image Error"
+
+
+# ----------------------------------------------------------------------
+# ESP cube export (headless)
+# ----------------------------------------------------------------------
+import dataclasses  # noqa: E402
+
+import cubeFile as cf  # noqa: E402
+import espIntegrals as ei  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def water_results():
+    return esp.ESPSurfaceAnalyser().run(str(fchk_path("water_631gd_6d")), [0.001], spacing=0.4)
+
+
+class TestCubeExport:
+    def test_results_keep_the_density_grid(self, water_results):
+        r = water_results
+        assert r.density_grid.shape == tuple(r.grid_shape) and len(r.grid_origin) == 3
+        assert r.cubegen_path is None  # the built-in engine ran
+
+    def test_default_names(self, tmp_path):
+        assert esp.default_esp_cube_name("C:/runs/water.fchk") == "water_ESP.cube"
+        assert esp.density_cube_path(tmp_path / "water_ESP.cube") == tmp_path / "water_density.cube"
+        assert esp.density_cube_path(tmp_path / "mine.cube") == tmp_path / "mine_density.cube"
+
+    def test_both_cubes_on_the_run_grid(self, water_results, tmp_path):
+        analyser = esp.ESPSurfaceAnalyser()
+        seen = []
+        paths, notes = analyser.write_cubes(water_results, tmp_path / "water_ESP.cube", with_density=True,
+                                            progress=seen.append)
+        assert [p.name for p in map(__import__("pathlib").Path, paths)] == ["water_ESP.cube", "water_density.cube"]
+        assert notes == [] and seen and seen[-1] == pytest.approx(1.0)
+        v, rho = (cf.read_cube(p) for p in paths)
+        r = water_results
+        for cube in (v, rho):
+            assert cube.values.shape == tuple(r.grid_shape) and cube.spacing == pytest.approx(r.spacing)
+            assert np.allclose(cube.origin, r.grid_origin, atol=1e-6)
+            assert np.array_equal(cube.atomic_numbers, r.wavefunction.atomic_numbers)
+        assert np.allclose(rho.values, r.density_grid, rtol=1e-5, atol=1e-12)
+        # ESP values: a direct evaluation at sampled grid points, to the file's %13.5E precision.
+        rng = np.random.default_rng(5)
+        idx = np.column_stack([rng.integers(n, size=25) for n in r.grid_shape])
+        points = r.grid_origin + idx * r.spacing
+        direct = ei.electrostatic_potential(r.wavefunction, points, ei.build_hermite_batches(r.wavefunction))
+        assert np.allclose(v.values[idx[:, 0], idx[:, 1], idx[:, 2]], direct, rtol=2e-5, atol=1e-10)
+
+    def test_density_cube_is_optional_and_the_suffix_is_added(self, water_results, tmp_path):
+        paths, _ = esp.ESPSurfaceAnalyser().write_cubes(water_results, tmp_path / "only_esp", with_density=False)
+        assert [str(p) for p in paths] == [str(tmp_path / "only_esp.cube")]
+        assert not (tmp_path / "only_esp_density.cube").exists()
+
+    def test_a_grid_point_on_a_nucleus_stays_finite(self, water_results):
+        r = water_results
+        nucleus = r.wavefunction.coordinates[0]
+        origin = nucleus - r.spacing * np.floor((nucleus - r.grid_origin) / r.spacing)
+        shifted = dataclasses.replace(r, grid_origin=origin)
+        values, notes = esp.ESPSurfaceAnalyser().esp_on_grid(shifted)
+        assert np.all(np.isfinite(values))
+        assert len(notes) == 1 and "nucleus" in notes[0]
+
+    def test_failing_cubegen_falls_back_for_the_cube(self, water_results, monkeypatch):
+        def broken(*args, **kwargs):
+            raise RuntimeError("cubegen failed: test")
+        monkeypatch.setattr(esp, "cubegen_potential", broken)
+        r = dataclasses.replace(water_results, engine=esp.ENGINE_CUBEGEN, cubegen_path="C:/fake/cubegen.exe")
+        values, notes = esp.ESPSurfaceAnalyser().esp_on_grid(r)
+        assert np.all(np.isfinite(values)) and "cubegen failed" in notes[0] and "built-in" in notes[0]
+
+    def test_results_without_a_grid_are_refused(self, water_results):
+        r = dataclasses.replace(water_results, grid_origin=None, grid_shape=None, density_grid=None)
+        with pytest.raises(ValueError, match="grid"):
+            esp.ESPSurfaceAnalyser().esp_on_grid(r)
+
+    def test_unwritable_destination_is_a_value_error(self, water_results, tmp_path):
+        (tmp_path / "file").write_text("x")
+        with pytest.raises(ValueError, match="Could not write"):
+            esp.ESPSurfaceAnalyser().write_cubes(water_results, tmp_path / "file" / "a.cube", with_density=False)
