@@ -135,6 +135,17 @@ def marching_tetrahedra(values: np.ndarray, origin: np.ndarray, spacing: float, 
     is refined by ``n_bisect`` bisections of the exact function before the
     final linear interpolation (Multiwfn nbisec=3).
     """
+    tri_edges, outward = tetra_cut_edges(values, isovalue)
+    return mesh_from_cut_edges(tri_edges, outward, values, origin, spacing, isovalue, density, n_bisect)
+
+
+def tetra_cut_edges(values: np.ndarray, isovalue: float):
+    """Cell scan of marching_tetrahedra: the cut grid edges of every triangle.
+
+    Returns ``(tri_edges, outward)``: (T, 3) global edge ids and (T, 3) the
+    summed inside -> outside directions used to orient each triangle.
+    volumeNumba.tetra_cut_edges is the compiled equivalent.
+    """
     nx, ny, nz = values.shape
     inside = values >= isovalue
     cube = np.stack([inside[ox:nx - 1 + ox, oy:ny - 1 + oy, oz:nz - 1 + oz]
@@ -178,8 +189,15 @@ def marching_tetrahedra(values: np.ndarray, origin: np.ndarray, spacing: float, 
                     dirs = np.stack([g[rows, o] - g[rows, i] for i, o in poly], axis=1)
                     tri_edges.append(ids)
                     tri_dirs.append(dirs.sum(axis=1))
-    tri_edges = np.concatenate(tri_edges)
-    outward = np.concatenate(tri_dirs).astype(float)
+    return np.concatenate(tri_edges), np.concatenate(tri_dirs).astype(float)
+
+
+def mesh_from_cut_edges(tri_edges: np.ndarray, outward: np.ndarray, values: np.ndarray,
+                        origin: np.ndarray, spacing: float, isovalue: float,
+                        density: Callable[[np.ndarray], np.ndarray] | None = None,
+                        n_bisect: int = N_BISECT):
+    """Finishing half of marching_tetrahedra: shared vertices, interpolated, oriented."""
+    nx, ny, nz = values.shape
     unique_ids, triangles = np.unique(tri_edges, return_inverse=True)
     triangles = triangles.reshape(-1, 3)
 

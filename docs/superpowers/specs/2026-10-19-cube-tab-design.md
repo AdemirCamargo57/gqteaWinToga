@@ -57,7 +57,7 @@ One-way chain: `molecularViewer → cubeTab → {cubeRender, volumeData → (vol
 
 ### 2.4 `molecularSurface.py` — minimal split
 
-`marching_tetrahedra` is split into its two halves with **no change of behaviour**: `_tetra_cut_edges_numpy(values, isovalue)` (the cell scan) and `mesh_from_cut_edges(tri_edges, outward, values, origin, spacing, isovalue, density, n_bisect)` (decode, interpolate, orient). `marching_tetrahedra` calls both, so the ESP and Fukui tools get identical meshes (their tests, which compare against cubegen/Multiwfn, guard it). The cube tab calls `mesh_from_cut_edges` after either cell scan, so there is **one** finishing implementation. Because `np.unique` sorts the edge ids, the vertex arrays of the numpy and numba paths are identical; triangles may come in a different order.
+`marching_tetrahedra` is split into its two halves with **no change of behaviour**: `tetra_cut_edges(values, isovalue)` (the cell scan) and `mesh_from_cut_edges(tri_edges, outward, values, origin, spacing, isovalue, density, n_bisect)` (decode, interpolate, orient). `marching_tetrahedra` calls both, so the ESP and Fukui tools get identical meshes (their tests, which compare against cubegen/Multiwfn, guard it). The cube tab calls `mesh_from_cut_edges` after either cell scan, so there is **one** finishing implementation. Because `np.unique` sorts the edge ids, the vertex arrays of the numpy and numba paths are identical; triangles may come in a different order.
 
 ### 2.5 `cubeRender.py` — OpenGL, no Toga, no GLFW
 
