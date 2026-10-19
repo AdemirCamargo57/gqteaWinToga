@@ -18,6 +18,7 @@ slice change does not re-mesh.
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,6 +62,29 @@ def canonical_colour(text: str) -> str:
         if value.lower() == name.lower():
             return name
     return value.upper()
+
+
+def _assign(widget, attr: str, value) -> None:
+    """Write a widget property only when it actually changes.
+
+    On WinForms every Toga widget write re-lays out the whole viewer window
+    (~70 ms measured, seven tabs of controls). Loading one cube used to write
+    ~25 mostly unchanged values in a row, which showed as the window
+    flickering for seconds. Numbers are compared with a tolerance because a
+    slider reads back a rounded value.
+    """
+    current = getattr(widget, attr, None)
+    if isinstance(value, float) and isinstance(current, (int, float)) and not isinstance(current, bool):
+        if math.isclose(current, value, rel_tol=1e-9, abs_tol=1e-9):
+            return
+    elif current == value:
+        return
+    setattr(widget, attr, value)
+
+
+def _item_names(selection) -> List[str]:
+    """The strings a Toga Selection holds (its rows carry them as ``.value``)."""
+    return [getattr(item, "value", item) for item in selection.items]
 
 
 def fit_table_columns_on_resize(table) -> None:
@@ -143,6 +167,9 @@ class CubeTabController:
         self._syncing = False
         self._refreshing = False
         self._refresh_pending = False
+        self._table_rows = None    # rows last written to the table (written only on change)
+        self._last_status = None   # last message sent to the viewer's status line
+        self._tasks = set()        # handler work in flight (see _start)
         # Widgets (build_tab)
         self.cube_table = None
         self.show_molecule_switch = None
@@ -453,29 +480,35 @@ class CubeTabController:
     # ------------------------------------------------------------------
     def set_status(self, message: str):
         if self.status_label is not None:
-            self.status_label.text = message
+            _assign(self.status_label, "text", message)
         setter = getattr(self.viewer, "set_status_message", None)
-        if setter is not None:
+        if setter is not None and message != self._last_status:
             setter(message)
+        self._last_status = message
 
     def sync_widgets(self, selected: Optional[str] = None):
-        """Rebuild the table and selections from the state (handlers are muted meanwhile)."""
+        """Bring the table and selections up to date with the state, writing only what
+        changed (see _assign); handlers are muted meanwhile."""
         if self.cube_table is None:
             return
         self._syncing = True
         try:
             names = self.names()
-            self.cube_table.data = [e.table_row() for e in self.entries]
+            rows = [e.table_row() for e in self.entries]
+            if rows != self._table_rows:
+                self.cube_table.data = rows
+                self._table_rows = rows
             for selection in (self.iso_cube_selection, self.slice_cube_selection,
                               self.op_a_selection, self.op_b_selection):
-                current = selection.value
-                selection.items = names
-                if current in names:
-                    selection.value = current
+                if _item_names(selection) != names:
+                    current = selection.value
+                    selection.items = names
+                    if current in names:
+                        _assign(selection, "value", current)
             if selected in names:
-                self.iso_cube_selection.value = selected
+                _assign(self.iso_cube_selection, "value", selected)
             if self.slice_cube in names:
-                self.slice_cube_selection.value = self.slice_cube
+                _assign(self.slice_cube_selection, "value", self.slice_cube)
             self._load_isosurface_fields()
             self._load_slice_fields()
         finally:
@@ -489,12 +522,12 @@ class CubeTabController:
         was = self._syncing
         self._syncing = True
         try:
-            self.isovalue_input.value = f"{entry.isovalue:g}"
-            self.show_selection.value = entry.show
-            self.positive_colour_input.value = entry.positive_colour
-            self.negative_colour_input.value = entry.negative_colour
-            self.opacity_slider.value = entry.opacity
-            self.visible_switch.value = entry.visible
+            _assign(self.isovalue_input, "value", f"{entry.isovalue:g}")
+            _assign(self.show_selection, "value", entry.show)
+            _assign(self.positive_colour_input, "value", entry.positive_colour)
+            _assign(self.negative_colour_input, "value", entry.negative_colour)
+            _assign(self.opacity_slider, "value", float(entry.opacity))
+            _assign(self.visible_switch, "value", entry.visible)
         finally:
             self._syncing = was
 
@@ -503,14 +536,15 @@ class CubeTabController:
         self._syncing = True
         try:
             n = self.slice_plane_count()
-            self.slice_axis_selection.value = AXIS_LABELS[self.slice_axis]
-            self.slice_range_selection.value = next(k for k, v in RANGE_LABELS.items() if v == self.slice_range)
-            self.slice_switch.value = self.slice_visible
-            self.slice_slider.max = max(n - 1, 1)
-            self.slice_slider.tick_count = max(n, 2)
-            self.slice_slider.value = self.slice_index
-            self.slice_slider.enabled = n > 1
-            self.slice_index_label.text = f"Plane {self.slice_index + 1} of {n}" if n else "No cube"
+            _assign(self.slice_axis_selection, "value", AXIS_LABELS[self.slice_axis])
+            _assign(self.slice_range_selection, "value",
+                    next(k for k, v in RANGE_LABELS.items() if v == self.slice_range))
+            _assign(self.slice_switch, "value", self.slice_visible)
+            _assign(self.slice_slider, "max", float(max(n - 1, 1)))
+            _assign(self.slice_slider, "tick_count", max(n, 2))
+            _assign(self.slice_slider, "value", float(self.slice_index))
+            _assign(self.slice_slider, "enabled", n > 1)
+            _assign(self.slice_index_label, "text", f"Plane {self.slice_index + 1} of {n}" if n else "No cube")
         finally:
             self._syncing = was
 
@@ -619,9 +653,27 @@ class CubeTabController:
         if not self._syncing:
             self._load_isosurface_fields()
 
-    async def on_isosurface_change(self, widget, **kwargs):
+    # The widget handlers below are deliberately *synchronous*. Toga runs an
+    # async handler as a task that starts only after the widget write that
+    # fired it has returned - by then sync_widgets has cleared _syncing - so
+    # the tab's own updates used to come back as "user changes" and redo the
+    # whole sync and scene (measured: two syncs and two scene builds per cube
+    # load). Checking the guard here, at the moment Toga fires the handler,
+    # and only then starting the async work (_start) keeps them out.
+    def _start(self, coroutine):
+        """Run a handler's async work on the UI loop, keeping the task referenced until done."""
+        loop = getattr(self.viewer, "loop", None) or asyncio.get_event_loop()
+        task = loop.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    def on_isosurface_change(self, widget, **kwargs):
         if self._syncing or not self.entries:
             return
+        self._start(self._isosurface_changed())
+
+    async def _isosurface_changed(self):
         error = self.apply_isosurface_fields()
         if error:
             self._load_isosurface_fields()  # put the last good values back
@@ -633,13 +685,18 @@ class CubeTabController:
     def on_show_molecule_change(self, widget, **kwargs):
         self.set_show_structure(widget.value)
 
-    async def on_show_volumes_change(self, widget, **kwargs):
+    def on_show_volumes_change(self, widget, **kwargs):
+        if self._syncing:
+            return
         self.show_volumes = bool(widget.value)
-        await self.refresh_scene()
+        self._start(self.refresh_scene())
 
-    async def on_slice_change(self, widget, **kwargs):
+    def on_slice_change(self, widget, **kwargs):
         if self._syncing or not self.entries:
             return
+        self._start(self._slice_changed())
+
+    async def _slice_changed(self):
         error = self.apply_slice_fields()
         self._load_slice_fields()
         if error:

@@ -425,3 +425,90 @@ class TestWidgetPlumbing:
         asyncio.run(c.on_compute(None))
         assert errors == [] and c.names()[-1] == "2 × cube0"
         assert "2 × cube0" in c.status_label.text
+
+
+
+# ----------------------------------------------------------------------
+# Flicker: on WinForms every Toga widget write re-lays out the whole viewer
+# window (~70 ms), so the tab must write only what changed, and handlers
+# must not re-run for the tab's own programmatic updates.
+# ----------------------------------------------------------------------
+class Recorder:
+    """A stub widget that counts every attribute write after construction."""
+
+    def __init__(self, **values):
+        object.__setattr__(self, "writes", [])
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
+
+    def __setattr__(self, name, value):
+        self.writes.append(name)
+        object.__setattr__(self, name, value)
+
+
+def recorded_widgets(c):
+    c.cube_table = Recorder(data=[])
+    for name in ("iso_cube_selection", "slice_cube_selection", "op_a_selection", "op_b_selection"):
+        setattr(c, name, Recorder(items=[], value=None))
+    c.isovalue_input = Recorder(value="")
+    c.show_selection = Recorder(value=ct.SHOW_BOTH)
+    c.positive_colour_input = Recorder(value="Blue")
+    c.negative_colour_input = Recorder(value="Red")
+    c.opacity_slider = Recorder(value=1.0)
+    c.visible_switch = Recorder(value=True)
+    c.slice_axis_selection = Recorder(value=ct.AXIS_LABELS[2])
+    c.slice_range_selection = Recorder(value=list(ct.RANGE_LABELS)[0])
+    c.slice_switch = Recorder(value=False)
+    c.slice_slider = Recorder(value=0.0, max=1, tick_count=None, enabled=False)
+    c.slice_index_label = Recorder(text="No cube")
+    c.status_label = Recorder(text=" ")
+    return c
+
+
+def all_writes(c):
+    widgets = [w for w in vars(c).values() if isinstance(w, Recorder)]
+    return sum(len(w.writes) for w in widgets)
+
+
+def clear_writes(c):
+    for w in vars(c).values():
+        if isinstance(w, Recorder):
+            object.__setattr__(w, "writes", [])
+
+
+class TestNoFlicker:
+    def test_a_sync_with_nothing_changed_writes_no_widget(self, tmp_path):
+        c = recorded_widgets(loaded(tmp_path, p_orbital_volume(), p_orbital_volume()))
+        c.sync_widgets(selected="cube1")
+        assert all_writes(c) > 0  # the first sync fills the widgets
+        clear_writes(c)
+        c.sync_widgets(selected="cube1")
+        assert all_writes(c) == 0
+
+    def test_only_the_changed_field_is_written(self, tmp_path):
+        c = recorded_widgets(loaded(tmp_path, p_orbital_volume()))
+        c.sync_widgets(selected="cube0")
+        clear_writes(c)
+        c.entries[0].isovalue = 0.123
+        c.sync_widgets()
+        assert c.isovalue_input.writes == ["value"] and all_writes(c) == 1
+
+    def test_repeating_a_status_message_writes_nothing(self, tmp_path):
+        c = recorded_widgets(loaded(tmp_path, p_orbital_volume()))
+        c.set_status("Reading x.cube...")
+        c.set_status("Reading x.cube...")
+        assert c.status_label.writes == ["text"]
+
+    @pytest.mark.parametrize("handler", ["on_isosurface_change", "on_slice_change", "on_show_volumes_change"])
+    def test_handlers_ignore_the_tabs_own_updates(self, tmp_path, handler):
+        """Toga runs an async handler as a task after the write that fired it has
+        returned - after _syncing is cleared - so the guard must be checked at once."""
+        c = with_widgets(loaded(tmp_path, p_orbital_volume()))
+        started = []
+        c._start = lambda coroutine: started.append(coroutine.__name__) or coroutine.close()
+        c._syncing = True
+        getattr(c, handler)(SimpleNamespace(value=True))
+        assert started == []
+        c._syncing = False
+        getattr(c, handler)(SimpleNamespace(value=True))
+        assert len(started) == 1
