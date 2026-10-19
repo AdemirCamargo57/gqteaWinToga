@@ -66,7 +66,7 @@ One-way chain: `molecularViewer → cubeTab → {cubeRender, volumeData → (vol
 
 ### 2.6 `cubeTab.py` — Toga
 
-- `CubeEntry`: `name`, `volume`, `path` (None for an operation result), `saved`, and display settings `isovalue`, `show` (`"+ and −"` / `"+ only"` / `"− only"`), `positive_colour`, `negative_colour`, `opacity`, `visible`, plus a mesh cache keyed by `(isovalue, sign)`.
+- `CubeEntry`: `name`, `volume`, `path` (None for an operation result), `saved`, and display settings `isovalue`, `show` (`"+ and −"` / `"+ only"` / `"− only"`), `positive_colour`, `negative_colour`, `opacity`, `visible`, plus a mesh cache keyed by `(isovalue, sign)`. Density-like cubes (`volumeData.is_signed` False) start at `+ only`; otherwise every refresh would report a missing negative surface (found in the live smoke run).
 - `CubeTabController(viewer)`: owns all state and touches no widget in its headless methods, which are the test seams:
   - `load_file(path) -> (entries, notes)` (sync, run in `asyncio.to_thread`): names are unique (`stem`, `stem#MO12`, `stem (2)`).
   - `adopt_structure(entry)`: cube atoms → `viewer.load_designed_molecule(frame)` (Å, symbols from atomic numbers; Z without a symbol → `X`). A cube without atoms is refused when no structure is displayed.
