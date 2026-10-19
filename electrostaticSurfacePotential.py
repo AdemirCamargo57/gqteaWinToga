@@ -3,8 +3,11 @@
 ``ESPSurfaceAnalyser`` (headless) reads a Gaussian .fchk/.fch, builds one
 isosurface of the Total SCF Density per requested isovalue, evaluates the
 exact ESP at every surface vertex and finds the surface extrema with
-Multiwfn's rules (see molecularSurface). ``ElectrostaticSurfacePotentialUI``
-is the Toga window; ``espViewer.ESPSurfaceViewer`` draws the result.
+Multiwfn's rules (see molecularSurface), and writes the ESP (and density)
+on its grid as Gaussian cubes. ``ESPTabController`` is the 3D Molecular
+Viewer's ESP tab; the viewer draws the result through its
+``espSurfaceLayer.ESPSurfaceLayer``. This module must not import
+molecularViewer or espViewer at module level: molecularViewer imports it.
 
 Two quantities, never to be confused: the *surface* is defined by the
 electron density rho (isovalue, a.u. = e/bohr^3); the *mapped property* is
@@ -34,10 +37,9 @@ import gaussianWavefunction as gw
 import molecularSurface as ms
 from coordinateConverter import BOHR_RADIUS_ANGSTROM
 from espIntegrals import HARTREE_TO_KCAL_MOL
-from espViewer import COLOUR_UNITS, ESPSurfaceViewer, SurfaceMarker, UNIT_AU, symmetric_range
+from espSurfaceLayer import COLOUR_UNITS, UNIT_AU, SurfaceMarker, symmetric_range
 from gaussianUtilities import find_gaussian_utility
 from help import AtomicData, HelpGqteaWin
-from molecularViewer import save_canvas_image
 
 DEFAULT_ISOVALUE = 0.0004
 MIN_SPACING, MAX_SPACING = 0.05, 0.6
@@ -440,23 +442,38 @@ BACKGROUND_COLOURS = {
     "Light grey": (0.85, 0.85, 0.85),
 }
 IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]
+SAME_STRUCTURE_TOLERANCE = 1e-4  # Angstrom
 
 
-class ElectrostaticSurfacePotentialUI:
+def same_structure(frame_a, frame_b, tolerance: float = SAME_STRUCTURE_TOLERANCE) -> bool:
+    """True when two viewer frames list the same elements at the same positions."""
+    if len(frame_a) != len(frame_b):
+        return False
+    for (sa, pa), (sb, pb) in zip(frame_a, frame_b):
+        if sa != sb or np.abs(np.asarray(pa, dtype=float) - np.asarray(pb, dtype=float)).max() > tolerance:
+            return False
+    return True
+
+
+class ESPTabController:
+    """The 3D Molecular Viewer's ESP tab (formerly the Tools > ESP window).
+
+    It owns the run, the results and the widgets; the surface, its extremum
+    markers and the colour bar are drawn in the viewer's own 3D window through
+    ``viewer.esp_layer`` (an ``espSurfaceLayer.ESPSurfaceLayer``).
+    """
+
     LABEL_WIDTH = 230
     HINT_COLOR = "#666666"
 
-    def __init__(self, *args, **kwargs):
-        # gqteaWinToga passes the Button that was pressed; ignore it.
+    def __init__(self, viewer):
+        self.viewer = viewer
         self.analyser = ESPSurfaceAnalyser()
         self.results: Optional[ESPResults] = None
         self.extrema_path: Optional[str] = None
-        self.viewer: Optional[ESPSurfaceViewer] = None
         self._syncing = False
-        self.window = toga.Window(title="Electrostatic Surface Potential (ESP)", size=(900, 660),
-                                  on_close=self._on_close)
-        self.layout_main_window()
-        self.window.show()
+        # The results whose structure question has been answered (asked once per run).
+        self._structure_settled_for: Optional[ESPResults] = None
 
     # --- layout -----------------------------------------------------------
     def _label(self, text):
@@ -471,35 +488,22 @@ class ElectrostaticSurfacePotentialUI:
     def _hint(self, text):
         return toga.Label(text, style=Pack(color=self.HINT_COLOR, font_size=9, margin=(0, 0, 4, 0)))
 
-    def layout_main_window(self):
+    def build_tab(self) -> toga.Box:
         self.fchk_input = toga.TextInput(placeholder="Gaussian formatted checkpoint (.fchk / .fch)",
                                          style=Pack(flex=1))
         self.output_dir_input = toga.TextInput(placeholder="Blank = folder of the .fchk file",
                                                style=Pack(flex=1))
-        header = toga.Box(children=[
-            self._row(self._label("Formatted checkpoint:"), self.fchk_input,
-                      toga.Button("Browse", on_press=self.browse_fchk, style=Pack(width=90, margin_left=5))),
-            self._row(self._label("Output folder:"), self.output_dir_input,
-                      toga.Button("Browse", on_press=self.browse_output_dir, style=Pack(width=90, margin_left=5))),
-        ], style=Pack(direction=COLUMN))
-
         self.isovalue_input = toga.TextInput(placeholder=f"{DEFAULT_ISOVALUE:.6f}", style=Pack(width=220))
         self.spacing_input = toga.TextInput(placeholder=f"{ms.DEFAULT_SPACING_BOHR}", style=Pack(width=120))
         self.engine_selection = toga.Selection(items=list(ENGINES), style=Pack(width=220))
         self.cubegen_input = toga.TextInput(value=find_cubegen() or "", placeholder=DEFAULT_CUBEGEN_LOCATIONS[0],
                                             style=Pack(flex=1))
-        setup = toga.Box(children=[
-            self._heading("Surface definition - electron density isosurface rho(r)"),
-            self._row(self._label("Isovalue(s) rho  (a.u. = e/bohr^3):"), self.isovalue_input),
-            self._hint("Blank = 0.000400 (GaussView default). Several: 0.0004, 0.001, 0.002"),
-            self._row(self._label("Grid spacing (bohr):"), self.spacing_input),
-            self._hint("Blank = 0.25 bohr (Multiwfn default for the ESP). Smaller = smoother and slower."),
-            self._row(self._label("Density:"), toga.Label(gw.DENSITY_SECTION, style=Pack(margin_top=6))),
-            self._heading("Mapped property - electrostatic potential V(r)"),
-            self._row(self._label("ESP engine:"), self.engine_selection),
-            self._row(self._label("cubegen executable:"), self.cubegen_input),
-            self._hint("Only used with the Gaussian cubegen engine; on failure the built-in engine runs."),
-        ], style=Pack(direction=COLUMN, margin=10))
+
+        self.run_button = toga.Button("Run", on_press=self.workflow, style=Pack(width=110, margin=5))
+        self.show_button = toga.Button("Show surface", on_press=self.show_surface, style=Pack(width=130, margin=5))
+        self.clear_button = toga.Button("Clear", on_press=self.clear_output, style=Pack(width=110, margin=5))
+        self.status_label = toga.Label("Ready.", style=Pack(margin=6, flex=1))
+        self.progress_bar = toga.ProgressBar(max=100, style=Pack(margin=(0, 5, 5, 5)))
 
         self.surface_selection = toga.Selection(items=[], on_change=self.on_display_change, style=Pack(width=260))
         self.unit_selection = toga.Selection(items=list(COLOUR_UNITS), on_change=self.on_display_change,
@@ -511,46 +515,62 @@ class ElectrostaticSurfacePotentialUI:
                                                    on_change=self.on_background_change, style=Pack(width=140))
         self.export_button = toga.Button("Export image...", on_press=self.export_image,
                                          style=Pack(width=130, margin_left=10))
+
+        self.density_cube_switch = toga.Switch("Also save the electron density cube (same grid)", value=True)
+        self.cube_button = toga.Button("Save ESP cube...", on_press=self.export_cubes,
+                                       style=Pack(width=160, margin=5))
         self.summary_output = toga.MultilineTextInput(readonly=True, value=HelpGqteaWin.help_esp_surface,
-                                                      style=Pack(flex=1, font_family="monospace"))
-        results = toga.Box(children=[
+                                                      style=Pack(height=300, font_family="monospace"))
+
+        return toga.Box(children=[
+            self._hint("The surface, its extrema and the colour bar are drawn in this viewer's 3D window."),
+            self._heading("Input"),
+            self._row(self._label("Formatted checkpoint:"), self.fchk_input,
+                      toga.Button("Browse", on_press=self.browse_fchk, style=Pack(width=90, margin_left=5))),
+            self._row(self._label("Output folder:"), self.output_dir_input,
+                      toga.Button("Browse", on_press=self.browse_output_dir, style=Pack(width=90, margin_left=5))),
+            self._heading("Surface definition - electron density isosurface rho(r)"),
+            self._row(self._label("Isovalue(s) rho  (a.u. = e/bohr^3):"), self.isovalue_input),
+            self._hint("Blank = 0.000400 (GaussView default). Several: 0.0004, 0.001, 0.002"),
+            self._row(self._label("Grid spacing (bohr):"), self.spacing_input),
+            self._hint("Blank = 0.25 bohr (Multiwfn default for the ESP). Smaller = smoother and slower."),
+            self._row(self._label("Density:"), toga.Label(gw.DENSITY_SECTION, style=Pack(margin_top=6))),
+            self._heading("Mapped property - electrostatic potential V(r)"),
+            self._row(self._label("ESP engine:"), self.engine_selection),
+            self._row(self._label("cubegen executable:"), self.cubegen_input),
+            self._hint("Only used with the Gaussian cubegen engine; on failure the built-in engine runs."),
+            self._row(self.run_button, self.show_button, self.clear_button),
+            self.status_label,
+            self.progress_bar,
+            self._heading("Results"),
             self._row(self._label("Surface shown:"), self.surface_selection),
             self._row(self._label("Colour-bar unit:"), self.unit_selection),
             self._row(self._label("Surface:"), self.opacity_selection, self.extrema_switch),
             self._row(self._label("Canvas background:"), self.background_selection, self.export_button),
+            self._heading("ESP cube"),
+            self._row(self.density_cube_switch),
+            self._row(self.cube_button),
+            self._hint("V(r) in a.u. on the run's density grid (its box and spacing). The suggested name is "
+                       "<fchk name>_ESP.cube; the density cube is written beside it as <name>_density.cube."),
             self.summary_output,
-        ], style=Pack(direction=COLUMN, margin=10, flex=1))
-
-        self.tabs = toga.OptionContainer(content=[
-            ("Setup", toga.ScrollContainer(content=setup, style=Pack(flex=1))),
-            ("Results", results),
-        ], style=Pack(flex=1))
-
-        self.run_button = toga.Button("Run", on_press=self.workflow, style=Pack(width=110, margin=5))
-        self.show_button = toga.Button("Show surface", on_press=self.show_surface, style=Pack(width=130, margin=5))
-        self.clear_button = toga.Button("Clear", on_press=self.clear_output, style=Pack(width=110, margin=5))
-        self.close_button = toga.Button("Close", on_press=self.closeTopLevel, style=Pack(width=110, margin=5))
-        self.status_label = toga.Label("Ready.", style=Pack(margin=6, flex=1))
-        self.progress_bar = toga.ProgressBar(max=100, style=Pack(margin=(0, 5, 5, 5)))
-
-        self.window.content = toga.Box(children=[
-            header,
-            self._row(self.run_button, self.show_button, self.clear_button, self.close_button),
-            self.tabs,
-            self.status_label,
-            self.progress_bar,
-        ], style=Pack(direction=COLUMN, margin=10, flex=1))
+        ], style=Pack(direction=COLUMN, margin=10))
 
     # --- dialogs ------------------------------------------------------------
+    def _window(self):
+        return self.viewer.main_window
+
     async def _show_error(self, title: str, message: str):
-        await self.window.dialog(toga.ErrorDialog(title, message))
+        await self._window().dialog(toga.ErrorDialog(title, message))
 
     async def _show_info(self, title: str, message: str):
-        await self.window.dialog(toga.InfoDialog(title, message))
+        await self._window().dialog(toga.InfoDialog(title, message))
+
+    async def _ask(self, title: str, message: str) -> bool:
+        return bool(await self._window().dialog(toga.QuestionDialog(title, message)))
 
     async def browse_fchk(self, widget):
         try:
-            path = await self.window.dialog(toga.OpenFileDialog(
+            path = await self._window().dialog(toga.OpenFileDialog(
                 title="Select a Gaussian formatted checkpoint", file_types=["fchk", "fch"]))
             if path:
                 self.fchk_input.value = str(path)
@@ -559,7 +579,7 @@ class ElectrostaticSurfacePotentialUI:
 
     async def browse_output_dir(self, widget):
         try:
-            folder = await self.window.dialog(toga.SelectFolderDialog(title="Choose the output folder"))
+            folder = await self._window().dialog(toga.SelectFolderDialog(title="Choose the output folder"))
             if folder:
                 self.output_dir_input.value = str(folder)
         except Exception as exc:
@@ -585,8 +605,12 @@ class ElectrostaticSurfacePotentialUI:
         self.status_label.text = message
 
     def _set_buttons(self, enabled: bool):
-        for b in (self.run_button, self.show_button, self.clear_button):
+        for b in (self.run_button, self.show_button, self.clear_button, self.cube_button):
             b.enabled = enabled
+
+    def _surface_is_displayed(self) -> bool:
+        layer = getattr(self.viewer, "esp_layer", None)
+        return layer is not None and layer.get() is not None
 
     async def workflow(self, widget):
         try:
@@ -608,11 +632,10 @@ class ElectrostaticSurfacePotentialUI:
             self.results = results
             self.summary_output.value = self.analyser.summary_text(results, self.extrema_path)
             self._populate_surface_selection()
-            self.tabs.current_tab = 1
             self.status_label.text = f"Done in {results.elapsed:.1f} s. Extrema: {self.extrema_path}"
             self.progress_bar.value = 100
-            if self.viewer is not None and self.viewer.viewer_window_is_open():
-                self._push_to_viewer()
+            if self._surface_is_displayed():
+                await self._display_results()  # a surface is on screen: replace it with the new run
         except Exception as exc:
             self.status_label.text = "Calculation failed."
             self.progress_bar.value = 0
@@ -646,21 +669,51 @@ class ElectrostaticSurfacePotentialUI:
         rows = [r for r in self.analyser.extrema_rows(self.results) if r["isovalue"] == surface.isovalue]
         return [SurfaceMarker(r["position_angstrom"], r["kind"], r["scope"], str(r["row"])) for r in rows]
 
+    def fchk_frame(self):
+        """The run's molecule as a viewer frame: [(symbol, (x, y, z) Angstrom), ...]."""
+        wfn = self.results.wavefunction
+        return [(s, tuple(float(c) for c in xyz))
+                for s, xyz in zip(wfn.atom_symbols(), wfn.coordinates * BOHR_RADIUS_ANGSTROM)]
+
+    async def _settle_structure(self):
+        """Show the fchk molecule, asking first if the viewer shows a different structure."""
+        if self.results is None or self._structure_settled_for is self.results:
+            return
+        frame = self.fchk_frame()
+        current = self.viewer.get_current_frame_data()
+        if not current:
+            self.viewer.load_designed_molecule(frame)
+        elif not same_structure(current, frame):
+            if await self._ask("Show the ESP molecule?",
+                               f"The 3D viewer shows another structure ({len(current)} atoms).\n\n"
+                               f"Yes: replace it with the {len(frame)} atoms of "
+                               f"{Path(self.results.fchk_path).name}.\n"
+                               "No: keep it; the surface is drawn in the .fchk coordinates."):
+                self.viewer.load_designed_molecule(frame)
+        self._structure_settled_for = self.results
+
     def _push_to_viewer(self):
         surface = self.selected_surface()
         if surface is None or self.viewer is None:
             return
-        wfn = self.results.wavefunction
-        self.viewer.set_molecule(wfn.atom_symbols(), wfn.coordinates * BOHR_RADIUS_ANGSTROM)
-        self.viewer.set_display_options(unit=self.unit_selection.value or UNIT_AU,
-                                        opacity=OPACITY_LABELS.get(self.opacity_selection.value, 1.0),
-                                        show_extrema=bool(self.extrema_switch.value))
-        self.viewer.set_surface(surface.mesh.vertices * BOHR_RADIUS_ANGSTROM, surface.mesh.triangles,
-                                surface.mesh.vertex_normals(), surface.esp, surface.isovalue,
-                                self.surface_markers(surface))
+        layer = self.viewer.esp_layer
+        layer.set_display_options(unit=self.unit_selection.value or UNIT_AU,
+                                  opacity=OPACITY_LABELS.get(self.opacity_selection.value, 1.0),
+                                  show_extrema=bool(self.extrema_switch.value))
+        layer.set_surface(surface.mesh.vertices * BOHR_RADIUS_ANGSTROM, surface.mesh.triangles,
+                          surface.mesh.vertex_normals(), surface.esp, surface.isovalue,
+                          self.surface_markers(surface), centre=self.viewer.get_system_center())
+        self.viewer.invalidate_scene_cache()
+        self.viewer.request_projection_update()
+
+    async def _display_results(self):
+        await self._settle_structure()
+        self.viewer.set_background_color(self.selected_background())
+        self._push_to_viewer()
 
     def on_display_change(self, widget):
-        if self._syncing or self.results is None or self.viewer is None:
+        # Only a surface already on screen follows the Results controls.
+        if self._syncing or self.results is None or self.viewer is None or not self._surface_is_displayed():
             return
         self._push_to_viewer()
 
@@ -668,11 +721,7 @@ class ElectrostaticSurfacePotentialUI:
         if self.results is None:
             await self._show_info("No Results", "Run the calculation first.")
             return
-        if self.viewer is None:
-            self.viewer = ESPSurfaceViewer()
-            self.viewer.loop = asyncio.get_running_loop()
-            self.viewer.set_background_color(self.selected_background())
-        self._push_to_viewer()
+        await self._display_results()
         ready, error = await self.viewer.ensure_viewer_window()
         if not ready:
             await self._show_error("The 3D viewer could not be opened", error)
@@ -693,7 +742,7 @@ class ElectrostaticSurfacePotentialUI:
         return f"{Path(self.results.fchk_path).stem}_ESP_rho{surface.isovalue:.6f}.png"
 
     async def _ask_image_path(self, suggested: str):
-        return await self.window.dialog(toga.SaveFileDialog(
+        return await self._window().dialog(toga.SaveFileDialog(
             title="Export the ESP surface image", suggested_filename=suggested,
             file_types=IMAGE_FILE_TYPES))
 
@@ -704,6 +753,8 @@ class ElectrostaticSurfacePotentialUI:
         only then is the file name asked for -- so the dialog can neither
         cover the canvas nor let the view drift before the capture.
         """
+        from molecularViewer import save_canvas_image  # molecularViewer imports this module
+
         if self.viewer is None or not self.viewer.viewer_window_is_open():
             await self._show_info("No Image", "Open the 3D view with 'Show surface' first; "
                                               "the image is taken from that window as shown.")
@@ -724,9 +775,48 @@ class ElectrostaticSurfacePotentialUI:
         height, width = image.shape[:2]
         self.status_label.text = f"Image saved ({width} x {height} px): {saved}"
 
+    # --- ESP cube export --------------------------------------------------
+    def suggested_cube_path(self) -> str:
+        """<output folder>/<fchk name>_ESP.cube (the save dialog opens in that folder)."""
+        folder = resolve_output_dir(self.results.fchk_path, self.output_dir_input.value)
+        return str(Path(folder) / default_esp_cube_name(self.results.fchk_path))
+
+    async def _ask_cube_path(self, suggested: str):
+        return await self._window().dialog(toga.SaveFileDialog(
+            title="Save the ESP cube", suggested_filename=suggested, file_types=CUBE_FILE_TYPES))
+
+    async def export_cubes(self, widget):
+        if self.results is None:
+            await self._show_info("No Results", "Run the calculation first; the cube uses its density grid.")
+            return
+        path = await self._ask_cube_path(self.suggested_cube_path())
+        if not path:
+            return
+        with_density = bool(self.density_cube_switch.value)
+        self._set_buttons(False)
+        self.progress_bar.value = 0
+        loop = asyncio.get_running_loop()
+
+        def on_progress(fraction):
+            loop.call_soon_threadsafe(self._apply_progress, fraction, f"ESP on the grid: {fraction:.0%}")
+
+        try:
+            paths, notes = await asyncio.to_thread(self.analyser.write_cubes, self.results, str(path),
+                                                   with_density, on_progress)
+        except (ValueError, MemoryError) as exc:
+            self.status_label.text = "The ESP cube was not saved."
+            self.progress_bar.value = 0
+            await self._show_error("ESP Cube Error", str(exc))
+            return
+        finally:
+            self._set_buttons(True)
+        self.progress_bar.value = 100
+        self.status_label.text = " ".join(["Saved: " + ", ".join(str(p) for p in paths) + "."] + notes)
+
     def clear_output(self, widget):
         self.results = None
         self.extrema_path = None
+        self._structure_settled_for = None
         self.summary_output.value = HelpGqteaWin.help_esp_surface
         self._syncing = True
         try:
@@ -734,15 +824,7 @@ class ElectrostaticSurfacePotentialUI:
         finally:
             self._syncing = False
         if self.viewer is not None:
-            self.viewer.clear_surface()
+            self.viewer.esp_layer.clear()
+            self.viewer.invalidate_scene_cache()
         self.progress_bar.value = 0
         self.status_label.text = "Ready."
-
-    def _on_close(self, window, **kwargs) -> bool:
-        if self.viewer is not None:
-            self.viewer.request_close()
-        return True
-
-    def closeTopLevel(self, widget):
-        self._on_close(self.window)
-        self.window.close()

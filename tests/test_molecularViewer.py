@@ -7,6 +7,7 @@ GL context (and no GUI) is required — matching the headless test convention in
 tests/conftest.py.
 """
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1062,5 +1063,32 @@ def test_the_cube_tab_follows_design_and_keeps_the_other_tabs_in_order():
     import inspect
     source = inspect.getsource(MolecularViewerUI.layout_main_window)
     order = [source.index(f'("{name}"') for name in
-             ("Display", "Dynamics", "Measure", "Design", "Cube", "Box & Performance")]
+             ("Display", "Dynamics", "Measure", "Design", "Cube", "ESP", "Box & Performance")]
     assert order == sorted(order)
+
+
+def test_ui_draws_the_esp_layer_and_its_colour_bar_and_frames_it():
+    from espSurfaceLayer import ESPSurfaceLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.frames = []
+    ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
+    plain = ui.get_scene_radius()
+    ui.draw_screen_overlay()  # no layer yet: nothing happens
+    ui.esp_layer = ESPSurfaceLayer()
+    calls = []
+    ui.esp_layer.draw_scene = lambda viewer: calls.append(("scene", viewer))
+    ui.esp_layer.draw_overlay = lambda viewer: calls.append(("overlay", viewer))
+    ui.render_scene_extras()
+    ui.draw_screen_overlay()
+    assert calls == [("scene", ui), ("overlay", ui)]
+    ui.esp_layer = ESPSurfaceLayer()
+    vertices = np.array([[8.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    ui.esp_layer.set_surface(vertices, np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.001)
+    assert ui.get_scene_radius() == pytest.approx(8.3) and plain < 8.3
+
+
+def test_the_tools_menu_no_longer_opens_a_separate_esp_window():
+    source = (Path(__file__).resolve().parents[1] / "gqteaWinToga.py").read_text(encoding="utf-8")
+    assert "ElectrostaticSurfacePotentialUI" not in source
+    assert "Electrostatic Surface Potential" not in source

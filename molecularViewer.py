@@ -19,6 +19,8 @@ from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
 from cubeRender import CubeSceneLayer
 from cubeTab import CubeTabController
+from electrostaticSurfacePotential import ESPTabController
+from espSurfaceLayer import ESPSurfaceLayer
 from help import AtomicData
 from molecularDesign import MolecularDesignController
 
@@ -2024,6 +2026,10 @@ class MolecularViewerUI(MolecularViewer):
         self.cube_layer = CubeSceneLayer()
         self.cube_controller = None
 
+        # ESP tab: the mapped surface, its markers and colour bar, and the controller.
+        self.esp_layer = ESPSurfaceLayer()
+        self.esp_controller = None
+
         self.layout_main_window()
 
     # ------------------------------------------------------------------
@@ -2100,6 +2106,7 @@ class MolecularViewerUI(MolecularViewer):
                 ("Measure", self._tab_page(self._build_measure_tab())),
                 ("Design", self._tab_page(self._build_design_tab())),
                 ("Cube", self._tab_page(self._build_cube_tab())),
+                ("ESP", self._tab_page(self._build_esp_tab())),
                 ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
             ],
             style=Pack(flex=1),
@@ -2508,16 +2515,33 @@ class MolecularViewerUI(MolecularViewer):
         self.cube_controller = CubeTabController(viewer=self)
         return self.cube_controller.build_tab()
 
-    # The two hooks below draw the Cube tab's volume. They are overridden
-    # here, not in MolecularViewer, whose hooks must stay empty for
-    # subclasses such as espViewer.ESPSurfaceViewer.
+    def _build_esp_tab(self) -> toga.Box:
+        """Electrostatic surface potential (electrostaticSurfacePotential.ESPTabController)."""
+        self.esp_controller = ESPTabController(viewer=self)
+        return self.esp_controller.build_tab()
+
+    # The hooks below draw the Cube tab's volume and the ESP tab's surface.
+    # They are overridden here, not in MolecularViewer, whose hooks must stay
+    # empty for subclasses such as espViewer.ESPSurfaceViewer. getattr keeps
+    # them safe on headless instances built with __new__.
     def render_scene_extras(self):
         layer = getattr(self, "cube_layer", None)
         if layer is not None:
             layer.draw()
+        esp_layer = getattr(self, "esp_layer", None)
+        if esp_layer is not None:
+            esp_layer.draw_scene(self)
+
+    def draw_screen_overlay(self):
+        esp_layer = getattr(self, "esp_layer", None)
+        if esp_layer is not None:
+            esp_layer.draw_overlay(self)  # the ESP colour bar
 
     def get_scene_radius(self, frame_data: Optional[Frame] = None) -> float:
         base = super().get_scene_radius(frame_data)
+        esp_layer = getattr(self, "esp_layer", None)
+        if esp_layer is not None and esp_layer.get() is not None:
+            base = max(base, esp_layer.radius() + 0.3)
         layer = getattr(self, "cube_layer", None)
         if layer is None or not layer.items():
             return base

@@ -144,13 +144,14 @@ class TestEngines:
 
 
 def make_ui():
-    """The UI class without a window: stub widgets, as in test_meanResidenceTime."""
-    ui = esp.ElectrostaticSurfacePotentialUI.__new__(esp.ElectrostaticSurfacePotentialUI)
+    """The ESP tab without a window: stub widgets, as in test_meanResidenceTime."""
+    ui = esp.ESPTabController.__new__(esp.ESPTabController)
     ui.analyser = esp.ESPSurfaceAnalyser()
     ui.results = None
     ui.extrema_path = None
     ui.viewer = None
     ui._syncing = False
+    ui._structure_settled_for = None
     for name in ("fchk_input", "output_dir_input", "isovalue_input", "spacing_input", "cubegen_input"):
         setattr(ui, name, SimpleNamespace(value=""))
     ui.engine_selection = SimpleNamespace(value=esp.ENGINE_BUILTIN)
@@ -162,15 +163,22 @@ def make_ui():
     ui.summary_output = SimpleNamespace(value="")
     ui.status_label = SimpleNamespace(text="")
     ui.progress_bar = SimpleNamespace(value=0)
-    ui.tabs = SimpleNamespace(current_tab=0)
-    for name in ("run_button", "show_button", "clear_button"):
+    ui.density_cube_switch = SimpleNamespace(value=True)
+    for name in ("run_button", "show_button", "clear_button", "cube_button"):
         setattr(ui, name, SimpleNamespace(enabled=True))
     ui.errors = []
+    ui.questions = []
+    ui.answer = True
 
     async def record(title, message):
         ui.errors.append((title, message))
+
+    async def ask(title, message):
+        ui.questions.append(title)
+        return ui.answer
     ui._show_error = record
     ui._show_info = record
+    ui._ask = ask
     return ui
 
 
@@ -204,7 +212,7 @@ class TestUI:
         assert (tmp_path / "water_631gd_6d_ESP_extrema.txt").exists()
         assert ui.surface_selection.items == ["rho = 0.001000 a.u."]
         assert ui.selected_surface().isovalue == 0.001
-        assert ui.tabs.current_tab == 1 and ui.run_button.enabled
+        assert ui.run_button.enabled
         markers = ui.surface_markers(ui.selected_surface())
         assert markers and all(m.label.isdigit() for m in markers)
 
@@ -220,14 +228,37 @@ class TestUI:
 
 
 class StubViewer:
-    """Stands in for ESPSurfaceViewer: records background, serves one canned frame."""
+    """Stands in for the 3D Molecular Viewer: an ESP layer, a structure, one canned frame."""
 
-    def __init__(self, image=None, open_=True, error=None):
+    def __init__(self, image=None, open_=True, error=None, frame=None):
+        from espSurfaceLayer import ESPSurfaceLayer
         self.image = image
         self.open = open_
         self.error = error
         self.background = None
         self.captures = 0
+        self.esp_layer = ESPSurfaceLayer()
+        self.frame = list(frame or [])
+        self.loaded = []
+
+    def get_current_frame_data(self):
+        return list(self.frame)
+
+    def load_designed_molecule(self, frame, bonds=None):
+        self.loaded.append(frame)
+        self.frame = list(frame)
+
+    def get_system_center(self, frame_data=None):
+        return tuple(np.mean([p for _, p in self.frame], axis=0)) if self.frame else (0.0, 0.0, 0.0)
+
+    def invalidate_scene_cache(self):
+        pass
+
+    def request_projection_update(self):
+        pass
+
+    async def ensure_viewer_window(self, timeout=5.0):
+        return True, None
 
     def viewer_window_is_open(self):
         return self.open
@@ -416,3 +447,120 @@ class TestCubeExport:
         (tmp_path / "file").write_text("x")
         with pytest.raises(ValueError, match="Could not write"):
             esp.ESPSurfaceAnalyser().write_cubes(water_results, tmp_path / "file" / "a.cube", with_density=False)
+
+
+# ----------------------------------------------------------------------
+# The tab in the 3D viewer: structure, display and cube export
+# ----------------------------------------------------------------------
+@pytest.fixture
+def water_ui(tmp_path):
+    ui = make_ui()
+    ui.fchk_input.value = str(fchk_path("water_631gd_6d"))
+    ui.output_dir_input.value = str(tmp_path)
+    ui.isovalue_input.value = "0.001"
+    ui.spacing_input.value = "0.4"
+    asyncio.run(ui.workflow(None))
+    assert not ui.errors
+    return ui
+
+
+class TestTabDisplay:
+    def test_an_empty_viewer_gets_the_molecule_without_a_question(self, water_ui):
+        water_ui.viewer = StubViewer()
+        asyncio.run(water_ui.show_surface(None))
+        assert water_ui.questions == [] and len(water_ui.viewer.loaded) == 1
+        assert [s for s, _ in water_ui.viewer.loaded[0]] == ["O", "H", "H"]
+        assert water_ui.viewer.esp_layer.get() is not None and water_ui.viewer.background == (0.0, 0.0, 0.0)
+
+    def test_the_same_molecule_is_kept_without_a_question(self, water_ui):
+        water_ui.viewer = StubViewer(frame=water_ui.fchk_frame())
+        asyncio.run(water_ui.show_surface(None))
+        assert water_ui.questions == [] and water_ui.viewer.loaded == []
+
+    def test_a_different_structure_is_asked_about_once_per_run(self, water_ui):
+        other = [("C", (0.0, 0.0, 0.0))]
+        water_ui.viewer = StubViewer(frame=other)
+        water_ui.answer = False
+        asyncio.run(water_ui.show_surface(None))
+        assert water_ui.questions == ["Show the ESP molecule?"] and water_ui.viewer.frame == other
+        assert water_ui.viewer.esp_layer.get() is not None  # drawn in the fchk coordinates anyway
+        asyncio.run(water_ui.show_surface(None))
+        assert len(water_ui.questions) == 1
+        water_ui.answer = True
+        asyncio.run(water_ui.workflow(None))  # a new run, with the surface on screen: asked again
+        assert len(water_ui.questions) == 2 and len(water_ui.viewer.loaded) == 1
+
+    def test_results_controls_follow_only_a_shown_surface(self, water_ui):
+        water_ui.viewer = StubViewer()
+        water_ui.opacity_selection.value = "Transparent (50 %)"
+        water_ui.on_display_change(None)
+        assert water_ui.viewer.esp_layer.get() is None  # not shown yet: nothing drawn
+        asyncio.run(water_ui.show_surface(None))
+        assert np.allclose(water_ui.viewer.esp_layer.get().rgba[:, 3], 0.5)
+        water_ui.unit_selection.value = "kcal/mol"
+        water_ui.on_display_change(None)
+        assert water_ui.viewer.esp_layer.colour_unit == "kcal/mol"
+
+    def test_clear_removes_the_surface(self, water_ui):
+        water_ui.viewer = StubViewer()
+        asyncio.run(water_ui.show_surface(None))
+        water_ui.clear_output(None)
+        assert water_ui.viewer.esp_layer.get() is None and water_ui.results is None
+
+
+class TestCubeButton:
+    def test_without_results(self):
+        ui = make_ui()
+        asyncio.run(ui.export_cubes(None))
+        assert ui.errors[-1][0] == "No Results"
+
+    def test_suggests_the_output_folder_and_writes_both_cubes(self, water_ui, tmp_path):
+        asked = []
+
+        async def ask(suggested):
+            asked.append(suggested)
+            return tmp_path / "chosen" / "my_ESP.cube"
+        water_ui._ask_cube_path = ask
+        asyncio.run(water_ui.export_cubes(None))
+        assert not water_ui.errors
+        assert asked == [str(tmp_path / "water_631gd_6d_ESP.cube")]
+        assert (tmp_path / "chosen" / "my_ESP.cube").exists()
+        assert (tmp_path / "chosen" / "my_density.cube").exists()
+        assert "my_ESP.cube" in water_ui.status_label.text and water_ui.cube_button.enabled
+        assert water_ui.progress_bar.value == 100
+
+    def test_density_switch_off_and_cancel(self, water_ui, tmp_path):
+        water_ui.density_cube_switch.value = False
+
+        async def ask(suggested):
+            return tmp_path / "v.cube"
+        water_ui._ask_cube_path = ask
+        asyncio.run(water_ui.export_cubes(None))
+        assert (tmp_path / "v.cube").exists() and not (tmp_path / "v_density.cube").exists()
+
+        async def cancel(suggested):
+            return None
+        water_ui._ask_cube_path = cancel
+        water_ui.status_label.text = "unchanged"
+        asyncio.run(water_ui.export_cubes(None))
+        assert water_ui.status_label.text == "unchanged" and not water_ui.errors
+
+    def test_write_failure_is_a_dialog(self, water_ui, tmp_path):
+        (tmp_path / "file").write_text("x")
+
+        async def ask(suggested):
+            return tmp_path / "file" / "v.cube"
+        water_ui._ask_cube_path = ask
+        asyncio.run(water_ui.export_cubes(None))
+        assert water_ui.errors[-1][0] == "ESP Cube Error" and water_ui.cube_button.enabled
+
+
+def test_the_module_does_not_import_the_viewer():
+    import subprocess
+    import sys
+    from pathlib import Path
+    code = ("import sys, electrostaticSurfacePotential; "
+            "print('molecularViewer' in sys.modules, 'espViewer' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                         cwd=str(Path(esp.__file__).parent), check=True)
+    assert out.stdout.strip() == "False False"
