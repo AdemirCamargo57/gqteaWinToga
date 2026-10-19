@@ -216,6 +216,9 @@ class TestStatistics:
         assert vd.default_isovalue(signed) == 0.02
         assert vd.default_isovalue(tiny) == 0.002
         assert vd.default_isovalue(small(values=np.zeros((3, 4, 5)))) == 0.02
+        assert not vd.is_signed(density) and vd.is_signed(orbital) and vd.is_signed(signed)
+        noisy = small(values=np.linspace(-1e-6, 2.0, 60).reshape(3, 4, 5))
+        assert not vd.is_signed(noisy)  # round-off below zero does not make a density signed
 
 
 class TestSlices:
@@ -293,3 +296,38 @@ class TestStructure:
         frame = vd.structure_frame(volume)
         assert [s for s, _ in frame] == ["O", "H", "X"]
         assert frame[1][1] == pytest.approx((vd.BOHR_RADIUS_ANGSTROM, 0.0, 0.0))
+
+
+# ----------------------------------------------------------------------
+# Real cubegen cubes (tests/data/cube; regenerate with make_reference.py)
+# ----------------------------------------------------------------------
+CUBE_DATA = Path(__file__).parent / "data" / "cube"
+
+
+class TestRealCubes:
+    def test_two_mo_orbital_cube_is_split_into_orthonormal_orbitals(self):
+        mo7, mo8 = cf.read_cube_volumes(CUBE_DATA / "ethylene_mo78.cube")
+        assert (mo7.orbital, mo8.orbital) == (7, 8)
+        dv = vd.voxel_volume(mo7)
+        assert (mo7.values ** 2).sum() * dv == pytest.approx(1.0, abs=1e-3)
+        assert (mo8.values ** 2).sum() * dv == pytest.approx(1.0, abs=1e-3)
+        assert abs((mo7.values * mo8.values).sum() * dv) < 1e-6
+        assert [s for s, _ in vd.structure_frame(mo8)] == ["C", "H", "H", "C", "H", "H"]
+
+    def test_homo_lobes_lie_on_either_side_of_the_molecular_plane(self):
+        _, homo = cf.read_cube_volumes(CUBE_DATA / "ethylene_mo78.cube")
+        assert vd.default_isovalue(homo) == 0.02
+        plus = vd.isosurface(homo, 0.02, sign=1)
+        minus = vd.isosurface(homo, 0.02, sign=-1)
+        # Ethylene lies in the yz plane: the pi orbital's lobes sit at +x and -x.
+        assert plus.vertices[:, 0].mean() > 1.0 and minus.vertices[:, 0].mean() < -1.0
+
+    def test_density_surface_encloses_every_atom(self):
+        (rho,) = cf.read_cube_volumes(CUBE_DATA / "ethylene_density.cube")
+        assert rho.orbital is None and rho.values.min() >= 0
+        isovalue = vd.default_isovalue(rho)
+        assert isovalue == 0.0004
+        mesh = vd.isosurface(rho, isovalue)
+        centre = mesh.vertices.mean(axis=0)
+        reach = np.linalg.norm(mesh.vertices - centre, axis=1).min()
+        assert reach > np.linalg.norm(rho.coordinates - centre, axis=1).max()

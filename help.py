@@ -1825,6 +1825,66 @@ holds a drawing you are asked first: Yes adds the molecule beside it, No
 changes nothing (press Clear first to replace the drawing).
 """
 
+    help_cube_tab = """CUBE FILES
+
+Shows Gaussian cube files (.cube/.cub) - orbitals, densities, density
+differences, potentials, Fukui functions - as isosurfaces and slices in the
+3D window, and combines grids.
+
+LOADING
+
+Load cube(s)... reads one or more files. An orbital cube holding several
+orbitals becomes one entry per orbital ("name MO 7", "name MO 8"). Cubes in
+bohr or in Angstrom, with skewed cells or different spacings per axis, are
+all read. The table lists each cube's grid, smallest and largest value and
+its integral (sum of the values x the voxel volume: electrons, for a density).
+
+The first cube decides which molecule is shown. With nothing displayed, its
+atoms are shown at once; when a structure is already displayed you are asked
+whether to replace it with the cube's atoms. Later cubes never change the
+structure; if their atoms differ, the status line says so.
+
+Show molecule hides or shows the atoms and bonds (hidden atoms cannot be
+clicked); Show volumetric data hides or shows every surface and the slice.
+
+ISOSURFACE
+
+Choose the cube, then type the isovalue and press Enter. For signed data
+(orbitals, differences) the positive surface is drawn at +isovalue and the
+negative one at -isovalue, each in its own colour; Show selects both, only
++ or only -. Density-like cubes (no negative values) start with + only.
+Starting isovalues: 0.02 for orbitals and signed data, 0.0004 for densities.
+Colours are names (Blue, Red, Green, Yellow, Orange, Cyan, Magenta, Purple,
+White, Grey) or #rrggbb. Opacity below 1 makes the surface translucent;
+Visible hides one cube without removing it.
+
+SLICE
+
+A coloured plane through one cube's grid. Grid axis a, b or c is the cube's
+own lattice axis (x, y and z for an orthogonal grid); the slider chooses the
+plane. Symmetric colours run blue (-) - white (0) - red (+) over +/- the
+largest |value| in the plane; Min to max runs red - green - blue. Export
+slice data... writes x, y, z (Angstrom) and the value of every point.
+
+GRID OPERATIONS
+
+A + B, A - B and c x A make a new cube, listed as "(unsaved)" until you save
+it. A + B and A - B need identical grids: the same number of points, the same
+origin and the same axes; anything else is refused with the reason. If the
+two cubes list different atoms the result keeps those of A and you are told.
+
+EXPORT
+
+Save selected cube... writes the cube (bohr, the cubegen/Multiwfn layout).
+Export image... saves the 3D window exactly as shown (PNG, TIFF or BMP).
+
+LIMITS
+
+Translucent surfaces are not sorted against each other; the volume does not
+move during trajectory playback; very large grids (more than about 250 points
+per axis) are slow to mesh and are held in memory.
+"""
+
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)
 
 Maps the molecular electrostatic potential V(r) onto an electron-density

@@ -175,13 +175,20 @@ DENSITY_ISOVALUE = 0.0004  # GaussView's default for total densities
 SIGNED_FRACTION = 0.01     # negative values beyond 1 % of max|v| make a cube "signed"
 
 
+def is_signed(volume: CubeVolume) -> bool:
+    """True for an orbital or data with real negative values; False for a density-like cube."""
+    max_abs = float(np.abs(volume.values).max()) if volume.values.size else 0.0
+    if volume.orbital is not None or max_abs == 0.0:
+        return True
+    return float(volume.values.min()) < -SIGNED_FRACTION * max_abs
+
+
 def default_isovalue(volume: CubeVolume) -> float:
     """A starting isovalue: orbital/signed data 0.02, densities 0.0004, capped below max|v|."""
     max_abs = float(np.abs(volume.values).max()) if volume.values.size else 0.0
     if max_abs == 0.0:
         return ORBITAL_ISOVALUE
-    signed = volume.orbital is not None or float(volume.values.min()) < -SIGNED_FRACTION * max_abs
-    value = ORBITAL_ISOVALUE if signed else DENSITY_ISOVALUE
+    value = ORBITAL_ISOVALUE if is_signed(volume) else DENSITY_ISOVALUE
     if value >= max_abs:
         value = 0.5 * max_abs
     return float(f"{value:.0e}")

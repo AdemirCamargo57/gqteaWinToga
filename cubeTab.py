@@ -30,6 +30,7 @@ from toga.style.pack import COLUMN, LEFT
 import cubeFile as cf
 import volumeData as vd
 from cubeRender import slice_item, surface_item
+from help import HelpGqteaWin
 
 SHOW_BOTH = "+ and −"
 SHOW_POSITIVE = "+ only"
@@ -85,7 +86,10 @@ class CubeEntry:
     @classmethod
     def from_volume(cls, name: str, volume: cf.CubeVolume, path: Optional[str] = None,
                     saved: bool = True) -> "CubeEntry":
-        return cls(name, volume, path, saved, vd.default_isovalue(volume),
+        # A density has no negative lobe to draw; asking for one would only
+        # produce a "no surface" note on every refresh.
+        show = SHOW_BOTH if vd.is_signed(volume) else SHOW_POSITIVE
+        return cls(name, volume, path, saved, vd.default_isovalue(volume), show,
                    statistics=vd.value_statistics(volume))
 
     def mesh(self, sign: int, use_numba: Optional[bool] = None) -> Optional[vd.IsoMesh]:
@@ -778,4 +782,8 @@ class CubeTabController:
         ))
         self.status_label = toga.Label(" ", style=Pack(font_size=9, margin=(4, 0, 0, 0)))
         tab.add(self.status_label)
+
+        tab.add(v._section_heading("Help"))
+        tab.add(toga.MultilineTextInput(value=HelpGqteaWin.help_cube_tab, readonly=True,
+                                        style=Pack(height=220, flex=1)))
         return tab

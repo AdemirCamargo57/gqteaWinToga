@@ -54,6 +54,7 @@
     - [Classical Rate Constant](#classical-rate-constant)
   - [General Tools](#general-tools)
     - [3D Molecular Viewer](#3d-molecular-viewer)
+      - [Cube tab](#cube-tab)
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
     - [Analysis of Fukui Functions](#analysis-of-fukui-functions)
       - [Molecular Design](#molecular-design)
@@ -1495,12 +1496,14 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-**Window layout.** The controls are arranged as a fixed header, four tabs, and a status line:
+**Window layout.** The controls are arranged as a fixed header, six tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels.
 - **Dynamics** tab: frame navigation, trajectory playback, and per-frame bond recomputation.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
+- **Design** tab: draw, import and pre-optimize a molecule (see [Molecular Design](#molecular-design)).
+- **Cube** tab: Gaussian cube files as isosurfaces and slices, grid arithmetic, cube and image export (see [Cube tab](#cube-tab)).
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
@@ -1545,6 +1548,68 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Reduce overlays during playback**: skips some overlay drawing to keep long trajectories smooth.
 
 The saved current frame includes the atoms from the displayed frame and a comment noting the frame number.
+
+##### Cube tab
+
+The **Cube** tab shows Gaussian cube files (`.cube`/`.cub`) in the 3D window: orbitals, densities, density differences, potentials, Fukui functions, or any other volumetric data on a grid.
+
+**Loading.** **Load cube(s)...** reads one or more files at once. What is accepted:
+
+- cubes in bohr or in Å (a negative voxel count on lines 4–6 means Å);
+- skewed cells and a different spacing along each axis, as written by periodic codes;
+- orbital cubes (negative atom count). Each orbital becomes its own entry, for example `phenol MO 24`.
+
+The table lists every cube with its grid size, smallest and largest value, and integral. The integral is the sum of the values times the voxel volume: the electron count, for a density. Cubes made by a grid operation are marked `(unsaved)`.
+
+**Which molecule is shown.** The first cube you load decides it:
+
+- With nothing displayed, the cube's own atoms are shown at once.
+- If a structure is already displayed, a dialog asks whether to replace it with the cube's atoms. **No** keeps your structure, and the volume is drawn in the cube's own coordinates.
+- Later cubes never change the structure. If their atoms differ from the displayed cube's, the status line says so.
+
+Two switches control what is drawn:
+
+- **Show molecule** hides or shows the atoms and bonds. Hidden atoms cannot be clicked.
+- **Show volumetric data** hides or shows every surface and the slice.
+
+**Isosurface.** Choose the cube, type the **Isovalue** and press Enter.
+
+- For signed data (orbitals, differences), the positive surface is drawn at +isovalue and the negative one at −isovalue, each in its own colour.
+- **Show** draws both surfaces, `+ only`, or `− only`. Cubes with no negative values (densities) start at `+ only`.
+- Starting isovalues are 0.02 for orbitals and signed data and 0.0004 for densities, as in GaussView.
+- **Positive colour** and **Negative colour** take a name (Blue, Red, Green, Yellow, Orange, Cyan, Magenta, Purple, White, Grey) or `#rrggbb`. Press Enter to apply.
+- **Opacity** below 1 makes the surface translucent.
+- **Visible** hides one cube without removing it.
+- If an isovalue cuts nothing, the status line says so and gives the cube's value range.
+
+**Slice.** A coloured plane through one cube's grid.
+
+- **Grid axis** `a`, `b` or `c` is a lattice axis of the cube. For an orthogonal grid these are x, y and z; for a skewed cell the plane follows the cell.
+- The slider chooses the plane.
+- **Colours** `Symmetric ±max|V|` runs blue (−), white (0), red (+) over ± the largest |value| in the plane. `Min to max` runs red, green, blue.
+- **Export slice data...** writes one line per grid point: x, y, z (Å) and the value.
+- The slice is opaque, so it hides whatever lies behind it.
+
+**Grid operations.**
+
+- **A + B**, **A − B** and **c × A** create a new cube named after the operation, unless you type a **Result name**.
+- **A + B** and **A − B** need identical grids: the same number of points, the same origin and the same axes. Otherwise they are refused, with the reason.
+- If A and B list different atoms, the result keeps A's atoms and the status line says so.
+- Typical uses: a density difference ρ(N+1) − ρ(N), or a sign change with c = −1.
+
+**Export.**
+
+- **Save selected cube...** writes the cube in bohr, in the layout cubegen and Multiwfn use (6 values per line, `%13.5E`). An orbital is written as a plain cube, with its MO number on the comment line.
+- **Export image...** saves the 3D window exactly as shown (PNG, TIFF or BMP).
+
+**Speed.** Isosurfaces are built by marching tetrahedra on the cube's own grid. When `numba` is installed, a compiled kernel scans the grid, about 4× faster on a 200³ grid and with far less memory; without numba the result is identical. A surface is built once per isovalue, so changing a colour, the opacity or the slice does not rebuild it.
+
+**Limits.**
+
+- Translucent surfaces are not sorted against each other.
+- The volume stays fixed while a trajectory plays.
+- Grids with more than about 250 points per axis are slow to mesh and are held fully in memory.
+- Slice colours are linear: a density's slice shows mostly the regions near the nuclei.
 
 ##### Selecting atoms by clicking in the 3D view
 

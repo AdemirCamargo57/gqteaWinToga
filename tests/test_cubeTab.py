@@ -89,6 +89,14 @@ class TestLoading:
         assert [e.name for e in entries] == ["mo MO 7", "mo MO 8"]
         assert entries[0].isovalue == 0.02
 
+    def test_density_cubes_show_only_the_positive_surface(self, tmp_path):
+        density = p_orbital_volume()
+        density.values = density.values ** 2
+        (entry,) = ct.CubeTabController.read_entries(write(tmp_path, "rho.cube", density))
+        assert entry.show == ct.SHOW_POSITIVE
+        (signed,) = ct.CubeTabController.read_entries(write(tmp_path, "p.cube", p_orbital_volume()))
+        assert signed.show == ct.SHOW_BOTH
+
     def test_names_are_unique(self, tmp_path):
         c = controller()
         path = write(tmp_path, "a.cube", p_orbital_volume())
