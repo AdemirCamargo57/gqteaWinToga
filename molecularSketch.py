@@ -299,6 +299,59 @@ class MoleculeSketch:
         self._atoms.clear()
         self._bonds.clear()
 
+    def replace_contents(
+        self,
+        elements: Sequence[str],
+        positions: Sequence[Sequence[float]],
+        bonds: Sequence[Tuple[int, int, float]] = (),
+    ):
+        """Replace the whole drawing with a structure read from a file.
+
+        ``positions`` are sketch coordinates, one ``(x, y, z)`` row per
+        element; ``bonds`` are ``(i, j, order)`` with **0-based** positions
+        into ``elements``. Everything is checked before the current drawing is
+        touched, so a bad structure leaves the sketch exactly as it was. New
+        atoms get fresh ids -- ids are never reused, even across a reload.
+        """
+        symbols = [normalise_element(element) for element in elements]
+        array = np.asarray(positions, dtype=float)
+        if array.shape != (len(symbols), 3):
+            raise ValueError(
+                f"Expected positions for {len(symbols)} atoms as (x, y, z) rows, "
+                f"got an array of shape {array.shape}."
+            )
+        if not np.all(np.isfinite(array)):
+            raise ValueError("Atom positions must be finite numbers.")
+
+        allowed_orders = set(BOND_TYPE_NAMES)
+        seen = set()
+        checked_bonds = []
+        for i, j, order in bonds:
+            i, j, order = int(i), int(j), float(order)
+            if not (0 <= i < len(symbols) and 0 <= j < len(symbols)):
+                raise ValueError(
+                    f"A bond refers to atom {max(i, j) + 1}, but the structure has "
+                    f"{len(symbols)} atoms."
+                )
+            if i == j:
+                raise ValueError(f"Atom {i + 1} cannot be bonded to itself.")
+            if order not in allowed_orders:
+                raise ValueError(
+                    f"Bond {i + 1}-{j + 1} has order {format_order(order)}; the canvas "
+                    "supports single, double, triple and resonance (1.5) bonds."
+                )
+            pair = (min(i, j), max(i, j))
+            if pair in seen:
+                raise ValueError(f"Atoms {pair[0] + 1} and {pair[1] + 1} are bonded twice.")
+            seen.add(pair)
+            checked_bonds.append((i, j, order))
+
+        self.clear()
+        ids = [self.add_atom(symbol, x, y, z).atom_id for symbol, (x, y, z) in zip(symbols, array)]
+        # Appended directly: the pairs are already known to be unique, and
+        # add_bond's linear duplicate search would make a large import quadratic.
+        self._bonds = [SketchBond(ids[i], ids[j], order) for i, j, order in checked_bonds]
+
     # ------------------------------------------------------------------
     # Bond order
     # ------------------------------------------------------------------

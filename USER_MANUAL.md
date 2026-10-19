@@ -60,6 +60,7 @@
         - [Opening and using the two windows](#opening-and-using-the-two-windows)
         - [Creating and modifying bonds](#creating-and-modifying-bonds)
         - [Running the pre-optimization](#running-the-pre-optimization)
+        - [Importing and saving structure files](#importing-and-saving-structure-files)
         - [Validation messages](#validation-messages)
     - [Energy Plots](#energy-plots)
     - [Molecular Axis Alignment](#molecular-axis-alignment)
@@ -1571,8 +1572,9 @@ Example: in a trajectory where two atoms separate during a dissociation event, t
 ##### Molecular Design
 
 The **Design** tab of the 3D Molecular Viewer lets you draw a molecule with the
-mouse, pre-optimize its geometry, and send the result straight into the 3D
-viewer to inspect or save as an XYZ file. It is meant for building a starting
+mouse — or import one from a structure file — pre-optimize its geometry, and
+send the result straight into the 3D viewer, or save it as an XYZ, Gaussian
+input, MOL, SDF, MOL2 or PDB file. It is meant for building a starting
 structure quickly, without leaving the toolkit.
 
 ###### Opening and using the two windows
@@ -1750,6 +1752,76 @@ Frame XYZ** remain available.
 Editing the drawing again discards the previous optimization, so the structure
 you send is always the one you last optimized. Rotating, panning or zooming the
 view does not.
+
+###### Importing and saving structure files
+
+The **File** row of the canvas window holds **Import structure...**, the
+save-format list and **Save Frame**.
+
+**Import structure...** replaces the drawing with the structure in a file, and
+you can then edit it with every tool above. The import counts as one edit, so
+**Undo** brings the previous drawing back. The molecule is centred on the
+canvas, the view is reset, and it is zoomed out if that is needed to show all
+of it. A dialog reports the number of atoms and bonds read, plus anything the
+reader had to decide for you.
+
+| Format | Extensions | Import | Save | Bonds kept in the file |
+|--------|------------|--------|------|------------------------|
+| XYZ | `.xyz` | yes | yes (default) | none |
+| Gaussian input | `.gjf` `.com` `.gau` | yes | yes | bond orders, in a `Geom=Connectivity` section |
+| Gaussian formatted checkpoint | `.fchk` `.fch` | yes | no | none |
+| MDL Molfile V2000 | `.mol` | yes | yes | bond orders (resonance = aromatic, type 4) |
+| MDL SD file | `.sdf` `.sd` | yes (first record) | yes | bond orders |
+| Tripos MOL2 | `.mol2` | yes | yes | bond orders (resonance = `ar`) |
+| PDB | `.pdb` `.ent` | yes | yes | connectivity (`CONECT`), no bond orders |
+
+**Bonds on import.** When a file has no bonds (XYZ, fchk, a Gaussian input
+without `Geom=Connectivity`, a MOL or MOL2 file with an empty bond block, a PDB
+without `CONECT` records), they are detected from the interatomic distances
+with the 3D viewer's rule (a pair is bonded within the sum of its covalent
+radii plus 0.45 Å), and **every detected bond is single**. Before
+pre-optimizing, click the double, triple and resonance bonds to set their type,
+or they relax to single-bond lengths. A PDB file's `CONECT` records are used
+where they exist; atoms they never mention, such as a protein's standard
+residues, get distance-detected bonds.
+
+**What the readers understand.** XYZ: element symbols, numbered labels (`C1`)
+or atomic numbers, and extra columns after x y z. A comment line reading
+`coordinates in bohr` (as the Coordinate Converter writes) is converted to
+Ångström. Gaussian input: `Units=Bohr`, freeze codes (`C 0 x y z`), fragment and
+ONIOM labels (`C(Fragment=1)`, `C-CA--0.1`) and comma separators. Dummy and
+ghost centres (`X`, `Bq`, `Du`, `LP`) are skipped. Only the first structure is
+read from an XYZ trajectory, a multi-record SD file, a multi-model PDB or a
+linked (`--Link1--`) Gaussian job, and the import dialog says so.
+
+**Not supported**, each refused with a message saying why: Gaussian Z-matrix
+input (re-save it with Cartesian coordinates), inputs that read the geometry
+from a checkpoint (`Geom=Check`; import the `.fchk` instead), MOL V3000,
+Gaussian `.log` output, binary `.chk` files (convert them with `formchk`), CIF
+and HyperChem `.hin`. Files of more than 1000 atoms are refused too; open large
+systems in the 3D viewer with **Display Molecule/Trajectory**.
+
+**Malformed files** are refused with the file name, the format and the line at
+fault, for example `'water.xyz' could not be imported as XYZ: line 4: 'zero' is
+not a number.` The drawing is left unchanged. Atoms closer than 0.4 Å are
+refused as well, since that almost always means duplicated atoms or a file in
+bohr.
+
+**Save Frame** writes the structure on the canvas: the optimized geometry after
+a pre-optimization, the drawing otherwise, in Ångström and centred on the
+origin. The view (rotation, pan, zoom) is not applied. Pick the format in the
+list beside the button; **XYZ** is the default. The save dialog suggests
+`designed_molecule` with that format's extension. If you type a name ending in
+a *different* supported extension (`frame.pdb`), that format is written
+instead, so the content always matches the name. Any other name gets the
+selected format.
+
+The **Gaussian input** is a template to check before running. Its route is
+`#P B3LYP/6-31G(d) Opt Geom=Connectivity`, its `%Chk` is named after the file,
+and it assumes charge 0 and the lowest multiplicity the electron count allows
+(1 for an even count, 2 for an odd one). The confirmation dialog repeats this.
+A MOL or SD file holds at most 999 atoms and 999 bonds, and a PDB file at most
+99 999 atoms; a structure that does not fit is reported, and no file is written.
 
 ###### Validation messages
 

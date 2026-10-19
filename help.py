@@ -1530,8 +1530,9 @@ by state across all subfolders.
     help_molecular_design = """
 MOLECULAR DESIGN
 
-Draw a molecule with the mouse, pre-optimize its geometry, and send the result
-to the 3D viewer to display or save as an XYZ file.
+Draw a molecule with the mouse - or import one from a structure file - pre-
+optimize its geometry, and send the result to the 3D viewer, or save it as an
+XYZ, Gaussian input, MOL, SDF, MOL2 or PDB file.
 
 TWO WINDOWS
 
@@ -1664,6 +1665,52 @@ a dialog reports the reason. The structure has still been transferred, so
 Editing the drawing again discards the previous optimization, so the structure
 you send is always the one you last optimized. Rotating or panning the view
 does not.
+
+IMPORTING A STRUCTURE
+
+'Import structure...' (File row of the canvas window) replaces the drawing with
+the structure in a file, ready to edit with every tool above. The import is
+one edit: Undo brings the previous drawing back. The molecule is centred, the
+view is reset, and it is zoomed out if needed to fit the canvas.
+
+  Format                           Extensions          Bonds in the file
+  XYZ                              .xyz                none
+  Gaussian input                   .gjf .com .gau      orders, if Geom=Connectivity
+  Gaussian formatted checkpoint    .fchk .fch          none
+  MDL Molfile V2000                .mol                orders
+  MDL SD file                      .sdf .sd            orders
+  Tripos MOL2                      .mol2               orders
+  PDB                              .pdb .ent           connectivity only
+
+When a file holds no bonds, they are detected from the distances (the 3D
+viewer's rule) and all come in as single bonds: set double, triple and
+resonance bonds by clicking them before pre-optimizing, or they relax to
+single-bond lengths. An aromatic bond (MOL type 4, MOL2 'ar') becomes a
+resonance bond.
+
+Only the first structure is read from a trajectory, a multi-record SD file, a
+multi-model PDB or a linked Gaussian job; the import dialog says so. Gaussian
+Units=Bohr, freeze codes, fragment and ONIOM labels are understood; dummy and
+ghost atoms (X, Bq) are skipped. Not supported, with a message saying why:
+Z-matrix input, Geom=Check inputs (import the .fchk instead), MOL V3000,
+Gaussian .log output, binary .chk files, CIF and HyperChem .hin. A malformed
+file is refused with the line at fault and the drawing is left unchanged.
+Files of more than 1000 atoms belong in the 3D viewer, not on the canvas.
+
+SAVING THE STRUCTURE
+
+'Save Frame' writes the structure on the canvas - the optimized geometry after
+a pre-optimization, the drawing otherwise - in Angstrom, centred on the origin.
+Choose the format in the list beside it; XYZ is the default. MOL, SDF and MOL2
+keep the bond orders (resonance bonds as aromatic), the Gaussian input keeps
+them in a Geom=Connectivity section, PDB keeps the connectivity only and XYZ
+keeps no bonds. If you type a file name ending in another supported extension,
+that format is written instead, so the content always matches the name.
+
+The Gaussian input is a template: route '#P B3LYP/6-31G(d) Opt
+Geom=Connectivity', charge 0 and the lowest multiplicity the electron count
+allows (1 if even, 2 if odd). Check the charge, multiplicity and route before
+running it.
 """
 
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)

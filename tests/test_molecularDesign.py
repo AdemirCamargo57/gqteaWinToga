@@ -12,12 +12,15 @@ views at once, surviving a closed window, writing an optimized geometry back
 onto the drawing, and handing the finished structure to the 3D viewer.
 """
 import asyncio
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import molecularDesign
+import molecularFileFormats
 from molecularDesign import MolecularDesignController, blend_color
+from molecularFileFormats import parse_structure_text
 from molecularPreOptimizer import PIXELS_PER_ANGSTROM, OptimizationResult, reference_bond_length
 from molecularSketch import RESONANCE_ORDER
 
@@ -1093,3 +1096,255 @@ def test_blend_color_mixes_towards_the_background():
     assert blend_color("#000000", "#ffffff", 0.0) == "#000000"
     assert blend_color("#000000", "#ffffff", 1.0) == "#ffffff"
     assert blend_color("#ff0000", "#0000ff", 0.5) == "#800080"
+
+
+# ------------------------------------------------------------------
+# Importing structure files and saving in other formats
+# ------------------------------------------------------------------
+ETHYLENE_GJF = Path(__file__).parent / "data" / "fchk" / "inputs" / "eteno_b3lyp_631g.gjf"
+
+
+class _StubFileDialogWindow(_StubDialogWindow):
+    """Also answers an OpenFileDialog with ``open_path``."""
+
+    def __init__(self, save_path=None, open_path=None):
+        super().__init__(save_path)
+        self.open_path = open_path
+
+    async def dialog(self, dialog):
+        if dialog.__class__.__name__ == "OpenFileDialog":
+            self.dialogs.append(dialog)
+            return self.open_path
+        return await super().dialog(dialog)
+
+
+def _write(tmp_path, name, text):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_importing_a_file_replaces_the_drawing_with_its_structure():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+
+    imported, message, notes = controller.import_structure(ETHYLENE_GJF)
+
+    assert imported
+    assert [atom.element for atom in controller.sketch.atoms] == ["C", "H", "H", "C", "H", "H"]
+    assert sorted(bond.order for bond in controller.sketch.bonds) == [1.0, 1.0, 1.0, 1.0, 2.0]
+    assert "Imported 6 atoms and 5 bonds" in message and "Undo" in message
+    assert controller.status_message == message
+    assert notes == []
+
+
+def test_an_imported_structure_keeps_its_geometry_on_export():
+    controller = _controller()
+    controller.import_structure(ETHYLENE_GJF)
+
+    exported = parse_structure_text(controller.frame_xyz_text(), "XYZ").coordinates
+    original = molecularFileFormats.read_structure_file(ETHYLENE_GJF).coordinates
+
+    assert np.allclose(exported, original - original.mean(axis=0), atol=1e-8)
+
+
+def test_an_import_is_one_undo_step_and_clears_the_optimization():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.apply_optimization_result(_write_back_result([[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]]))
+    drawn = controller.sketch.snapshot()
+
+    controller.import_structure(ETHYLENE_GJF)
+    assert controller.last_result is None
+
+    controller.undo(None)
+    assert controller.sketch.snapshot() == drawn
+
+
+def test_an_imported_molecule_is_centred_and_the_view_reset():
+    controller = _controller()
+    _right_drag(controller, 100.0, 300.0, 300.0, 200.0)
+
+    controller.import_structure(ETHYLENE_GJF)
+
+    assert np.allclose(controller.sketch.positions().mean(axis=0)[:2], controller.view_centre)
+    assert np.allclose(controller.camera.rotation, np.eye(3))
+    assert controller.camera.zoom == 1.0
+
+
+def test_a_large_molecule_is_zoomed_out_to_fit(tmp_path):
+    chain = "\n".join(f"C {1.5 * k:.3f} 0 0" for k in range(30))
+    path = _write(tmp_path, "chain.xyz", f"30\nchain\n{chain}\n")
+    controller = _controller()
+
+    controller.import_structure(path)
+
+    screen = controller.camera.project(controller.sketch.positions())
+    assert controller.camera.zoom < 1.0
+    assert screen[:, 0].min() >= 0.0 and screen[:, 0].max() <= molecularDesign.CANVAS_WIDTH
+
+
+def test_a_malformed_file_is_reported_and_changes_nothing(tmp_path):
+    path = _write(tmp_path, "bad.xyz", "3\ncomment\nO 0 0 0\n")
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    before = controller.sketch.snapshot()
+
+    imported, message, _ = controller.import_structure(path)
+
+    assert not imported
+    assert "'bad.xyz' could not be imported as XYZ" in message
+    assert controller.sketch.snapshot() == before
+    assert len(controller.undo_stack) == 1
+
+
+def test_an_unsupported_file_type_is_reported(tmp_path):
+    imported, message, _ = _controller().import_structure(_write(tmp_path, "run.log", "text"))
+
+    assert not imported
+    assert "Gaussian output files are not read" in message
+
+
+def test_too_many_atoms_are_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(molecularDesign, "MAX_IMPORT_ATOMS", 2)
+    path = _write(tmp_path, "water.xyz", "3\n\nO 0 0 0.117\nH 0 0.757 -0.469\nH 0 -0.757 -0.469\n")
+    controller = _controller()
+
+    imported, message, _ = controller.import_structure(path)
+
+    assert not imported
+    assert "at most 2" in message and controller.sketch.is_empty
+
+
+def test_the_import_button_loads_the_chosen_file():
+    viewer = _StubViewer()
+    viewer.main_window = _StubFileDialogWindow(open_path=ETHYLENE_GJF)
+    controller = _controller(viewer=viewer)
+
+    assert asyncio.run(controller.import_file(None)) is True
+
+    assert controller.sketch.atom_count == 6
+    kinds = [type(d).__name__ for d in viewer.main_window.dialogs]
+    assert kinds == ["OpenFileDialog", "InfoDialog"]
+
+
+def test_a_failed_import_shows_an_error_dialog(tmp_path):
+    viewer = _StubViewer()
+    viewer.main_window = _StubFileDialogWindow(open_path=_write(tmp_path, "bad.mol", "x\n"))
+    controller = _controller(viewer=viewer)
+
+    assert asyncio.run(controller.import_file(None)) is False
+    assert [type(d).__name__ for d in viewer.main_window.dialogs] == ["OpenFileDialog", "ErrorDialog"]
+
+
+def test_cancelling_the_import_dialog_changes_nothing():
+    viewer = _StubViewer()
+    viewer.main_window = _StubFileDialogWindow(open_path=None)
+    controller = _controller(viewer=viewer)
+
+    assert asyncio.run(controller.import_file(None)) is False
+    assert controller.sketch.is_empty
+
+
+def test_xyz_stays_the_default_export_format():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    assert controller.export_format == "XYZ"
+    assert controller.frame_text() == controller.frame_xyz_text()
+
+
+@pytest.mark.parametrize("key, name", [
+    ("Gaussian", "frame.gjf"), ("MOL", "frame.mol"), ("SDF", "frame.sdf"),
+    ("MOL2", "frame.mol2"), ("PDB", "frame.pdb"),
+])
+def test_the_frame_is_written_in_the_chosen_format(tmp_path, key, name):
+    controller = _controller()
+    controller.import_structure(ETHYLENE_GJF)
+    output = tmp_path / name
+
+    saved, message = controller.write_frame(str(output), key)
+
+    assert saved and str(output) in message
+    back = parse_structure_text(output.read_text(encoding="utf-8"), key)
+    assert back.elements == ["C", "H", "H", "C", "H", "H"]
+    assert len(back.bonds) == 5
+
+
+def test_the_exported_bond_orders_are_the_drawn_ones(tmp_path):
+    controller = _controller()
+    bond = _two_bonded_carbons(controller)
+    controller._cycle_bond(bond)  # double
+
+    saved, _ = controller.write_frame(str(tmp_path / "frame.mol"), "MOL")
+
+    assert saved
+    assert parse_structure_text((tmp_path / "frame.mol").read_text(), "MOL").bonds == [(0, 1, 2.0)]
+
+
+def test_choosing_a_format_is_reported_and_unknown_ones_refused():
+    controller = _controller()
+
+    controller.set_export_format("PDB")
+
+    assert controller.export_format == "PDB"
+    assert "PDB" in controller.status_message
+    with pytest.raises(ValueError):
+        controller.set_export_format("FCHK")
+
+
+def test_save_frame_offers_the_selected_format(tmp_path):
+    viewer = _StubViewer()
+    output = tmp_path / "chosen.mol2"
+    viewer.main_window = _StubDialogWindow(save_path=output)
+    controller = _controller(viewer=viewer)
+    _two_bonded_carbons(controller)
+    controller.set_export_format("MOL2")
+
+    assert asyncio.run(controller.save_frame(None)) is True
+
+    native = viewer.main_window.dialogs[0]._impl.native  # the WinForms dialog
+    assert native.Title == "Save Frame as Tripos MOL2"
+    assert native.FileName == "designed_molecule.mol2"
+    assert native.Filter.startswith("mol2 files (*.mol2)|*.mol2")
+    assert output.read_text(encoding="utf-8") == controller.frame_text("MOL2", name="chosen")
+
+
+def test_a_typed_supported_extension_wins_over_the_selection(tmp_path):
+    viewer = _StubViewer()
+    output = tmp_path / "typed.pdb"
+    viewer.main_window = _StubDialogWindow(save_path=output)
+    controller = _controller(viewer=viewer)
+    _two_bonded_carbons(controller)
+
+    assert asyncio.run(controller.save_frame(None)) is True
+    assert output.read_text(encoding="utf-8").startswith("COMPND")
+
+
+def test_an_unknown_extension_gets_the_selected_format(tmp_path):
+    viewer = _StubViewer()
+    output = tmp_path / "frame.txt"
+    viewer.main_window = _StubDialogWindow(save_path=output)
+    controller = _controller(viewer=viewer)
+    _two_bonded_carbons(controller)
+
+    assert asyncio.run(controller.save_frame(None)) is True
+    assert output.read_text(encoding="utf-8") == controller.frame_xyz_text()
+
+
+def test_a_format_that_cannot_hold_the_structure_is_reported(tmp_path, monkeypatch):
+    monkeypatch.setattr(molecularFileFormats, "MOL_MAX_COUNT", 1)
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    saved, message = controller.write_frame(str(tmp_path / "frame.mol"), "MOL")
+
+    assert not saved
+    assert "could not be saved as MOL" in message
+    assert not (tmp_path / "frame.mol").exists()
+
+
+def test_the_save_format_list_starts_with_xyz_and_covers_every_writer():
+    labels = molecularDesign.DesignCanvasWindow.EXPORT_FORMAT_LABELS
+    assert list(labels.values())[0] == "XYZ"
+    assert set(labels.values()) == {fmt.key for fmt in molecularFileFormats.WRITABLE_FORMATS}

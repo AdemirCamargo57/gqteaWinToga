@@ -725,3 +725,46 @@ def test_a_resonance_bond_with_a_neighbour_at_one_end_is_enough():
     _, warnings = sketch.validate()
 
     assert not any("resonance" in message.lower() for message in warnings)
+
+
+# ------------------------------------------------------------------
+# Replacing the drawing with an imported structure
+# ------------------------------------------------------------------
+def test_replace_contents_loads_atoms_and_bonds_in_order():
+    sketch = _water()
+    sketch.replace_contents(
+        ["c", "O"], [[0.0, 0.0, 0.0], [48.0, 0.0, 4.0]], [(0, 1, 2.0)]
+    )
+
+    assert [atom.element for atom in sketch.atoms] == ["C", "O"]
+    assert sketch.positions()[1].tolist() == [48.0, 0.0, 4.0]
+    assert sketch.bond_index_pairs() == [(0, 1)]
+    assert sketch.bonds[0].order == 2.0
+
+
+def test_replace_contents_never_reuses_atom_ids():
+    sketch = _water()
+    old_ids = set(sketch.ordered_atom_ids())
+
+    sketch.replace_contents(["H", "H"], [[0.0, 0.0, 0.0], [30.0, 0.0, 0.0]])
+
+    assert not old_ids & set(sketch.ordered_atom_ids())
+
+
+@pytest.mark.parametrize("elements, positions, bonds, message", [
+    (["C", "C"], [[0.0, 0.0, 0.0]], [], "Expected positions for 2 atoms"),
+    (["C"], [[0.0, float("nan"), 0.0]], [], "finite"),
+    (["C", "C"], [[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]], [(0, 2, 1.0)], "refers to atom 3"),
+    (["C", "C"], [[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]], [(1, 1, 1.0)], "itself"),
+    (["C", "C"], [[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]], [(0, 1, 4.0)], "order 4"),
+    (["C", "C"], [[0.0, 0.0, 0.0], [60.0, 0.0, 0.0]], [(0, 1, 1.0), (1, 0, 2.0)], "bonded twice"),
+    ([""], [[0.0, 0.0, 0.0]], [], "element symbol is required"),
+])
+def test_a_refused_structure_leaves_the_drawing_untouched(elements, positions, bonds, message):
+    sketch = _water()
+    before = sketch.snapshot()
+
+    with pytest.raises(ValueError, match=message):
+        sketch.replace_contents(elements, positions, bonds)
+
+    assert sketch.snapshot() == before

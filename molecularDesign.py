@@ -45,10 +45,17 @@ Pre-optimizing writes the optimized geometry **back onto the drawing** (one
 undo step), so the canvas always shows the structure that would be sent to
 the 3D viewer, and the next edit builds on the relaxed geometry.
 
+**Import structure...** replaces the drawing with a structure read from a file
+(one undo step), and **Save Frame** writes the canvas in the format chosen
+beside it -- XYZ by default. What each format can hold, and every reader and
+writer, live in [molecularFileFormats.py](molecularFileFormats.py), which knows
+nothing about the canvas; only the pixel/Angstrom conversion happens here.
+
 The controller owns no chemistry: what a gesture *means* is decided here, but
 whether it is allowed comes from :class:`~molecularSketch.MoleculeSketch`.
 """
 import asyncio
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -60,9 +67,21 @@ from toga.style.pack import CENTER, COLUMN, ROW
 
 from help import HelpGqteaWin
 from molecularCamera import ViewCamera
+from molecularFileFormats import (
+    FORMATS_BY_KEY,
+    READABLE_FORMATS,
+    WRITABLE_FORMATS,
+    StructureData,
+    export_notes,
+    format_for_path,
+    read_structure_file,
+    structure_to_text,
+    write_xyz_text,
+)
 from molecularPreOptimizer import (
     PIXELS_PER_ANGSTROM,
     OptimizationResult,
+    angstrom_to_sketch,
     optimize_sketch,
     reference_bond_length,
     sketch_to_angstrom,
@@ -73,6 +92,13 @@ from periodicTable import PeriodicTableWindow
 # Canvas size in pixels; the view zooms about its centre.
 CANVAS_WIDTH = 560
 CANVAS_HEIGHT = 420
+
+# The canvas is for building molecules; a larger system belongs in the 3D
+# viewer, which can open the same file directly.
+MAX_IMPORT_ATOMS = 1000
+
+# Format the Save Frame button writes until the user picks another.
+DEFAULT_EXPORT_FORMAT = "XYZ"
 
 # Length, in Angstrom, of a bond grown from an atom when either element has no
 # covalent radius to derive a reference length from.
@@ -163,6 +189,9 @@ class MolecularDesignController:
         # Bumped by every edit, so an optimization that finishes after the
         # user has changed the drawing can tell its result is stale.
         self._edit_generation = 0
+
+        # File format Save Frame writes (a molecularFileFormats key).
+        self.export_format = DEFAULT_EXPORT_FORMAT
 
         # Launcher-tab widgets, the only ones the controller holds directly.
         self.launcher_status_label = None
@@ -579,9 +608,13 @@ class MolecularDesignController:
             suffix = ""
         self.set_status(f"{element_i}-{element_j} bond is now {name}{suffix}.")
 
-    def _push_undo(self):
-        """Snapshot before a change, and drop any geometry that no longer matches."""
-        self.undo_stack.append(self.sketch.snapshot())
+    def _push_undo(self, snapshot=None):
+        """Snapshot before a change, and drop any geometry that no longer matches.
+
+        ``snapshot`` is a state taken earlier, for a change that is only
+        recorded once it is known to have succeeded (an import).
+        """
+        self.undo_stack.append(self.sketch.snapshot() if snapshot is None else snapshot)
         if len(self.undo_stack) > self.UNDO_DEPTH:
             self.undo_stack.pop(0)
         self.last_result = None
@@ -766,10 +799,92 @@ class MolecularDesignController:
         return True
 
     # ------------------------------------------------------------------
+    # Importing a structure file
+    # ------------------------------------------------------------------
+    def import_structure(self, path) -> Tuple[bool, str, List[str]]:
+        """Replace the drawing with the structure in ``path``. No dialogs.
+
+        Returns ``(ok, message, notes)``; on failure the drawing is untouched
+        and ``message`` says what is wrong with the file. The import is one
+        undo step, so Undo brings the previous drawing back. The molecule is
+        centred on the canvas, and the view is reset and zoomed out if that is
+        needed to show all of it. Split from :meth:`import_file` so it is
+        testable without an event loop, like :meth:`transfer_to_viewer`.
+        """
+        try:
+            structure = read_structure_file(path)
+        except ValueError as exc:
+            return False, str(exc), []
+        name = Path(path).name
+        if structure.atom_count > MAX_IMPORT_ATOMS:
+            return False, (
+                f"'{name}' holds {structure.atom_count} atoms; the design canvas imports at most "
+                f"{MAX_IMPORT_ATOMS}. Open large systems in the 3D viewer with "
+                "'Display Molecule/Trajectory' instead."
+            ), []
+
+        coordinates = structure.coordinates - structure.coordinates.mean(axis=0)
+        positions = angstrom_to_sketch(coordinates) + np.array([*self.view_centre, 0.0])
+        had_drawing = not self.sketch.is_empty
+        before = self.sketch.snapshot()
+        try:
+            self.sketch.replace_contents(structure.elements, positions, structure.bonds)
+        except ValueError as exc:  # replace_contents changes nothing when it refuses
+            return False, f"'{name}' could not be placed on the canvas: {exc}", []
+        self._push_undo(before)
+        self.camera.reset()
+        self._fit_view()
+
+        label = format_for_path(path).label
+        message = (
+            f"Imported {self.sketch.atom_count} atoms and {self.sketch.bond_count} bonds "
+            f"from {name} ({label})."
+        )
+        if had_drawing:
+            message += " Undo restores the previous drawing."
+        self.set_status(message)
+        self._redraw()
+        return True, message, list(structure.notes)
+
+    def _fit_view(self):
+        """Zoom out -- never in -- until every atom of the reset view is on the canvas."""
+        if self.sketch.is_empty:
+            return
+        centre = np.array(self.view_centre)
+        extent = np.abs(self.sketch.positions()[:, :2] - centre).max(axis=0)
+        room = centre - 2.0 * self.ATOM_RADIUS
+        scales = [room[axis] / extent[axis] for axis in (0, 1) if extent[axis] > 0.0]
+        if scales and min(scales) < 1.0:
+            self.camera.zoom_by(min(scales), *centre)
+
+    async def import_file(self, widget=None):
+        """Ask for a structure file and load it onto the canvas."""
+        window = self._dialog_window()
+        if window is None:
+            return False
+        extensions = [ext.lstrip(".") for fmt in READABLE_FORMATS for ext in fmt.extensions]
+        selected = await window.dialog(
+            toga.OpenFileDialog(title="Import structure", file_types=extensions)
+        )
+        if isinstance(selected, (list, tuple)):
+            selected = selected[0] if selected else None
+        if not selected:
+            return False
+
+        imported, message, notes = self.import_structure(selected)
+        if not imported:
+            self.set_status("The file could not be imported; the drawing is unchanged.")
+            await self._show_error("Cannot import this file", message)
+            return False
+        details = "\n\n".join([message] + notes)
+        await self._show_info("Structure imported", details)
+        return True
+
+    # ------------------------------------------------------------------
     # Saving the displayed structure
     # ------------------------------------------------------------------
-    def frame_xyz_text(self) -> str:
-        """The structure on the canvas as XYZ text: element and x, y, z in Angstrom.
+    def current_structure(self) -> StructureData:
+        """The structure on the canvas in Angstrom, with its bonds and their orders.
 
         Built from the sketch itself, so it is exactly what the canvas shows --
         the optimized geometry after a pre-optimization, the drawing otherwise.
@@ -780,17 +895,48 @@ class MolecularDesignController:
         coordinates = sketch_to_angstrom(self.sketch.positions())
         if elements:
             coordinates = coordinates - coordinates.mean(axis=0)
-
+        index_of = {atom_id: index for index, atom_id in enumerate(self.sketch.ordered_atom_ids())}
+        bonds = sorted(
+            (min(index_of[b.atom_i], index_of[b.atom_j]), max(index_of[b.atom_i], index_of[b.atom_j]),
+             float(b.order))
+            for b in self.sketch.bonds
+        )
         state = "pre-optimized" if self.last_result is not None else "as drawn, not optimized"
-        lines = [
-            str(len(elements)),
-            f"Generated by the gQTEA molecular design tool ({state}); coordinates in Angstrom",
-        ]
-        for element, (x, y, z) in zip(elements, coordinates):
-            lines.append(f"{element:<3s} {x: .8f} {y: .8f} {z: .8f}")
-        return "\n".join(lines) + "\n"
+        title = f"Generated by the gQTEA molecular design tool ({state}); coordinates in Angstrom"
+        return StructureData(elements, coordinates, bonds=bonds, title=title)
 
-    def write_frame(self, output_path: str) -> Tuple[bool, str]:
+    def frame_xyz_text(self) -> str:
+        """The structure on the canvas as XYZ text: element and x, y, z in Angstrom."""
+        return write_xyz_text(self.current_structure())
+
+    def frame_text(self, format_key: Optional[str] = None, name: str = "designed_molecule") -> str:
+        """The structure on the canvas as a ``format_key`` file (default: the selected format)."""
+        format_key = format_key or self.export_format
+        if format_key == "XYZ":
+            return self.frame_xyz_text()
+        return structure_to_text(self.current_structure(), format_key, name)
+
+    def set_export_format(self, format_key: str):
+        """Choose the format Save Frame writes; XYZ until changed."""
+        fmt = FORMATS_BY_KEY.get(format_key)
+        if fmt is None or not fmt.writable:
+            raise ValueError(f"Structures cannot be saved as {format_key}.")
+        self.export_format = format_key
+        self.set_status(f"Save Frame will write {fmt.label} files ({', '.join(fmt.extensions)}).")
+
+    def _format_for_saving(self, output_path) -> str:
+        """The selected format, unless the chosen name ends in another supported one.
+
+        A typed ``frame.pdb`` is then written as PDB, so a file's content always
+        matches its extension; a name with any other extension gets the
+        selected format, as every name got XYZ before formats could be chosen.
+        """
+        try:
+            return format_for_path(output_path, "write").key
+        except ValueError:
+            return self.export_format
+
+    def write_frame(self, output_path: str, format_key: Optional[str] = None) -> Tuple[bool, str]:
         """Write the displayed structure to ``output_path``. No dialogs.
 
         Split from :meth:`save_frame` so the export stays testable without an
@@ -798,15 +944,23 @@ class MolecularDesignController:
         """
         if self.sketch.is_empty:
             return False, "Draw a structure on the canvas before saving it."
+        format_key = format_key or self.export_format
+        try:
+            text = self.frame_text(format_key, name=Path(output_path).stem)
+        except ValueError as exc:
+            return False, f"The structure could not be saved as {format_key}: {exc}"
         try:
             with open(output_path, "w", encoding="utf-8") as handle:
-                handle.write(self.frame_xyz_text())
+                handle.write(text)
         except OSError as exc:
             return False, f"The structure could not be saved: {exc}"
-        return True, f"{self.sketch.atom_count} atoms saved to {output_path}"
+        message = f"{self.sketch.atom_count} atoms saved to {output_path}"
+        if format_key != "XYZ":
+            message += f" ({FORMATS_BY_KEY[format_key].label})"
+        return True, message
 
     async def save_frame(self, widget=None):
-        """Ask for a file name and save the displayed structure as XYZ."""
+        """Ask for a file name and save the displayed structure in the selected format."""
         if self.sketch.is_empty:
             message = "Draw a structure on the canvas before saving it."
             self.set_status(message)
@@ -816,20 +970,25 @@ class MolecularDesignController:
         window = self._dialog_window()
         if window is None:
             return False
+        fmt = FORMATS_BY_KEY[self.export_format]
         selected = await window.dialog(
             toga.SaveFileDialog(
-                title="Save Frame as XYZ", suggested_filename="designed_molecule.xyz"
+                title=f"Save Frame as {fmt.label}",
+                suggested_filename=f"designed_molecule{fmt.extensions[0]}",
+                file_types=[ext.lstrip(".") for ext in fmt.extensions],
             )
         )
         if not selected:
             return False
 
-        saved, message = self.write_frame(str(selected))
+        format_key = self._format_for_saving(selected)
+        saved, message = self.write_frame(str(selected), format_key)
         self.set_status(message)
         if not saved:
             await self._show_error("Save Error", message)
             return False
-        await self._show_info("Frame Saved", f"Structure saved to:\n{selected}")
+        notes = export_notes(self.current_structure(), format_key)
+        await self._show_info("Frame Saved", "\n\n".join([f"Structure saved to:\n{selected}"] + notes))
         return True
 
     # ------------------------------------------------------------------
@@ -935,6 +1094,7 @@ class DesignCanvasWindow:
         content.add(self.canvas)
         content.add(self._build_actions())
         content.add(self._build_view_actions())
+        content.add(self._build_file_actions())
         content.add(self.status_label)
         return content
 
@@ -968,8 +1128,7 @@ class DesignCanvasWindow:
         return actions
 
     def _build_view_actions(self) -> toga.Box:
-        """Zoom and reset -- the view controls the mouse cannot reach on its own --
-        and Save Frame at the right end."""
+        """Zoom and reset -- the view controls the mouse cannot reach on its own."""
         view = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(6, 0, 0, 0)))
         view.add(toga.Label("View:", style=Pack(width=44, color=self.HINT_COLOR)))
         view.add(
@@ -983,10 +1142,38 @@ class DesignCanvasWindow:
             )
         )
         view.add(toga.Button("Reset view", on_press=self.controller.reset_view, style=Pack(width=100)))
-        # Sharing this row keeps the window at its fixed height.
-        view.add(toga.Box(style=Pack(flex=1)))
-        view.add(toga.Button("Save Frame", on_press=self.controller.save_frame, style=Pack(width=110)))
         return view
+
+    # Save-format Selection labels, each mapped to its molecularFileFormats key.
+    EXPORT_FORMAT_LABELS = {f"{fmt.label} ({fmt.extensions[0]})": fmt.key for fmt in WRITABLE_FORMATS}
+
+    def _build_file_actions(self) -> toga.Box:
+        """Import a structure file; Save Frame in the format chosen beside it."""
+        row = toga.Box(style=Pack(direction=ROW, align_items=CENTER, margin=(6, 0, 0, 0)))
+        row.add(toga.Label("File:", style=Pack(width=44, color=self.HINT_COLOR)))
+        row.add(
+            toga.Button(
+                "Import structure...",
+                on_press=self.controller.import_file,
+                style=Pack(width=140, margin=(0, 6, 0, 0)),
+            )
+        )
+        row.add(toga.Box(style=Pack(flex=1)))
+        labels = list(self.EXPORT_FORMAT_LABELS)
+        self.export_selection = toga.Selection(items=labels, style=Pack(width=180, margin=(0, 6, 0, 0)))
+        current = [label for label, key in self.EXPORT_FORMAT_LABELS.items()
+                   if key == self.controller.export_format]
+        self.export_selection.value = current[0] if current else labels[0]
+        # Wired after the value is set, so building the window is not reported as a choice.
+        self.export_selection.on_change = self._on_export_format_change
+        row.add(self.export_selection)
+        row.add(toga.Button("Save Frame", on_press=self.controller.save_frame, style=Pack(width=110)))
+        return row
+
+    def _on_export_format_change(self, widget, **kwargs):
+        key = self.EXPORT_FORMAT_LABELS.get(str(widget.value))
+        if key is not None:
+            self.controller.set_export_format(key)
 
     # ------------------------------------------------------------------
     # Controller hooks
