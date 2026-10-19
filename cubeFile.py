@@ -200,13 +200,23 @@ def read_cube_volumes(path) -> List[CubeVolume]:
             for k, mo in enumerate(orbitals)]
 
 
+_ASCII_REPLACEMENTS = {"−": "-", "×": "x", "±": "+/-", "\n": " ", "\r": " "}
+
+
+def _ascii_line(text: str) -> str:
+    """Cube files are ASCII for every reader; typographic signs become their ASCII forms."""
+    for old, new in _ASCII_REPLACEMENTS.items():
+        text = text.replace(old, new)
+    return text.encode("ascii", "replace").decode("ascii")
+
+
 def format_cube_volume(volume: CubeVolume) -> str:
     """The format_cube layout with general axes; an orbital is written as a plain cube."""
     nx, ny, nz = volume.values.shape
-    comment = volume.comment.replace("\n", " ")
+    comment = _ascii_line(volume.comment)
     if volume.orbital is not None and f"MO {volume.orbital}" not in comment:
         comment = f"{comment} MO {volume.orbital}".strip()
-    out = [volume.title.replace("\n", " "), comment,
+    out = [_ascii_line(volume.title), comment,
            f"{len(volume.atomic_numbers):5d}" + "".join(f"{c:12.6f}" for c in volume.origin)]
     for n, axis in zip((nx, ny, nz), np.asarray(volume.axes, dtype=float)):
         out.append(f"{n:5d}" + "".join(f"{c:12.6f}" for c in axis))

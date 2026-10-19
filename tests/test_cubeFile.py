@@ -181,6 +181,14 @@ class TestCubeVolume:
         (back,) = cf.read_cube_volumes(path)
         assert back.orbital is None and "MO 4" in back.comment
 
+    def test_header_text_is_written_as_ascii(self, tmp_path):
+        (volume,) = cf.read_cube_volumes(cf.write_cube(tmp_path / "a.cub", sample_cube()))
+        volume.title = "rho(N) − rho(N−1) × 2 é"
+        volume.comment = "line\nbreak"
+        path = cf.write_cube_volume(tmp_path / "u.cube", volume)
+        title, comment = open(path, encoding="ascii").read().splitlines()[:2]
+        assert title == "rho(N) - rho(N-1) x 2 ?" and comment == "line break"
+
     def test_unwritable_volume_path_is_a_value_error(self, tmp_path):
         (tmp_path / "file").write_text("x")
         (volume,) = cf.read_cube_volumes(cf.write_cube(tmp_path / "a.cub", sample_cube()))
