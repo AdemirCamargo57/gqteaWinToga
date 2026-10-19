@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
+from scipy.ndimage import map_coordinates
 
 import molecularSurface as ms
 from cubeFile import BOHR_RADIUS_ANGSTROM, CubeVolume
@@ -51,7 +52,16 @@ class IsoMesh:
     vertices: np.ndarray   # (V, 3) bohr
     triangles: np.ndarray  # (F, 3) int64, oriented towards decreasing sign*value
     normals: np.ndarray    # (V, 3) unit, area-weighted
+    clipped: bool = False  # the surface reaches the grid's edge and is cut open there
 
+
+def reaches_grid_edge(values: np.ndarray, isovalue: float) -> bool:
+    """True when the region value >= isovalue touches a face of the grid.
+
+    Marching tetrahedra can only build surface inside the grid, so such a
+    surface is cut open at the box: flat walls and torn edges.
+    """
+    return any(float(np.take(values, i, axis=a).max()) >= isovalue for a in range(3) for i in (0, -1))
 
 def vertex_normals(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
     a, b, c = (vertices[triangles[:, k]] for k in range(3))
@@ -91,7 +101,24 @@ def isosurface(volume: CubeVolume, isovalue: float, sign: int = 1,
     if np.linalg.det(axes) < 0:  # a left-handed lattice mirrors the winding
         triangles = triangles[:, [0, 2, 1]]
     triangles = np.ascontiguousarray(triangles, dtype=np.int64)
-    return IsoMesh(vertices, triangles, vertex_normals(vertices, triangles))
+    return IsoMesh(vertices, triangles, vertex_normals(vertices, triangles),
+                   clipped=reaches_grid_edge(values, isovalue))
+
+
+def sample(volume: CubeVolume, points_bohr: np.ndarray) -> np.ndarray:
+    """Trilinear interpolation of the cube at arbitrary points (bohr); NaN outside the grid.
+
+    Works in the cube's own index space, so skewed and unequal-spacing grids
+    need no special case (exact for a field linear in x, y and z).
+    """
+    points = np.asarray(points_bohr, dtype=float).reshape(-1, 3)
+    index = (points - np.asarray(volume.origin, dtype=float)) @ np.linalg.inv(np.asarray(volume.axes, dtype=float))
+    upper = np.array(volume.values.shape, dtype=float) - 1.0
+    inside = np.all((index >= -1e-9) & (index <= upper + 1e-9), axis=1)
+    values = map_coordinates(np.asarray(volume.values, dtype=float), np.clip(index, 0.0, upper).T,
+                             order=1, mode="nearest")
+    values[~inside] = np.nan
+    return values
 
 
 # ----------------------------------------------------------------------
@@ -175,20 +202,37 @@ DENSITY_ISOVALUE = 0.0004  # GaussView's default for total densities
 SIGNED_FRACTION = 0.01     # negative values beyond 1 % of max|v| make a cube "signed"
 
 
+POTENTIAL_ISOVALUE = 0.02  # a.u. (Hartree/e): ESP isosurfaces sit well inside the grid box from here up
+
+
+def is_potential(volume: CubeVolume) -> bool:
+    """True for an electrostatic-potential cube, recognised from its header text.
+
+    cubegen writes "Electrostatic potential from Total SCF Density" and the
+    ESP tab "... electrostatic potential V(r)". The sign rule alone cannot tell
+    such a cube from a density: V is huge at the nuclei, so its real negative
+    regions look like round-off next to max|V|.
+    """
+    return "potential" in f"{volume.title} {volume.comment}".lower()
+
+
 def is_signed(volume: CubeVolume) -> bool:
-    """True for an orbital or data with real negative values; False for a density-like cube."""
+    """True for an orbital, a potential or data with real negative values; False for a density-like cube."""
     max_abs = float(np.abs(volume.values).max()) if volume.values.size else 0.0
-    if volume.orbital is not None or max_abs == 0.0:
+    if volume.orbital is not None or max_abs == 0.0 or is_potential(volume):
         return True
     return float(volume.values.min()) < -SIGNED_FRACTION * max_abs
 
 
 def default_isovalue(volume: CubeVolume) -> float:
-    """A starting isovalue: orbital/signed data 0.02, densities 0.0004, capped below max|v|."""
+    """A starting isovalue: potentials and orbital/signed data 0.02, densities 0.0004, capped below max|v|."""
     max_abs = float(np.abs(volume.values).max()) if volume.values.size else 0.0
     if max_abs == 0.0:
         return ORBITAL_ISOVALUE
-    value = ORBITAL_ISOVALUE if is_signed(volume) else DENSITY_ISOVALUE
+    if is_potential(volume):
+        value = POTENTIAL_ISOVALUE
+    else:
+        value = ORBITAL_ISOVALUE if is_signed(volume) else DENSITY_ISOVALUE
     if value >= max_abs:
         value = 0.5 * max_abs
     return float(f"{value:.0e}")

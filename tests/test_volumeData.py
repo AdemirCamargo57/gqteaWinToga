@@ -331,3 +331,71 @@ class TestRealCubes:
         centre = mesh.vertices.mean(axis=0)
         reach = np.linalg.norm(mesh.vertices - centre, axis=1).min()
         assert reach > np.linalg.norm(rho.coordinates - centre, axis=1).max()
+
+
+
+# ----------------------------------------------------------------------
+# Potential cubes, clipped surfaces and sampling one cube at other points
+# ----------------------------------------------------------------------
+class TestPotentialCubes:
+    def esp_like(self, title="water electrostatic potential V(r)", comment="gQTEA ESP, a.u."):
+        # Huge at the nucleus, slightly negative elsewhere: "density-like" by the sign rule alone.
+        values = np.full((3, 4, 5), 0.01)
+        values[0, 0, 0] = 56.6
+        values[2, 3, 4] = -0.11
+        volume = small(values=values)
+        volume.title, volume.comment = title, comment
+        return volume
+
+    @pytest.mark.parametrize("title, comment", [
+        ("water electrostatic potential V(r)", "gQTEA ESP, a.u. (Hartree/e)"),  # our ESP tab
+        ("Title Card Required potential=SCF", "Electrostatic potential from Total SCF Density"),  # cubegen
+    ])
+    def test_potential_cubes_are_recognised(self, title, comment):
+        volume = self.esp_like(title, comment)
+        assert vd.is_potential(volume) and vd.is_signed(volume)
+        assert vd.default_isovalue(volume) == vd.POTENTIAL_ISOVALUE == 0.02
+
+    def test_a_density_is_not_a_potential(self):
+        density = small(values=np.linspace(0.0, 2.0, 60).reshape(3, 4, 5))
+        density.title, density.comment = "water electron density rho(r)", "Total SCF Density"
+        assert not vd.is_potential(density) and vd.default_isovalue(density) == 0.0004
+
+
+class TestClippedSurfaces:
+    def test_a_closed_surface_is_not_clipped(self, blob_volume):
+        assert vd.isosurface(blob_volume, 0.5, use_numba=False).clipped is False
+
+    def test_a_surface_that_reaches_the_grid_edge_is_clipped(self, blob_volume):
+        # exp(-r^2/2) at the box face (|x| = 4) is 3.4e-4: an isovalue below that crosses the faces.
+        assert vd.isosurface(blob_volume, 1e-4, use_numba=False).clipped is True
+
+    @pytest.mark.skipif(not vd.numba_available(), reason="numba not installed")
+    def test_both_paths_agree(self, blob_volume):
+        for iso in (0.5, 1e-4):
+            assert (vd.isosurface(blob_volume, iso, use_numba=True).clipped
+                    == vd.isosurface(blob_volume, iso, use_numba=False).clipped)
+
+
+class TestSampling:
+    def test_trilinear_is_exact_for_a_linear_field_on_a_skewed_grid(self):
+        axes = np.array([[0.2, 0.0, 0.0], [0.1, 0.3, 0.0], [0.0, 0.05, 0.4]])
+        volume = volume_from(lambda p: 2.0 * p[:, 0] - p[:, 1] + 0.5 * p[:, 2] + 1.0, (6, 5, 4),
+                             origin=(1.0, -1.0, 0.5), axes=axes)
+        rng = np.random.default_rng(2)
+        idx = rng.uniform(0, 1, size=(30, 3)) * (np.array(volume.values.shape) - 1)
+        points = volume.origin + idx @ axes
+        expected = 2.0 * points[:, 0] - points[:, 1] + 0.5 * points[:, 2] + 1.0
+        assert vd.sample(volume, points) == pytest.approx(expected, abs=1e-10)
+
+    def test_points_outside_the_grid_are_nan(self):
+        volume = small()
+        points = np.array([[0.0, 0.0, 0.0], [-0.1, 0.0, 0.0], [0.0, 0.0, 2.0 + 1e-6]])
+        values = vd.sample(volume, points)
+        assert values[0] == 0.0 and np.isnan(values[1]) and np.isnan(values[2])
+
+    def test_grid_points_give_their_own_values(self):
+        volume = small()
+        idx = np.array([[1, 2, 3], [2, 3, 4]])
+        points = volume.origin + idx @ volume.axes
+        assert vd.sample(volume, points) == pytest.approx(volume.values[idx[:, 0], idx[:, 1], idx[:, 2]])
