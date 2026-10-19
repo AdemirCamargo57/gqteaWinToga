@@ -40,6 +40,9 @@ class StubViewer:
         self.loaded.append(frame)
         self.frames = [list(frame)]
 
+    def get_current_frame_data(self):
+        return list(self.frames[0]) if self.frames else []
+
     def invalidate_scene_cache(self):
         self.invalidated += 1
 
@@ -114,6 +117,54 @@ class TestStructure:
     def test_question_only_when_a_structure_is_displayed(self):
         assert not controller().structure_question_needed()
         assert controller(frames=[[("C", (0.0, 0.0, 0.0))]]).structure_question_needed()
+
+    def test_no_question_when_the_cube_holds_the_displayed_molecule(self, tmp_path):
+        """Regression: the molecule on screen (e.g. from the ESP tab) is the cube's own one."""
+        (entry,) = ct.CubeTabController.read_entries(write(tmp_path, "same.cube", p_orbital_volume()))
+        c = controller(frames=[vd.structure_frame(entry.volume)])
+        assert not c.structure_question_needed(entry)
+        asked = []
+
+        async def ask(title, message):
+            asked.append(title)
+            return True
+        c._ask = ask
+        assert asyncio.run(c._settle_structure(entry)) is True
+        assert asked == [] and c.viewer.loaded == []  # kept as is, not reloaded
+        assert c.structure_volume is entry.volume  # later cubes are compared with it
+
+    def test_a_different_displayed_molecule_is_still_asked_about(self, tmp_path):
+        (entry,) = ct.CubeTabController.read_entries(write(tmp_path, "other.cube", p_orbital_volume()))
+        c = controller(frames=[[("C", (0.0, 0.0, 0.0))]])
+        assert c.structure_question_needed(entry)
+        asked = []
+
+        async def ask(title, message):
+            asked.append(message)
+            return False
+        c._ask = ask
+        assert asyncio.run(c._settle_structure(entry)) is True
+        assert len(asked) == 1 and "(1 atoms)" in asked[0] and c.viewer.loaded == []
+
+    def test_esp_tab_molecule_then_its_cube_asks_nothing(self, tmp_path):
+        """The reported sequence, with a real viewer: ESP run shown, then its ESP cube loaded."""
+        import electrostaticSurfacePotential as esp
+        from espSurfaceLayer import ESPSurfaceLayer
+        from esp_fixtures import fchk_path
+        from molecularViewer import MolecularViewer
+        viewer = MolecularViewer()
+        viewer.esp_layer = ESPSurfaceLayer()
+        viewer.cube_layer = CubeSceneLayer()
+        analyser = esp.ESPSurfaceAnalyser()
+        results = analyser.run(str(fchk_path("water_631gd_6d")), [0.001], spacing=0.4)
+        tab = esp.ESPTabController.__new__(esp.ESPTabController)
+        tab.viewer, tab.results, tab._structure_settled_for = viewer, results, None
+        asyncio.run(tab._settle_structure())
+        assert len(viewer.frames) == 1
+        paths, _ = analyser.write_cubes(results, tmp_path / "water_ESP.cube", with_density=False)
+        c = ct.CubeTabController(viewer)
+        (entry,) = c.read_entries(paths[0])
+        assert not c.structure_question_needed(entry)
 
     def test_adopting_loads_the_cube_atoms_in_angstrom(self, tmp_path):
         c = loaded(tmp_path, p_orbital_volume())
@@ -265,6 +316,30 @@ class TestOperations:
         c = loaded(tmp_path, p_orbital_volume(), p_orbital_volume(atoms=((6, (0, 0, 0)),)))
         _, _, notes = c.compute_operation("cube0", ct.OP_ADD, "cube1", "", "")
         assert len(notes) == 1 and "atoms" in notes[0]
+
+
+class TestTableColumns:
+    def test_columns_are_refitted_whenever_the_native_table_is_resized(self):
+        """Toga's WinForms Table splits its width between the columns once, at its first
+        layout; on a hidden tab that is a few pixels, so every column stayed ~19 px."""
+        class Event:
+            def __init__(self):
+                self.handlers = []
+
+            def __iadd__(self, handler):
+                self.handlers.append(handler)
+                return self
+
+        refits = []
+        impl = SimpleNamespace(native=SimpleNamespace(Resize=Event()), _resize_columns=lambda: refits.append(1))
+        table = SimpleNamespace(_impl=impl)
+        ct.fit_table_columns_on_resize(table)
+        for handler in impl.native.Resize.handlers:
+            handler(None, None)
+        assert refits == [1]
+
+    def test_other_backends_are_left_alone(self):
+        ct.fit_table_columns_on_resize(SimpleNamespace())  # no _impl.native: nothing to do, no error
 
 
 class TestSaving:

@@ -1565,7 +1565,8 @@ The table lists every cube with its grid size, smallest and largest value, and i
 **Which molecule is shown.** The first cube you load decides it:
 
 - With nothing displayed, the cube's own atoms are shown at once.
-- If a structure is already displayed, a dialog asks whether to replace it with the cube's atoms. **No** keeps your structure, and the volume is drawn in the cube's own coordinates.
+- If the viewer already shows the cube's own molecule (for example the one the ESP tab put there), it is kept as is, with no question.
+- If a different structure is displayed, a dialog asks whether to replace it with the cube's atoms. **No** keeps your structure, and the volume is drawn in the cube's own coordinates.
 - Later cubes never change the structure. If their atoms differ from the displayed cube's, the status line says so.
 
 Two switches control what is drawn:

@@ -40,6 +40,7 @@ from espIntegrals import HARTREE_TO_KCAL_MOL
 from espSurfaceLayer import COLOUR_UNITS, UNIT_AU, SurfaceMarker, symmetric_range
 from gaussianUtilities import find_gaussian_utility
 from help import AtomicData, HelpGqteaWin
+from volumeData import same_structure  # shared with the Cube tab
 
 DEFAULT_ISOVALUE = 0.0004
 MIN_SPACING, MAX_SPACING = 0.05, 0.6
@@ -442,17 +443,6 @@ BACKGROUND_COLOURS = {
     "Light grey": (0.85, 0.85, 0.85),
 }
 IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]
-SAME_STRUCTURE_TOLERANCE = 1e-4  # Angstrom
-
-
-def same_structure(frame_a, frame_b, tolerance: float = SAME_STRUCTURE_TOLERANCE) -> bool:
-    """True when two viewer frames list the same elements at the same positions."""
-    if len(frame_a) != len(frame_b):
-        return False
-    for (sa, pa), (sb, pb) in zip(frame_a, frame_b):
-        if sa != sb or np.abs(np.asarray(pa, dtype=float) - np.asarray(pb, dtype=float)).max() > tolerance:
-            return False
-    return True
 
 
 class ESPTabController:

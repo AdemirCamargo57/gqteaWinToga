@@ -1840,8 +1840,10 @@ all read. The table lists each cube's grid, smallest and largest value and
 its integral (sum of the values x the voxel volume: electrons, for a density).
 
 The first cube decides which molecule is shown. With nothing displayed, its
-atoms are shown at once; when a structure is already displayed you are asked
-whether to replace it with the cube's atoms. Later cubes never change the
+atoms are shown at once. If the viewer already shows the cube's own
+molecule (for example after the ESP tab), it is kept without a question;
+only a different structure makes you choose whether to replace it with the
+cube's atoms. Later cubes never change the
 structure; if their atoms differ, the status line says so.
 
 Show molecule hides or shows the atoms and bonds (hidden atoms cannot be

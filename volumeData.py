@@ -313,6 +313,21 @@ def rainbow_colours(values: np.ndarray, lo: float, hi: float) -> np.ndarray:
 # Structure
 # ----------------------------------------------------------------------
 UNKNOWN_ELEMENT = "X"
+SAME_STRUCTURE_TOLERANCE = 1e-4  # Angstrom; cube headers carry 6 decimals of bohr
+
+
+def same_structure(frame_a, frame_b, tolerance: float = SAME_STRUCTURE_TOLERANCE) -> bool:
+    """True when two viewer frames list the same elements at the same positions.
+
+    The Cube and ESP tabs use it to leave a molecule that is already on screen
+    alone instead of asking whether to replace it with itself.
+    """
+    if len(frame_a) != len(frame_b):
+        return False
+    for (sa, pa), (sb, pb) in zip(frame_a, frame_b):
+        if sa != sb or np.abs(np.asarray(pa, dtype=float) - np.asarray(pb, dtype=float)).max() > tolerance:
+            return False
+    return True
 
 
 def structure_frame(volume: CubeVolume):

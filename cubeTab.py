@@ -63,6 +63,25 @@ def canonical_colour(text: str) -> str:
     return value.upper()
 
 
+def fit_table_columns_on_resize(table) -> None:
+    """Re-split a Toga Table's width between its columns every time it is resized.
+
+    On WinForms, Toga splits the width evenly only once, at the table's first
+    layout. The Cube tab is hidden then, so the table is ~140 px wide and every
+    column is fixed at ~19 px for good. Resizing happens when the tab is shown
+    and when the window changes size, so the columns follow both. Any other
+    backend keeps its own column sizing.
+    """
+    impl = getattr(table, "_impl", None)
+    native = getattr(impl, "native", None)
+    if native is None or not hasattr(impl, "_resize_columns"):
+        return
+    try:
+        native.Resize += lambda sender, event: impl._resize_columns()
+    except Exception:
+        pass  # sizing is cosmetic; never let it break the tab
+
+
 def default_cube_filename(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
     return f"{stem or 'cube'}.cube"
@@ -208,9 +227,18 @@ class CubeTabController:
     # ------------------------------------------------------------------
     # Structure
     # ------------------------------------------------------------------
-    def structure_question_needed(self) -> bool:
-        """Ask before replacing a structure the user already has on screen."""
-        return self.structure_volume is None and bool(self.viewer.frames)
+    def displays_cube_molecule(self, entry: CubeEntry) -> bool:
+        """True when the viewer already shows this cube's own atoms (e.g. put there by the ESP tab)."""
+        frame = vd.structure_frame(entry.volume)
+        return bool(frame) and bool(self.viewer.frames) and vd.same_structure(
+            self.viewer.get_current_frame_data(), frame)
+
+    def structure_question_needed(self, entry: Optional[CubeEntry] = None) -> bool:
+        """Ask before replacing a structure the user already has on screen - unless
+        that structure is the cube's own molecule, which needs no replacing."""
+        if self.structure_volume is not None or not self.viewer.frames:
+            return False
+        return entry is None or not self.displays_cube_molecule(entry)
 
     def adopt_structure(self, entry: CubeEntry):
         frame = vd.structure_frame(entry.volume)
@@ -546,8 +574,13 @@ class CubeTabController:
                 return False
             self.adopt_structure(entry)
             return True
+        if self.displays_cube_molecule(entry):
+            self.structure_volume = entry.volume  # already on screen: nothing to ask or reload
+            return True
+        shown = len(self.viewer.get_current_frame_data())
         if has_atoms and await self._ask(
                 "Show the cube's molecule?",
+                f"The 3D viewer shows another structure ({shown} atoms); "
                 f"{entry.name} stores {len(entry.volume.atomic_numbers)} atoms.\n\n"
                 "Yes: replace the displayed structure with the cube's atoms.\n"
                 "No: keep the displayed structure; the volume is drawn in the cube's own coordinates."):
@@ -703,6 +736,7 @@ class CubeTabController:
             headings=["Name", "Grid", "Min", "Max", "Integral"],
             accessors=["name", "grid", "minimum", "maximum", "integral"],
             data=[], on_select=self.on_table_select, style=Pack(height=110, margin=(0, 0, 6, 0)))
+        fit_table_columns_on_resize(self.cube_table)
         tab.add(self.cube_table)
         self.show_molecule_switch = toga.Switch("Show molecule", value=True, on_change=self.on_show_molecule_change,
                                                 style=Pack(margin=(0, 16, 0, 0)))
