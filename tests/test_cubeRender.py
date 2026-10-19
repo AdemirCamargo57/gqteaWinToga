@@ -81,3 +81,22 @@ def test_module_imports_neither_toga_nor_glfw():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=str(Path(cr.__file__).parent), check=True)
     assert out.stdout.strip() == "False False"
+
+
+class TestColourBar:
+    def test_bar_travels_with_the_items_and_is_drawn_at_the_bottom(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cr, "draw_colour_bar", lambda viewer, *args, **kwargs: calls.append((args, kwargs)))
+        layer = cr.CubeSceneLayer()
+        layer.draw_overlay("viewer")
+        assert calls == []  # no bar: nothing drawn
+        bar = ("-2.000e-2", "2.000e-2", "ESP mapped on rho")
+        layer.set_items([cr.surface_item(triangle_mesh(), (1, 0, 0), 1.0)], colour_bar=bar)
+        assert layer.colour_bar() == bar
+        layer.draw_overlay("viewer")
+        assert calls == [(bar, {"at_top": False})]
+        layer.set_items([])
+        assert layer.colour_bar() is None
+        layer.set_items([], colour_bar=bar)
+        layer.clear()
+        assert layer.colour_bar() is None and layer.items() == ()

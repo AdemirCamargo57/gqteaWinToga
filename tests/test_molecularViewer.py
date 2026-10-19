@@ -1092,3 +1092,17 @@ def test_the_tools_menu_no_longer_opens_a_separate_esp_window():
     source = (Path(__file__).resolve().parents[1] / "gqteaWinToga.py").read_text(encoding="utf-8")
     assert "ElectrostaticSurfacePotentialUI" not in source
     assert "Electrostatic Surface Potential" not in source
+
+
+def test_ui_overlay_draws_both_colour_bars():
+    from cubeRender import CubeSceneLayer
+    from espSurfaceLayer import ESPSurfaceLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    calls = []
+    ui.esp_layer = ESPSurfaceLayer()
+    ui.cube_layer = CubeSceneLayer()
+    ui.esp_layer.draw_overlay = lambda viewer: calls.append("esp")
+    ui.cube_layer.draw_overlay = lambda viewer: calls.append("cube")
+    ui.draw_screen_overlay()
+    assert calls == ["esp", "cube"]

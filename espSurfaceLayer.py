@@ -249,37 +249,51 @@ class ESPSurfaceLayer:
         text = self.colour_bar_text()
         if text is None:
             return
-        left, right, caption = text
-        w, h = viewer.display
-        x0, x1 = 100.0, max(110.0, w - 100.0)
+        draw_colour_bar(viewer, *text, at_top=True)
+
+
+def draw_colour_bar(viewer, left: str, right: str, caption: str, at_top: bool = True):
+    """GaussView-style hue bar (red -> green -> blue) with end labels and a caption.
+
+    At the top (the ESP tab) the caption sits under the bar; at the bottom
+    (the Cube tab's mapped surface) above it, so the two bars never overlap.
+    The viewer gives ``display`` (w, h), ``background_color`` and ``_draw_text_2d``.
+    """
+    w, h = viewer.display
+    x0, x1 = 100.0, max(110.0, w - 100.0)
+    if at_top:
         y0, y1 = h - 34.0, h - 16.0
+        caption_y = y0 - 22.0
+    else:
+        y0, y1 = 16.0, 34.0
+        caption_y = y1 + 8.0
+    glMatrixMode(GL_PROJECTION)
+    glPushMatrix()
+    glLoadIdentity()
+    glOrtho(0, w, 0, h, -1, 1)
+    glMatrixMode(GL_MODELVIEW)
+    glPushMatrix()
+    glLoadIdentity()
+    glDisable(GL_LIGHTING)
+    glDisable(GL_DEPTH_TEST)
+    try:
+        steps = 96
+        colours = hue_colours(np.linspace(0.0, 1.0, steps + 1))
+        glBegin(GL_QUAD_STRIP)
+        for k in range(steps + 1):
+            x = x0 + (x1 - x0) * k / steps
+            glColor3f(*colours[k])
+            glVertex2f(x, y0)
+            glVertex2f(x, y1)
+        glEnd()
+        ink = contrasting_text_colour(viewer.background_color)
+        viewer._draw_text_2d(6.0, y0 + 2.0, left, color=ink)
+        viewer._draw_text_2d(x1 + 6.0, y0 + 2.0, right, color=ink)
+        viewer._draw_text_2d(x0, caption_y, caption, color=ink)
+    finally:
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        glPopMatrix()
         glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        glLoadIdentity()
-        glOrtho(0, w, 0, h, -1, 1)
+        glPopMatrix()
         glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
-        glDisable(GL_LIGHTING)
-        glDisable(GL_DEPTH_TEST)
-        try:
-            steps = 96
-            colours = hue_colours(np.linspace(0.0, 1.0, steps + 1))
-            glBegin(GL_QUAD_STRIP)
-            for k in range(steps + 1):
-                x = x0 + (x1 - x0) * k / steps
-                glColor3f(*colours[k])
-                glVertex2f(x, y0)
-                glVertex2f(x, y1)
-            glEnd()
-            ink = contrasting_text_colour(viewer.background_color)
-            viewer._draw_text_2d(6.0, y0 + 2.0, left, color=ink)
-            viewer._draw_text_2d(x1 + 6.0, y0 + 2.0, right, color=ink)
-            viewer._draw_text_2d(x0, y0 - 22.0, caption, color=ink)
-        finally:
-            glEnable(GL_DEPTH_TEST)
-            glEnable(GL_LIGHTING)
-            glPopMatrix()
-            glMatrixMode(GL_PROJECTION)
-            glPopMatrix()
-            glMatrixMode(GL_MODELVIEW)

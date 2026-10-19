@@ -88,3 +88,12 @@ def test_module_imports_neither_toga_nor_glfw_nor_the_viewer():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=str(Path(el.__file__).parent), check=True)
     assert out.stdout.strip() == "False False False"
+
+
+def test_the_esp_colour_bar_is_drawn_at_the_top(monkeypatch):
+    calls = []
+    monkeypatch.setattr(el, "draw_colour_bar", lambda viewer, *args, **kwargs: calls.append((args, kwargs)))
+    layer = el.ESPSurfaceLayer()
+    surface(layer)
+    layer.draw_overlay("viewer")
+    assert calls == [(layer.colour_bar_text(), {"at_top": True})]

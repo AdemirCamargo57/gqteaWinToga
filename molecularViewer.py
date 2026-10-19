@@ -2535,7 +2535,10 @@ class MolecularViewerUI(MolecularViewer):
     def draw_screen_overlay(self):
         esp_layer = getattr(self, "esp_layer", None)
         if esp_layer is not None:
-            esp_layer.draw_overlay(self)  # the ESP colour bar
+            esp_layer.draw_overlay(self)  # the ESP colour bar (top)
+        layer = getattr(self, "cube_layer", None)
+        if layer is not None:
+            layer.draw_overlay(self)  # a mapped cube surface's colour bar (bottom)
 
     def get_scene_radius(self, frame_data: Optional[Frame] = None) -> float:
         base = super().get_scene_radius(frame_data)

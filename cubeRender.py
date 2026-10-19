@@ -23,6 +23,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 from OpenGL.GL import *  # noqa: F401,F403 - same style as molecularViewer/espViewer
 
+from espSurfaceLayer import draw_colour_bar
 from volumeData import BOHR_RADIUS_ANGSTROM, IsoMesh, slice_triangles
 
 MIN_OPACITY = 0.05
@@ -92,11 +93,14 @@ class CubeSceneLayer:
     def __init__(self):
         self._lock = threading.Lock()
         self._items: Tuple[RenderItem, ...] = ()
+        self._colour_bar: Optional[Tuple[str, str, str]] = None
 
     # --- Toga thread ---------------------------------------------------
-    def set_items(self, items: Sequence[RenderItem]):
+    def set_items(self, items: Sequence[RenderItem], colour_bar: Optional[Tuple[str, str, str]] = None):
+        """The scene, and the (left label, right label, caption) of a mapped surface's colour bar."""
         with self._lock:
             self._items = tuple(items)
+            self._colour_bar = tuple(colour_bar) if colour_bar else None
 
     def clear(self):
         self.set_items(())
@@ -104,6 +108,10 @@ class CubeSceneLayer:
     def items(self) -> Tuple[RenderItem, ...]:
         with self._lock:
             return self._items
+
+    def colour_bar(self) -> Optional[Tuple[str, str, str]]:
+        with self._lock:
+            return self._colour_bar
 
     def radius_about(self, centre) -> float:
         """Distance from ``centre`` (Angstrom) to the farthest bounding-box corner of any item."""
@@ -116,6 +124,12 @@ class CubeSceneLayer:
         return radius
 
     # --- render thread -------------------------------------------------
+    def draw_overlay(self, viewer):
+        """The mapped surface's colour bar, at the bottom (the ESP tab's bar is at the top)."""
+        bar = self.colour_bar()
+        if bar is not None:
+            draw_colour_bar(viewer, *bar, at_top=False)
+
     def draw(self):
         items = self.items()
         if not items:
