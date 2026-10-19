@@ -127,7 +127,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.8.5 Molecular Analysis Toolkit
+gQTEA-0.9.0 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -213,7 +213,11 @@ stripped-down or Server Core installation may not include it.
 
 None of these is needed to run the toolkit.
 
-To speed up three tools with compiled kernels (identical results):
+`numba` speeds up three tools with compiled kernels (identical results). Since
+version 0.9.0 it is part of `installation_requirements.txt`, so the install
+command above already includes it. It stays optional: if it cannot be installed
+on your Python version, comment out the `numba` line in that file and the tools
+use their NumPy paths. To add it to an existing installation:
 
 ```powershell
 python -m pip install numba
@@ -5049,10 +5053,21 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.8.5 Molecular Analysis Toolkit
+gQTEA-0.9.0 Molecular Analysis Toolkit
 ```
 
-Version 0.8.5 (October 2026) adds the [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder) on the Inputs tab. It writes the Gaussian 16 job that the Fukui analysis needs:
+Version 0.9.0 (October 2026) turns the [Molecular Design](#molecular-design) canvas into a structure editor:
+
+- [import](#importing-and-saving-structure-files) XYZ, Gaussian input and `.fchk`, MOL/SDF, MOL2 and PDB files, and save in all of them but `.fchk` (bond orders kept where the format allows);
+- [select and move one molecule](#selecting-and-moving-one-molecule) (Shift+click, Ctrl+drag, Ctrl+right-drag);
+- [measure](#measuring-bond-lengths-angles-and-dihedrals) and [set](#setting-a-bond-length-angle-or-dihedral) bond lengths, angles and dihedrals;
+- [freeze](#freezing-parameters-during-pre-optimization) them during pre-optimization, held exactly at every step;
+- [add hydrogens](#adding-hydrogens-automatically), [replace an atom's element](#replacing-an-atoms-element), [show atom numbers](#showing-atom-numbers) and [change the background](#canvas-background);
+- [bring a molecule back from the 3D viewer](#bringing-a-molecule-back-from-the-3d-viewer) without overwriting a drawing.
+
+Dragging, rotating and panning on the canvas are also about three times faster (five times for larger molecules). `numba` is now installed by default with `installation_requirements.txt`; it stays optional at run time.
+
+Version 0.8.5 (October 2026) added the [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder) on the Inputs tab. It writes the Gaussian 16 job that the Fukui analysis needs:
 
 - one input file with three linked jobs: an optimization of the N state, then single points on N+1 and N−1 that read the optimized geometry from its checkpoint (`%OldChk` + `Geom=Check`), each into its own `.chk`;
 - charges set from the electron count; all three spin multiplicities must be entered, none is assumed;

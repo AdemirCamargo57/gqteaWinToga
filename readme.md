@@ -7,7 +7,7 @@ interface built with [Toga](https://toga.readthedocs.io/) and collects several
 specialized tools for CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping, and
 trajectory analysis workflows.
 
-The current application title identifies the toolkit as **gQTEA-0.8.5 Molecular
+The current application title identifies the toolkit as **gQTEA-0.9.0 Molecular
 Analysis Toolkit**.
 
 ## Capabilities
@@ -103,7 +103,7 @@ Python package dependencies used by the application include:
 - `PyOpenGL`
 - `PyOpenGL-accelerate`
 - `PyMuPDF`
-- optional: `numba` (about 5x faster ESP in the ESP surface tool; about 4x faster electron densities in the ESP and Fukui tools)
+- `numba` (installed by default, optional at run time: about 5x faster ESP in the ESP surface tool; about 4x faster electron densities in the ESP and Fukui tools; 20-50x faster solvent-box packing)
 
 The code also uses Python standard-library modules such as `asyncio`, `csv`,
 `dataclasses`, `decimal`, `html`, `http.server`, `math`, `os`, `pathlib`,
