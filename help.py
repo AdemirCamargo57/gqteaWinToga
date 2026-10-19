@@ -1867,10 +1867,24 @@ Choose the cube, then type the isovalue and press Enter. For signed data
 (orbitals, differences) the positive surface is drawn at +isovalue and the
 negative one at -isovalue, each in its own colour; Show selects both, only
 + or only -. Density-like cubes (no negative values) start with + only.
-Starting isovalues: 0.02 for orbitals and signed data, 0.0004 for densities.
+Starting isovalues: 0.02 for orbitals and signed data, 0.0004 for densities,
+and +/-0.02 a.u. for potential (ESP) cubes - recognised from their header -
+because the ESP decays slowly: at small values its surface lies outside the
+grid box. When a surface reaches the edge of the grid it is cut open there
+(flat walls, torn edges) and the status line says so: raise the isovalue.
 Colours are names (Blue, Red, Green, Yellow, Orange, Cyan, Magenta, Purple,
 White, Grey) or #rrggbb. Opacity below 1 makes the surface translucent;
 Visible hides one cube without removing it.
+
+COLOUR BY ANOTHER CUBE
+
+Colour by colours the chosen cube's surface by another cube's values instead
+of solid colours - e.g. the ESP cube on the density surface, the GaussView
+ESP picture. The other cube is interpolated at every surface point, so it
+need not share the grid; points it does not cover are grey (status line).
+Colours run red (most negative) - green (0) - blue (most positive) over
++/- max|value| on the surface; the colour bar is at the bottom of the 3D
+window. Untick the colouring cube's Show box to hide its own surfaces.
 
 SLICE
 

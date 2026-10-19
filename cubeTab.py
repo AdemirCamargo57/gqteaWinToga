@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import toga
 from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
@@ -32,6 +33,7 @@ from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 import cubeFile as cf
 import volumeData as vd
 from cubeRender import slice_item, surface_item
+from espSurfaceLayer import esp_colours, gaussview_label, symmetric_range
 from help import HelpGqteaWin
 
 SHOW_BOTH = "+ and −"
@@ -46,6 +48,9 @@ OPERATION_LABELS = {OP_ADD: "add", OP_SUBTRACT: "subtract", OP_SCALE: "scale"}
 
 AXIS_LABELS = ("a (x)", "b (y)", "c (z)")
 RANGE_LABELS = {"Symmetric ±max|V|": "symmetric", "Min to max": "minmax"}
+
+COLOUR_BY_NONE = "None (solid colours)"
+OUTSIDE_GRID_COLOUR = (0.6, 0.6, 0.6)  # surface points the colouring cube does not cover
 
 DEFAULT_POSITIVE_COLOUR = "Blue"
 DEFAULT_NEGATIVE_COLOUR = "Red"
@@ -81,6 +86,11 @@ def _assign(widget, attr: str, value) -> None:
     elif current == value:
         return
     setattr(widget, attr, value)
+
+
+def _ascii(text: str) -> str:
+    """GLUT bitmap fonts draw ASCII only: '−' -> '-', '×' -> 'x' (the cube writer's rule)."""
+    return cf._ascii_line(text)
 
 
 def _item_names(selection) -> List[str]:
@@ -210,6 +220,7 @@ class CubeEntry:
     opacity: float = 1.0
     visible: bool = True
     statistics: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    colour_by: Optional[str] = None  # another entry whose values colour this surface
     meshes: Dict[Tuple[float, int], Optional[vd.IsoMesh]] = field(default_factory=dict)
 
     @classmethod
@@ -269,6 +280,7 @@ class CubeTabController:
         self.negative_colour_input = None
         self.opacity_slider = None
         self.visible_switch = None
+        self.colour_by_selection = None
         self.slice_cube_selection = None
         self.slice_axis_selection = None
         self.slice_slider = None
@@ -334,6 +346,9 @@ class CubeTabController:
     def remove(self, name: str):
         entry = self.entry(name)
         self.entries.remove(entry)
+        for other in self.entries:
+            if other.colour_by == name:
+                other.colour_by = None  # back to solid colours
         if self.slice_cube == name:
             self.slice_cube = None
             if self.entries:
@@ -413,26 +428,47 @@ class CubeTabController:
     # Scene
     # ------------------------------------------------------------------
     def compute_scene_items(self):
-        """(render items, notes) for everything visible. Runs in a worker thread."""
+        """(render items, notes, colour bar or None) for everything visible. Runs in a worker thread."""
         items, notes = [], []
+        colour_bar = None
         if not self.show_volumes:
-            return items, notes
+            return items, notes, colour_bar
+        names = self.names()
         for e in list(self.entries):
             if not e.visible:
                 continue
-            missing = []
+            missing, clipped, meshes = [], [], []
             for sign in SHOW_MODES[e.show]:
                 mesh = e.mesh(sign, self.use_numba)
                 if mesh is None:
                     missing.append(sign)
                     continue
-                colour = vd.parse_colour(e.positive_colour if sign > 0 else e.negative_colour)
-                items.append(surface_item(mesh, colour, e.opacity))
+                meshes.append((sign, mesh))
+                if mesh.clipped:
+                    clipped.append(sign)
+            source = self.entry(e.colour_by) if e.colour_by in names else None
+            mapped = self._mapped_colours(e, source, [m for _, m in meshes], notes) if source and meshes else None
+            if mapped is not None:
+                colours, bar = mapped
+                for (sign, mesh), rgb in zip(meshes, colours):
+                    items.append(surface_item(mesh, rgb, e.opacity))
+                if colour_bar is None:
+                    colour_bar = bar
+                else:
+                    notes.append(f"{e.name}: only one colour bar is drawn (the first coloured surface's).")
+            else:
+                for sign, mesh in meshes:
+                    colour = vd.parse_colour(e.positive_colour if sign > 0 else e.negative_colour)
+                    items.append(surface_item(mesh, colour, e.opacity))
             if missing:
                 where = "±" if len(missing) == 2 else ("+" if missing[0] > 0 else "−")
                 lo, hi, _ = e.statistics
                 notes.append(f"{e.name}: no surface at {where}{e.isovalue:g} "
                              f"(values run from {lo:.4g} to {hi:.4g}).")
+            if clipped:
+                where = "±" if len(clipped) == 2 else ("+" if clipped[0] > 0 else "−")
+                notes.append(f"{e.name}: the surface at {where}{e.isovalue:g} reaches the edge of the grid "
+                             "and is cut open there; raise the isovalue.")
         if self.slice_visible and self.slice_cube in self.names():
             volume = self.entry(self.slice_cube).volume
             points, values = vd.slice_plane(volume, self.slice_axis, self.slice_index)
@@ -441,10 +477,38 @@ class CubeTabController:
             colours = (vd.diverging_colours(flat, hi) if self.slice_range == "symmetric"
                        else vd.rainbow_colours(flat, lo, hi))
             items.append(slice_item(points, colours, 1.0))
-        return items, notes
+        return items, notes, colour_bar
 
-    def apply_scene(self, items):
-        self.viewer.cube_layer.set_items(items)
+    @staticmethod
+    def _mapped_colours(entry: CubeEntry, source: CubeEntry, meshes, notes: List[str]):
+        """Colour ``entry``'s surfaces by ``source``'s values: (per-mesh RGB arrays, colour bar).
+
+        GaussView's scale, as in the ESP tab: red (most negative) -> green (0)
+        -> blue (most positive) over +/- max|value| on the shown surfaces.
+        Points the source grid does not cover are grey. None when it covers none.
+        """
+        sampled = [vd.sample(source.volume, mesh.vertices) for mesh in meshes]
+        finite = np.concatenate([v[np.isfinite(v)] for v in sampled])
+        if finite.size == 0:
+            notes.append(f"{entry.name}: no point of the surface lies inside {source.name}'s grid; "
+                         "drawn in solid colours.")
+            return None
+        half = symmetric_range(finite)
+        colours = []
+        for values in sampled:
+            outside = ~np.isfinite(values)
+            rgb = esp_colours(np.where(outside, 0.0, values), half)
+            rgb[outside] = OUTSIDE_GRID_COLOUR
+            colours.append(rgb)
+        total = sum(v.size for v in sampled)
+        if finite.size < total:
+            notes.append(f"{entry.name}: {1 - finite.size / total:.0%} of the surface lies outside "
+                         f"{source.name}'s grid (grey).")
+        caption = _ascii(f"{source.name} (a.u.) mapped on the {entry.name} isosurface {entry.isovalue:g}")
+        return colours, (gaussview_label(-half), gaussview_label(half), caption)
+
+    def apply_scene(self, items, colour_bar=None):
+        self.viewer.cube_layer.set_items(items, colour_bar=colour_bar)
         self.viewer.invalidate_scene_cache()
         self.viewer.request_projection_update()
 
@@ -466,12 +530,12 @@ class CubeTabController:
             while True:
                 self._refresh_pending = False
                 try:
-                    items, notes = await asyncio.to_thread(self.compute_scene_items)
+                    items, notes, colour_bar = await asyncio.to_thread(self.compute_scene_items)
                 except (ValueError, MemoryError) as exc:
                     self.set_status(f"Could not draw the cubes: {exc}")
                     return
                 if not self._refresh_pending:
-                    self.apply_scene(items)
+                    self.apply_scene(items, colour_bar)
                     self.set_status(self.scene_summary(items, notes))
                     return
         finally:
@@ -535,11 +599,16 @@ class CubeTabController:
             positive = canonical_colour(self.positive_colour_input.value)
             negative = canonical_colour(self.negative_colour_input.value)
             opacity = min(1.0, max(MIN_OPACITY, float(self.opacity_slider.value)))
+            colour_by = self.colour_by_selection.value
+            colour_by = None if colour_by in (None, COLOUR_BY_NONE) else colour_by
+            if colour_by is not None and (colour_by == entry.name or colour_by not in self.names()):
+                raise ValueError(f"Colour by: choose another loaded cube (not '{colour_by}').")
         except ValueError as exc:
             return str(exc)
         entry.isovalue, entry.show = isovalue, show
         entry.positive_colour, entry.negative_colour = positive, negative
         entry.opacity, entry.visible = opacity, bool(self.visible_switch.value)
+        entry.colour_by = colour_by
         return None
 
     def apply_slice_fields(self) -> Optional[str]:
@@ -613,6 +682,11 @@ class CubeTabController:
             _assign(self.negative_colour_input, "value", entry.negative_colour)
             _assign(self.opacity_slider, "value", float(entry.opacity))
             _assign(self.visible_switch, "value", entry.visible)
+            if self.colour_by_selection is not None:
+                choices = [COLOUR_BY_NONE] + [n for n in self.names() if n != entry.name]
+                if _item_names(self.colour_by_selection) != choices:
+                    self.colour_by_selection.items = choices
+                _assign(self.colour_by_selection, "value", entry.colour_by or COLOUR_BY_NONE)
         finally:
             self._syncing = was
 
@@ -970,6 +1044,11 @@ class CubeTabController:
                                           style=Pack(flex=1, margin=(0, 16, 0, 0)))
         self.visible_switch = toga.Switch("Visible", value=True, on_change=self.on_isosurface_change)
         tab.add(v._form_row(v._form_label("Opacity:"), self.opacity_slider, self.visible_switch))
+        self.colour_by_selection = toga.Selection(items=[COLOUR_BY_NONE], on_change=self.on_isosurface_change,
+                                                  style=Pack(flex=1))
+        tab.add(v._form_row(v._form_label("Colour by:"), self.colour_by_selection))
+        tab.add(v._hint("Colours this surface by another cube's values, e.g. the ESP on a density surface:"))
+        tab.add(v._hint("red = most negative, green = 0, blue = most positive; the colour bar is at the bottom."))
 
         # Slice
         tab.add(v._section_heading("Slice"))

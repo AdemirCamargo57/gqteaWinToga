@@ -7,6 +7,7 @@ import pytest
 
 import cubeFile as cf
 import cubeTab as ct
+from cubeTab import _item_names as _names
 import volumeData as vd
 from cubeRender import CubeSceneLayer
 
@@ -192,7 +193,7 @@ class TestScene:
     def test_both_lobes_in_their_colours(self, tmp_path):
         c = loaded(tmp_path, p_orbital_volume())
         c.entries[0].isovalue = 0.1
-        items, notes = c.compute_scene_items()
+        items, notes, _ = c.compute_scene_items()
         assert [i.kind for i in items] == ["surface", "surface"] and notes == []
         assert items[0].rgba[0, :3] == pytest.approx(vd.COLOUR_PRESETS["Blue"])
         assert items[1].rgba[0, :3] == pytest.approx(vd.COLOUR_PRESETS["Red"])
@@ -213,7 +214,7 @@ class TestScene:
     def test_no_surface_is_a_note_not_an_error(self, tmp_path):
         c = loaded(tmp_path, p_orbital_volume())
         c.entries[0].isovalue = 50.0
-        items, notes = c.compute_scene_items()
+        items, notes, _ = c.compute_scene_items()
         assert items == [] and len(notes) == 1 and "no surface" in notes[0]
 
     def test_opacity_reaches_the_items(self, tmp_path):
@@ -351,6 +352,7 @@ def with_widgets(c):
     c.slice_range_selection = SimpleNamespace(value=list(ct.RANGE_LABELS)[1])
     c.slice_switch = SimpleNamespace(value=True)
     c.status_label = SimpleNamespace(text="")
+    c.colour_by_selection = SimpleNamespace(value=ct.COLOUR_BY_NONE, items=[ct.COLOUR_BY_NONE])
     return c
 
 
@@ -432,6 +434,7 @@ def recorded_widgets(c):
     c.negative_colour_input = Recorder(value="Red")
     c.opacity_slider = Recorder(value=1.0)
     c.visible_switch = Recorder(value=True)
+    c.colour_by_selection = Recorder(items=[ct.COLOUR_BY_NONE], value=ct.COLOUR_BY_NONE)
     c.slice_axis_selection = Recorder(value=ct.AXIS_LABELS[2])
     c.slice_range_selection = Recorder(value=list(ct.RANGE_LABELS)[0])
     c.slice_switch = Recorder(value=False)
@@ -629,3 +632,130 @@ class TestBackgroundColour:
         monkeypatch.setattr(ct, "pick_colour", lambda initial, owner=None: None)
         c.on_background_pick(None)
         assert c.viewer.background_color == (0.0, 0.0, 0.0) and c.background_input.writes == []
+
+
+
+# ----------------------------------------------------------------------
+# Colour by another cube, potential defaults, clipped-surface notes
+# ----------------------------------------------------------------------
+def blob_density(shape=(25, 25, 25), h=0.4):
+    """exp(-r^2) as a 'density' cube, on the same grid as potential_volume()."""
+    origin = -h * (np.array(shape) - 1) / 2
+    idx = np.stack(np.meshgrid(*[np.arange(n) for n in shape], indexing="ij"), axis=-1).reshape(-1, 3)
+    points = origin + idx * h
+    volume = cf.CubeVolume("blob electron density rho(r)", "Total SCF Density", np.array([8]), np.array([8.0]),
+                           np.zeros((1, 3)), origin, np.eye(3) * h,
+                           np.exp(-(points ** 2).sum(axis=1)).reshape(shape))
+    return volume, points
+
+
+def potential_volume(shape=(25, 25, 25), h=0.4):
+    """V = x (linear, so trilinear sampling is exact), labelled as a potential cube."""
+    density, points = blob_density(shape, h)
+    return cf.CubeVolume("blob electrostatic potential V(r)", "gQTEA ESP, a.u.", density.atomic_numbers,
+                         density.nuclear_charges, density.coordinates, density.origin, density.axes,
+                         points[:, 0].reshape(shape).copy())
+
+
+def mapped(tmp_path):
+    c = recorded_widgets(controller())
+    density, _ = blob_density()
+    c.add_entries(c.read_entries(write(tmp_path, "rho.cube", density)))
+    c.add_entries(c.read_entries(write(tmp_path, "esp.cube", potential_volume())))
+    c.entry("esp").visible = False
+    c.sync_widgets(selected="rho")
+    return c
+
+
+class TestColourBy:
+    def test_choices_are_none_and_the_other_cubes(self, tmp_path):
+        c = mapped(tmp_path)
+        assert _names(c.colour_by_selection) == [ct.COLOUR_BY_NONE, "esp"]
+        assert c.colour_by_selection.value == ct.COLOUR_BY_NONE
+
+    def test_a_density_surface_coloured_by_the_potential(self, tmp_path):
+        c = mapped(tmp_path)
+        c.entry("rho").colour_by = "esp"
+        items, notes, bar = c.compute_scene_items()
+        (item,) = items  # only the density surface (+ only); the ESP cube is hidden
+        x = item.vertices[:, 0] / cf.BOHR_RADIUS_ANGSTROM  # V = x (bohr) at every surface point
+        half = np.abs(x).max()
+        from espSurfaceLayer import esp_colours, gaussview_label
+        assert item.rgba[:, :3] == pytest.approx(esp_colours(x, half), abs=1e-5)
+        assert bar[0] == gaussview_label(-half) and bar[1] == gaussview_label(half)
+        assert "esp" in bar[2] and "rho" in bar[2] and notes == []
+
+    def test_solid_colours_without_colour_by(self, tmp_path):
+        c = mapped(tmp_path)
+        items, _, bar = c.compute_scene_items()
+        assert bar is None and np.allclose(items[0].rgba[:, :3], vd.COLOUR_PRESETS["Blue"])
+
+    def test_points_outside_the_colouring_grid_are_grey_with_a_note(self, tmp_path):
+        c = recorded_widgets(controller())
+        density, _ = blob_density()
+        c.add_entries(c.read_entries(write(tmp_path, "rho.cube", density)))
+        c.add_entries(c.read_entries(write(tmp_path, "small.cube", potential_volume(shape=(9, 25, 25)))))
+        c.entry("small").visible = False
+        c.entry("rho").colour_by = "small"
+        items, notes, bar = c.compute_scene_items()
+        grey = np.all(np.isclose(items[0].rgba[:, :3], ct.OUTSIDE_GRID_COLOUR), axis=1)
+        assert 0 < grey.mean() < 1 and bar is not None
+        assert len(notes) == 1 and "outside" in notes[0] and "small" in notes[0]
+
+    def test_widgets_choose_the_colouring_cube(self, tmp_path):
+        c = with_widgets(mapped(tmp_path))
+        c.iso_cube_selection.value = "rho"
+        c.colour_by_selection.value = "esp"
+        assert c.apply_isosurface_fields() is None and c.entry("rho").colour_by == "esp"
+        c.colour_by_selection.value = ct.COLOUR_BY_NONE
+        assert c.apply_isosurface_fields() is None and c.entry("rho").colour_by is None
+
+    def test_a_cube_cannot_colour_itself_or_a_missing_cube(self, tmp_path):
+        c = with_widgets(mapped(tmp_path))
+        c.iso_cube_selection.value = "rho"
+        for choice in ("rho", "nothing"):
+            c.colour_by_selection.value = choice
+            assert "colour" in c.apply_isosurface_fields().lower()
+        assert c.entry("rho").colour_by is None
+
+    def test_removing_the_colouring_cube_returns_to_solid_colours(self, tmp_path):
+        c = mapped(tmp_path)
+        c.entry("rho").colour_by = "esp"
+        c.remove("esp")
+        assert c.entry("rho").colour_by is None and c.compute_scene_items()[2] is None
+
+    def test_the_bar_is_pushed_with_the_items(self, tmp_path):
+        c = mapped(tmp_path)
+        c.entry("rho").colour_by = "esp"
+        asyncio.run(c.refresh_scene())
+        assert c.viewer.cube_layer.colour_bar() is not None
+        c.entry("rho").colour_by = None
+        asyncio.run(c.refresh_scene())
+        assert c.viewer.cube_layer.colour_bar() is None
+
+    def test_bar_caption_is_plain_ascii(self, tmp_path):
+        c = mapped(tmp_path)
+        volume, name, _ = c.compute_operation("esp", ct.OP_SCALE, None, "-1", "")
+        c.add_result(volume, name)  # "-1 × esp": a non-ASCII name
+        c.entry(name).visible = False
+        c.entry("rho").colour_by = name
+        caption = c.compute_scene_items()[2][2]
+        assert caption.isascii() and "-1 x esp" in caption
+
+
+class TestPotentialAndClipping:
+    def test_a_potential_cube_starts_signed_at_0_02(self, tmp_path):
+        (entry,) = ct.CubeTabController.read_entries(write(tmp_path, "esp.cube", potential_volume()))
+        assert entry.isovalue == 0.02 and entry.show == ct.SHOW_BOTH
+
+    def test_a_clipped_surface_gives_a_note(self, tmp_path):
+        c = recorded_widgets(controller())
+        c.add_entries(c.read_entries(write(tmp_path, "esp.cube", potential_volume())))
+        c.entry("esp").isovalue = 0.5  # |V| = 0.5 bohr crosses the whole box: cut by its faces
+        notes = c.compute_scene_items()[1]
+        assert any("edge of the grid" in n and "esp" in n for n in notes)
+
+    def test_a_closed_surface_gives_no_note(self, tmp_path):
+        c = mapped(tmp_path)
+        c.entry("rho").isovalue = 0.5
+        assert c.compute_scene_items()[1] == []

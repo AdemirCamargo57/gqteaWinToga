@@ -1589,11 +1589,23 @@ Two switches control what is drawn:
 
 - For signed data (orbitals, differences), the positive surface is drawn at +isovalue and the negative one at −isovalue, each in its own colour.
 - **Show** draws both surfaces, `+ only`, or `− only`. Cubes with no negative values (densities) start at `+ only`.
-- Starting isovalues are 0.02 for orbitals and signed data and 0.0004 for densities, as in GaussView.
+- Starting isovalues are 0.02 for orbitals and signed data and 0.0004 for densities, as in GaussView. **Potential (ESP) cubes**, recognised from the words "electrostatic potential" that cubegen and the ESP tab write in the header, start at ±0.02 a.u. with both signs.
+- **Why ESP isosurfaces need larger isovalues.** The potential decays slowly: at the faces of a grid sized for the density it is still about ±0.01 a.u. A surface at a smaller value lies partly outside the grid and is cut open there, which shows as flat walls and torn edges. The status line then says *the surface … reaches the edge of the grid and is cut open there; raise the isovalue*.
 - **Positive colour** and **Negative colour** take a name (Blue, Red, Green, Yellow, Orange, Cyan, Magenta, Purple, White, Grey) or `#rrggbb`. Press Enter to apply.
 - **Opacity** below 1 makes the surface translucent.
 - **Visible** hides one cube without removing it (the same setting as its **Show** box in the list).
 - If an isovalue cuts nothing, the status line says so and gives the cube's value range.
+
+**Colour by another cube.** **Colour by** colours the chosen cube's surface with another loaded cube's values instead of the solid colours: the usual way to look at an ESP is the ESP cube coloured on the density surface. For example, with the `_ESP.cube` and `_density.cube` written by the ESP tab:
+
+1. Load both cubes, and untick the ESP cube's **Show** box (its own isosurfaces are not wanted).
+2. Under **Isosurface**, choose the density cube in **Cube** and the ESP cube in **Colour by**.
+
+- The other cube is interpolated (trilinear) at every surface point, so it does not need the same grid. Points it does not cover are drawn grey, and the status line gives their share.
+- Colours follow GaussView and the ESP tab: red = most negative, green = 0, blue = most positive, over ± the largest |value| on the surface. A colour bar with the range and a caption is drawn at the **bottom** of the 3D window, so it never covers the ESP tab's bar at the top.
+- With several coloured surfaces, the bar belongs to the first one.
+- For benzene, the range matches the ESP tab's exact calculation within 0.2 % (±2.658e-2 against ±2.664e-2 a.u.).
+- **None (solid colours)** goes back to the positive and negative colours. Removing the colouring cube does the same.
 
 **Slice.** A coloured plane through one cube's grid.
 
