@@ -61,6 +61,16 @@
         - [Creating and modifying bonds](#creating-and-modifying-bonds)
         - [Running the pre-optimization](#running-the-pre-optimization)
         - [Importing and saving structure files](#importing-and-saving-structure-files)
+        - [Selecting and moving one molecule](#selecting-and-moving-one-molecule)
+        - [Measuring bond lengths, angles and dihedrals](#measuring-bond-lengths-angles-and-dihedrals)
+        - [Setting a bond length, angle or dihedral](#setting-a-bond-length-angle-or-dihedral)
+        - [Freezing parameters during pre-optimization](#freezing-parameters-during-pre-optimization)
+        - [Adding hydrogens automatically](#adding-hydrogens-automatically)
+        - [Replacing an atom's element](#replacing-an-atoms-element)
+        - [Showing atom numbers](#showing-atom-numbers)
+        - [Canvas background](#canvas-background)
+        - [Bringing a molecule back from the 3D viewer](#bringing-a-molecule-back-from-the-3d-viewer)
+        - [Mouse and keyboard reference](#mouse-and-keyboard-reference)
         - [Validation messages](#validation-messages)
     - [Energy Plots](#energy-plots)
     - [Molecular Axis Alignment](#molecular-axis-alignment)
@@ -1615,10 +1625,12 @@ colours as the 3D viewer.
 
 To build a molecule, select an element, place the atoms you need, then select
 the next element and continue. Clicking an existing atom does **not** place a
-second atom on top of it.
+second atom on top of it; it picks the atom for a measurement instead (see
+[Measuring](#measuring-bond-lengths-angles-and-dihedrals)).
 
-**Hydrogens are never added for you.** Draw every atom you want in the final
-structure, hydrogens included.
+**Hydrogens are not added while you draw.** Draw them yourself, or press **Add
+hydrogens** once the heavy atoms and bond types are in place (see
+[Adding hydrogens automatically](#adding-hydrogens-automatically)).
 
 ###### Creating and modifying bonds
 
@@ -1822,6 +1834,271 @@ and it assumes charge 0 and the lowest multiplicity the electron count allows
 (1 for an even count, 2 for an odd one). The confirmation dialog repeats this.
 A MOL or SD file holds at most 999 atoms and 999 bonds, and a PDB file at most
 99 999 atoms; a structure that does not fit is reported, and no file is written.
+
+The canvas window has a side panel to the right of the drawing with four
+groups, **Measure**, **Frozen parameters**, **Molecule** and **Canvas**, used
+by the features below.
+
+###### Selecting and moving one molecule
+
+When the canvas holds several separate molecules (fragments that share no
+bond), you can move one of them without touching the others.
+
+| Action | Gesture |
+|--------|---------|
+| Select a molecule | **Shift + click** any of its atoms or bonds |
+| Clear the selection | **Shift + click** empty space, or **Deselect** in the Molecule panel |
+| Move the selected molecule | **Ctrl + drag** (left button), anywhere on the canvas |
+| Turn the selected molecule | **Ctrl + right-drag**, about the molecule's own centre |
+
+The selected molecule is drawn with an **orange halo** around its atoms and
+orange bonds, and the Molecule panel gives its size. Moving and turning are
+rigid, so the molecule's bond lengths, angles and dihedrals never change, and
+every other molecule stays exactly where it is. The molecule follows the
+pointer on screen whatever the view rotation and zoom, and it turns the same
+way a right-drag turns the whole view. Each drag is one **Undo** step.
+
+A move is refused, with the reason in the status line, when:
+
+- nothing is selected;
+- the selection has since been bonded to another molecule, because moving only
+  part of a molecule would stretch that bond. Shift + click it again to
+  reselect the whole molecule;
+- a frozen parameter links an atom of the selection to an atom of another
+  molecule, because the move would break it. Remove the frozen parameter
+  first.
+
+Without Ctrl or Shift every gesture works exactly as before. **Ctrl +
+right-click never deletes anything.**
+
+###### Measuring bond lengths, angles and dihedrals
+
+**Click atoms in order** (a click without dragging):
+
+| Atoms picked | Measurement | Unit |
+|--------------|-------------|------|
+| 2 | bond length (any distance) | Å |
+| 3 | bond angle, with the **second** atom as the vertex | ° |
+| 4 | dihedral angle about the bond between the 2nd and 3rd atoms | ° |
+
+Picked atoms get a magenta ring and their pick order (**#1**…**#4**), joined by
+a dotted line in that order. The value is shown in the top-left corner of the
+canvas and in the **Measure** panel, for example `Bond length 1-2 (C-C): 1.5200
+Å`. The dihedral follows the IUPAC sign convention: looking along atom 2 → atom
+3, it is positive when atom 1 must turn clockwise to eclipse atom 4. A
+dihedral through three atoms in a line has no defined value and is shown as
+undefined.
+
+Clicking a picked atom again removes it from the pick list; picking a fifth
+atom starts a new measurement with it; **Clear** removes all picks. Measuring
+is not an edit and is not on the Undo list. A picked atom that is deleted
+simply drops out of the measurement.
+
+###### Setting a bond length, angle or dihedral
+
+Pick the atoms (2, 3 or 4, as for measuring) and press **Edit value...**. The
+dialog shows the parameter, the picked atoms, the current value with its unit,
+and a field for the new value (Å for a length, degrees for an angle). Type the
+value and press **Apply** or Enter.
+
+One side of the molecule then moves **rigidly**, the way a model kit behaves:
+
+| Parameter | What moves |
+|-----------|------------|
+| Bond length 1-2 | everything on atom 2's side of the bond, along the bond |
+| Bond angle 1-2-3 | everything on atom 3's side, turned about atom 2 in the plane of the three atoms |
+| Dihedral 1-2-3-4 | everything on atom 4's side of the 2-3 bond, turned about that bond |
+
+All other bond lengths and angles stay as they were. The edit is one **Undo**
+step. Tick **Freeze at the new value during pre-optimization** to freeze the
+parameter as you set it. A parameter that is already frozen is re-frozen at the
+new value.
+
+The edit is refused, and the reason is shown in red inside the dialog (which
+stays open so you can correct it), when:
+
+- the value is not a number, or is out of range. A length must be 0.3–20 Å,
+  and an angle greater than 0° and at most 180°. A dihedral may be any angle
+  and is wrapped into (−180°, 180°];
+- the bond to be cut is in a **ring**, so no side can move on its own. Ring
+  geometry changes only through pre-optimization;
+- the picked atoms are not bonded in a chain (1-2, 2-3, 3-4). The exception is
+  a length between two atoms of **different molecules**, which moves the second
+  molecule as a whole;
+- a dihedral passes through three atoms in a line;
+- the move would change **another frozen parameter**. Remove that one first.
+
+If one of these applies before you type anything, for example a ring bond,
+**Edit value...** reports it at once instead of opening the dialog.
+
+###### Freezing parameters during pre-optimization
+
+Press **Freeze** to hold the picked length, angle or dihedral at its current
+value during **Pre-optimize geometry**. Alternatively, tick the freeze box in
+the edit dialog to hold it at a typed value. Every frozen parameter is listed
+under **Frozen parameters** (kind, atom numbers, value). Select a row and press
+**Remove**, or press **Remove all**. Freezing and removing are on the Undo
+list, and they do not discard a finished optimization, since no atom moves.
+
+**How it works.** Frozen parameters are held **exactly at every step** of the
+optimization, not merely pulled towards their values. Each trial geometry is
+projected back onto the frozen values before its energy is evaluated, and the
+minimizer only moves in directions that leave them unchanged. The result
+dialog reports how many were held and the largest deviation (typically about
+1e-10 Å or °). Everything that is not frozen relaxes as usual. Without frozen
+parameters the pre-optimizer runs exactly as before.
+
+**Limits, reported rather than ignored.** If any frozen parameter cannot be
+held, the pre-optimization does not run, and a dialog names the parameter and
+the reason:
+
+- an angle frozen within 1° of 0° or 180°. The constraint has no defined
+  direction there; the angle term already keeps a linear centre straight;
+- a dihedral through three atoms in a line;
+- frozen values that contradict each other, for example three lengths that no
+  triangle can have. The dialog reports the largest violation; remove or
+  change one of them.
+
+Deleting an atom removes every frozen parameter that uses it.
+
+###### Adding hydrogens automatically
+
+**Add hydrogens** (Molecule panel) completes each atom's valence with hydrogen
+atoms, according to its bonds. If a molecule is selected, only that molecule
+is completed; otherwise every molecule is. The valences used are: C 4, N 3,
+O 2, B 3, Si 4, halogens 1, S 2 (also 4 and 6), and P 3 (also 5). A resonance
+bond counts 1.5, so an aromatic CH carbon gets one hydrogen.
+
+Existing hydrogens are bonds like any other, so a complete atom gets nothing,
+and pressing the button twice adds no duplicates. Atoms whose state the
+drawing does not settle are **listed in a dialog and left unchanged**:
+
+| Case | Example | Why nothing is added |
+|------|---------|----------------------|
+| More bonds than the valence | N with 4 bonds | probably a charge (ammonium), which the canvas does not record |
+| Bonds between two valences | S with 3 bonds, P with 4 | ambiguous oxidation state |
+| Half a bond over resonance | carboxylate O (1.5) | H or negative charge cannot be told apart |
+| Aromatic N with two resonance bonds | pyridine / pyrrole | pyridine-like (no H) or pyrrole-like (N–H)? Add the H yourself for N–H |
+| No valence rule | Fe, Na, noble gases | no reliable rule |
+
+New hydrogens are placed at the VSEPR positions around each atom at the
+pre-optimizer's reference X–H length (1.07 Å for C–H). Alkenes are kept
+planar, and the first hydrogen on a tetrahedral centre is placed anti to a
+neighbour, giving a zigzag. **Pre-optimize afterwards** for the final geometry.
+The addition is one Undo step.
+
+###### Replacing an atom's element
+
+To change an existing atom into another element, for example a carbon into a
+nitrogen to turn benzene into pyridine:
+
+1. Select the new element in the **Periodic Table** window.
+2. Tick **Click an atom to replace it with N** at the top right of the canvas
+   window. The box always names the element currently selected.
+3. Click the atom (or atoms) to change.
+
+The atom keeps everything except its element:
+
+- its **position**, so nothing moves;
+- its **number**, so measurements, saved files and the numbering below stay
+  the same;
+- its **bonds and their types**;
+- any **measurement pick**, **frozen parameter** or **molecule selection**
+  that includes it.
+
+Each replacement is one **Undo** step. Choose another element in the periodic
+table at any time and keep clicking. Clicking an atom that already has the
+selected element changes nothing, and the status line says so.
+
+The bonds are **kept exactly as drawn**, even when the new element would not
+normally form them. The status line then reports, without changing anything:
+
+| Note | Example | What to do |
+|------|---------|------------|
+| `X now has n bonds where m is typical.` | a carbon with three bonds replaced by O | delete or change a bond, if you did not mean it |
+| `The double bond to atom k is above the single bond X usually forms; click it to change it.` | a C=C carbon replaced by H | click the bond until it is single |
+| `X has no covalent radius, so the structure cannot be pre-optimized.` | a very heavy element | choose another element before pre-optimizing |
+
+While replace mode is on, **clicking an atom replaces it instead of picking it
+for a measurement**. Every other gesture is unchanged: clicking empty space
+places an atom, dragging bonds and grows atoms, Shift and Ctrl gestures select
+and move molecules. Untick the box to pick atoms for measurements again.
+
+###### Showing atom numbers
+
+Tick **Atom numbers** in the View row (beside **Reset view**) to show every
+atom's number beside it, in blue. These are the same 1-based numbers used by
+measurements (`Bond length 1-2`), by the Frozen parameters list, in the
+validation messages, and as the atom order of saved files. Deleting an atom
+renumbers the ones after it, and the labels follow at once.
+
+Each number is placed beside its own atom where it is readable: it does not
+cover any atom, any bond, another number, a measurement tag (#1–#4), or the
+measurement text in the corner. When several free spots exist, the one on the
+side away from the rest of the molecule is preferred, so ring atoms are
+numbered outside the ring and a chain end beyond the chain. If an atom is so
+crowded that no spot is entirely free, the least obstructed one is used.
+
+The numbers are laid out again whenever the drawing or the view changes. While
+you drag (pan, rotate, or move a molecule), each number moves with its atom,
+so the canvas stays smooth even for a large molecule, and the numbers are
+rearranged when you release the mouse. Atom numbers are a view setting: they
+are not an edit and do not appear in saved files.
+
+###### Canvas background
+
+The **Background** list in the Canvas panel switches the canvas colour between
+presets (off-white by default, white, light grey, pale blue, cream, dark grey,
+black). Alternatively, type a colour as `#rrggbb` in **Custom** and press
+Enter. On a dark background, bonds, outlines and the measurement text are drawn
+light so they stay visible. The background is a view setting: it is not an
+edit, and it does not affect saved files.
+
+###### Bringing a molecule back from the 3D viewer
+
+Press **From 3D viewer** in the canvas window's File row, or **Bring the 3D
+molecule to the design canvas** on the Design tab. Either copies the frame
+currently shown in the 3D viewer to the canvas for further editing, keeping:
+
+- the **elements** and **coordinates** (unchanged, apart from centring);
+- the **bonds the 3D viewer draws** for that frame, judged by its current bond
+  settings.
+
+The 3D viewer stores no bond orders, so its bonds arrive as **single bonds**,
+and the dialog reminds you to set double and resonance bonds before
+pre-optimizing. The exception is a structure that was sent to the viewer from
+this canvas and not changed since: its drawn bond orders are restored.
+
+**Your drawing is never overwritten.** If the canvas already holds atoms, you
+are asked first:
+
+- **Yes** adds the 3D molecule *beside* the drawing, 2 Å to its right. Nothing
+  is lost, and the view is reset to show both.
+- **No** cancels, and nothing changes. To replace the drawing instead, press
+  **Clear** on the canvas first (Undo brings it back), then bring the molecule
+  again.
+
+On an empty canvas the molecule is loaded straight away. Either way the load
+is one Undo step, and the 1000-atom limit of the canvas applies.
+
+###### Mouse and keyboard reference
+
+| Gesture | Where | Result |
+|---------|-------|--------|
+| Click | empty space | place an atom of the selected element |
+| Click | atom | pick it for a measurement (again: unpick) |
+| Click | atom, with **Click an atom to replace it** ticked | give it the element selected in the periodic table |
+| Click | bond | step its type: single → double → triple → resonance → single |
+| Drag | atom → atom | bond them |
+| Drag | atom → empty space | grow a bonded atom |
+| Drag | empty space | pan the view |
+| Right-drag | anywhere | rotate the view |
+| Right-click | atom or bond | delete it |
+| **Shift + click** | atom or bond | select its molecule |
+| **Shift + click** | empty space | clear the selection |
+| **Ctrl + drag** | anywhere | move the selected molecule |
+| **Ctrl + right-drag** | anywhere | turn the selected molecule |
+| **Enter** | edit dialog / Custom colour | apply the value |
 
 ###### Validation messages
 

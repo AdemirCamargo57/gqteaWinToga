@@ -34,6 +34,17 @@ import numpy as np
 from scipy.optimize import minimize
 
 from help import AtomicData
+from molecularGeometry import (
+    ANGLE,
+    DIHEDRAL,
+    DISTANCE,
+    LINEAR_TOLERANCE_DEGREES,
+    Constraint,
+    constraint_residuals,
+    is_degenerate,
+    project_onto_constraints,
+    tangent_component,
+)
 from molecularSketch import RESONANCE_ORDER, MoleculeSketch
 
 # The design canvas is drawn at 40 px to the Angstrom, so a typical 1.5 A bond
@@ -141,6 +152,10 @@ class OptimizationResult:
     # The same structure in sketch coordinates, centred where the drawing was,
     # in the sketch's atom order -- what the design canvas writes back.
     sketch_positions: Optional[np.ndarray] = None
+    # Frozen parameters held during the run, and the largest amount any of
+    # them is off its value at the end (Angstrom or degrees).
+    constraint_count: int = 0
+    constraint_deviation: float = 0.0
 
     @property
     def atom_count(self) -> int:
@@ -630,14 +645,26 @@ def optimize_sketch(sketch: MoleculeSketch, max_iterations: int = 500) -> Optimi
 
     elements, seed = build_3d_seed(sketch)
     field = ForceField.from_sketch(sketch, elements)
+    constraints = sketch_constraints(sketch)
 
-    outcome = minimize(
-        field.energy_and_gradient,
-        seed.ravel(),
-        jac=True,
-        method="L-BFGS-B",
-        options={"maxiter": int(max_iterations)},
-    )
+    if constraints:
+        unsupported = unsupported_constraints(sketch, constraints, seed)
+        if unsupported:
+            raise ValueError(
+                "These frozen parameters cannot be held by the pre-optimizer: "
+                + "; ".join(unsupported) + ". Remove them, then pre-optimize again."
+            )
+        # Raises ValueError (reported to the user) when they contradict each other.
+        start = project_onto_constraints(seed, constraints)
+        outcome = minimize_on_constraints(field, start, constraints, max_iterations)
+    else:
+        outcome = minimize(
+            field.energy_and_gradient,
+            seed.ravel(),
+            jac=True,
+            method="L-BFGS-B",
+            options={"maxiter": int(max_iterations)},
+        )
 
     coordinates = np.asarray(outcome.x, dtype=float).reshape(-1, 3)
     if not np.all(np.isfinite(coordinates)):
@@ -666,4 +693,148 @@ def optimize_sketch(sketch: MoleculeSketch, max_iterations: int = 500) -> Optimi
         message=str(message),
         warnings=list(warnings),
         sketch_positions=sketch_positions,
+        constraint_count=len(constraints),
+        constraint_deviation=constraint_deviation(coordinates, constraints),
     )
+
+
+# ----------------------------------------------------------------------
+# Frozen parameters
+# ----------------------------------------------------------------------
+# Convergence tests of the constrained minimizer, matching L-BFGS-B's
+# defaults (pgtol = 1e-5, factr = 1e7) so a constrained run stops where an
+# unconstrained one would.
+CONSTRAINED_GRADIENT_TOLERANCE = 1e-5
+CONSTRAINED_RELATIVE_FTOL = 1e7 * np.finfo(float).eps
+CONSTRAINED_MEMORY = 10
+# Largest displacement of any atom in one step (Angstrom): keeps the
+# projection back onto the constraint surface a small correction.
+CONSTRAINED_MAX_STEP = 0.3
+
+
+def sketch_constraints(sketch: MoleculeSketch) -> List[Constraint]:
+    """The sketch's frozen parameters on 0-based atom positions."""
+    index_of = {atom_id: index for index, atom_id in enumerate(sketch.ordered_atom_ids())}
+    return [
+        Constraint(c.kind, tuple(index_of[atom_id] for atom_id in c.atom_ids), float(c.value))
+        for c in sketch.constraints
+        if all(atom_id in index_of for atom_id in c.atom_ids)
+    ]
+
+
+def unsupported_constraints(sketch: MoleculeSketch, constraints: Sequence[Constraint],
+                            coordinates: np.ndarray) -> List[str]:
+    """Why any constraint cannot be held, one phrase each; empty when all can."""
+    problems = []
+    for constraint in constraints:
+        label = sketch.describe_parameter([sketch.ordered_atom_ids()[a] for a in constraint.atoms])
+        if constraint.kind == ANGLE and not (
+                LINEAR_TOLERANCE_DEGREES < constraint.value < 180.0 - LINEAR_TOLERANCE_DEGREES):
+            problems.append(
+                f"angle {label} frozen at {constraint.value:.2f}° is (nearly) linear, where the "
+                "constraint has no defined direction"
+            )
+        elif constraint.kind == DIHEDRAL:
+            reason = is_degenerate(DIHEDRAL, coordinates, constraint.atoms)
+            if reason:
+                problems.append(f"dihedral {label}: {reason}")
+    return problems
+
+
+def constraint_deviation(coordinates, constraints: Sequence[Constraint]) -> float:
+    """Largest |value - target| over the constraints, in Angstrom or degrees."""
+    if not constraints:
+        return 0.0
+    residuals, _ = constraint_residuals(coordinates, constraints)
+    deviations = [abs(r) if c.kind == DISTANCE else abs(np.degrees(r))
+                  for r, c in zip(residuals, constraints)]
+    return float(max(deviations))
+
+
+@dataclass
+class _ConstrainedOutcome:
+    x: np.ndarray
+    fun: float
+    jac: np.ndarray
+    nit: int
+    success: bool
+    message: str
+
+
+def minimize_on_constraints(field: ForceField, start, constraints: Sequence[Constraint],
+                            max_iterations: int = 500) -> _ConstrainedOutcome:
+    """Minimize ``field`` with every constraint held at **every** evaluated geometry.
+
+    A projected L-BFGS: the gradient is reduced to its component tangent to
+    the constraint surface, a step is taken along the L-BFGS direction built
+    from those tangent gradients, and the trial geometry is projected back
+    onto the surface (``project_onto_constraints``) *before* its energy is
+    evaluated. Frozen parameters are therefore exact (to 1e-10) throughout the
+    run, not merely restrained towards their values. ``start`` must already
+    satisfy the constraints.
+    """
+    x = np.asarray(start, dtype=float).reshape(-1, 3)
+    energy, gradient = field.energy_and_gradient(x.ravel())
+    tangent = tangent_component(gradient, x, constraints)
+    history: deque = deque(maxlen=CONSTRAINED_MEMORY)
+
+    def outcome(success, message, iterations):
+        return _ConstrainedOutcome(x.ravel().copy(), float(energy), tangent.copy(), iterations, success, message)
+
+    for iteration in range(int(max_iterations)):
+        if np.max(np.abs(tangent)) <= CONSTRAINED_GRADIENT_TOLERANCE:
+            return outcome(True, "CONVERGENCE: NORM OF PROJECTED GRADIENT <= PGTOL", iteration)
+
+        direction = -_lbfgs_direction(tangent, history)
+        direction = tangent_component(direction, x, constraints)
+        slope = float(np.dot(direction, tangent))
+        if slope >= 0.0:  # not a descent direction: restart from steepest descent
+            history.clear()
+            direction, slope = -tangent, -float(np.dot(tangent, tangent))
+        largest = np.max(np.linalg.norm(direction.reshape(-1, 3), axis=1))
+        step = min(1.0, CONSTRAINED_MAX_STEP / largest) if largest > 0.0 else 1.0
+
+        accepted = False
+        for _ in range(30):
+            try:
+                trial = project_onto_constraints(x + step * direction.reshape(-1, 3), constraints)
+            except ValueError:
+                step *= 0.5
+                continue
+            trial_energy, trial_gradient = field.energy_and_gradient(trial.ravel())
+            if trial_energy <= energy + 1e-4 * step * slope:
+                accepted = True
+                break
+            step *= 0.5
+        if not accepted:
+            converged = np.max(np.abs(tangent)) < 1e3 * CONSTRAINED_GRADIENT_TOLERANCE
+            return outcome(converged, "CONVERGENCE: NO FURTHER DECREASE ON THE CONSTRAINT SURFACE"
+                           if converged else "ABNORMAL_TERMINATION_IN_LNSRCH", iteration)
+
+        trial_tangent = tangent_component(trial_gradient, trial, constraints)
+        s, y = (trial - x).ravel(), trial_tangent - tangent
+        if float(np.dot(s, y)) > 1e-12:
+            history.append((s, y))
+        previous = energy
+        x, energy, tangent = trial, trial_energy, trial_tangent
+        if (previous - energy) / max(abs(previous), abs(energy), 1.0) <= CONSTRAINED_RELATIVE_FTOL:
+            return outcome(True, "CONVERGENCE: REL_REDUCTION_OF_F <= FACTR*EPSMCH", iteration + 1)
+    return outcome(False, "STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT", int(max_iterations))
+
+
+def _lbfgs_direction(gradient: np.ndarray, history) -> np.ndarray:
+    """The L-BFGS two-loop product H * gradient."""
+    q = gradient.copy()
+    alphas = []
+    for s, y in reversed(history):
+        rho = 1.0 / float(np.dot(y, s))
+        alpha = rho * float(np.dot(s, q))
+        q -= alpha * y
+        alphas.append((rho, alpha, s, y))
+    if history:
+        s, y = history[-1]
+        q *= float(np.dot(s, y)) / float(np.dot(y, y))
+    for rho, alpha, s, y in reversed(alphas):
+        beta = rho * float(np.dot(y, q))
+        q += (alpha - beta) * s
+    return q

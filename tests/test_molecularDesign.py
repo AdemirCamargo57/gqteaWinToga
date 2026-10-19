@@ -21,6 +21,7 @@ import molecularDesign
 import molecularFileFormats
 from molecularDesign import MolecularDesignController, blend_color
 from molecularFileFormats import parse_structure_text
+from molecularGeometry import measure
 from molecularPreOptimizer import PIXELS_PER_ANGSTROM, OptimizationResult, reference_bond_length
 from molecularSketch import RESONANCE_ORDER
 
@@ -69,6 +70,9 @@ class _FailingViewer(_StubViewer):
 def _controller(viewer=None) -> MolecularDesignController:
     controller = MolecularDesignController.__new__(MolecularDesignController)
     controller._init_state(viewer=viewer)
+    # Never read the real keyboard: tests set controller.held to simulate keys.
+    controller.held = frozenset()
+    controller.modifier_state = lambda: controller.held
     controller.test_view = _StubView()
     controller.register_view(controller.test_view)
     return controller
@@ -1348,3 +1352,946 @@ def test_the_save_format_list_starts_with_xyz_and_covers_every_writer():
     labels = molecularDesign.DesignCanvasWindow.EXPORT_FORMAT_LABELS
     assert list(labels.values())[0] == "XYZ"
     assert set(labels.values()) == {fmt.key for fmt in molecularFileFormats.WRITABLE_FORMATS}
+
+
+# ------------------------------------------------------------------
+# Selecting and moving one molecule
+# ------------------------------------------------------------------
+def _two_molecules(controller):
+    """Ethylene's heavy atoms at (100..160, 100) and an O-H pair lower down."""
+    _two_bonded_carbons(controller)                 # atoms at x=100, 200, y=100
+    controller.select_element("O")
+    _click(controller, 100.0, 300.0)
+    controller.select_element("H")
+    _click(controller, 140.0, 300.0)
+    _drag(controller, 100.0, 300.0, 140.0, 300.0)
+    controller.select_element("C")
+    return controller.sketch.ordered_atom_ids()
+
+
+def _shift_click(controller, x, y):
+    controller.held = frozenset({"shift"})
+    _click(controller, x, y)
+    controller.held = frozenset()
+
+
+def _ctrl_drag(controller, *points):
+    controller.held = frozenset({"ctrl"})
+    _drag(controller, *points)
+    controller.held = frozenset()
+
+
+def _ctrl_right_drag(controller, *points):
+    controller.held = frozenset({"ctrl"})
+    _right_drag(controller, *points)
+    controller.held = frozenset()
+
+
+def _distances(positions):
+    return np.linalg.norm(positions[:, None, :] - positions[None, :, :], axis=2)
+
+
+def test_shift_click_on_an_atom_selects_its_whole_molecule():
+    controller = _controller()
+    ids = _two_molecules(controller)
+
+    _shift_click(controller, 100.0, 300.0)
+
+    assert controller.selected_atoms == set(ids[2:])
+    assert "selected" in controller.status_message
+    assert controller.sketch.atom_count == 4  # nothing placed, nothing bonded
+
+
+def test_shift_click_on_a_bond_selects_its_molecule_and_on_empty_space_clears():
+    controller = _controller()
+    ids = _two_molecules(controller)
+
+    _shift_click(controller, 150.0, 100.0)  # the C-C bond
+    assert controller.selected_atoms == set(ids[:2])
+
+    _shift_click(controller, 400.0, 400.0)
+    assert controller.selected_atoms == set()
+    assert controller.sketch.atom_count == 4
+
+
+def test_ctrl_drag_moves_only_the_selected_molecule_rigidly():
+    controller = _controller()
+    _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    before = controller.sketch.positions()
+    undo_depth = len(controller.undo_stack)
+
+    _ctrl_drag(controller, 120.0, 300.0, 170.0, 260.0)
+
+    after = controller.sketch.positions()
+    assert np.array_equal(after[:2], before[:2])
+    assert np.allclose(after[2:], before[2:] + [50.0, -40.0, 0.0])
+    assert len(controller.undo_stack) == undo_depth + 1  # the whole drag is one undo step
+    controller.undo()
+    assert np.array_equal(controller.sketch.positions(), before)
+
+
+def test_ctrl_drag_moves_by_screen_pixels_on_a_rotated_zoomed_view():
+    controller = _controller()
+    _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    _right_drag(controller, 300.0, 200.0, 360.0, 230.0)
+    controller.zoom_in()
+    o_screen = controller.screen_positions()[controller.sketch.ordered_atom_ids()[2]]
+
+    _ctrl_drag(controller, o_screen[0], o_screen[1], o_screen[0] + 30.0, o_screen[1] + 10.0)
+
+    moved = controller.screen_positions()[controller.sketch.ordered_atom_ids()[2]]
+    assert np.allclose(np.subtract(moved, o_screen), [30.0, 10.0, 0.0])
+
+
+def test_ctrl_right_drag_turns_the_selected_molecule_about_its_centre():
+    controller = _controller()
+    _two_molecules(controller)
+    _shift_click(controller, 200.0, 100.0)
+    before = controller.sketch.positions()
+
+    _ctrl_right_drag(controller, 300.0, 300.0, 380.0, 340.0)
+
+    after = controller.sketch.positions()
+    assert np.allclose(_distances(after[:2]), _distances(before[:2]))
+    assert np.allclose(after[:2].mean(axis=0), before[:2].mean(axis=0))
+    assert not np.allclose(after[:2], before[:2])
+    assert np.array_equal(after[2:], before[2:])
+    assert np.allclose(controller.camera.rotation, np.eye(3))  # the view did not turn
+
+
+def test_a_ctrl_right_click_never_deletes():
+    controller = _controller()
+    _two_molecules(controller)
+    controller.held = frozenset({"ctrl"})
+    _right_click(controller, 100.0, 100.0)
+    assert controller.sketch.atom_count == 4
+
+
+def test_moving_without_a_selection_changes_nothing():
+    controller = _controller()
+    _two_molecules(controller)
+    before = controller.sketch.positions()
+
+    _ctrl_drag(controller, 120.0, 300.0, 170.0, 260.0)
+
+    assert np.array_equal(controller.sketch.positions(), before)
+    assert "Shift+click a molecule" in controller.status_message
+
+
+def test_a_frozen_parameter_between_molecules_blocks_the_move():
+    controller = _controller()
+    ids = _two_molecules(controller)
+    controller.sketch.set_constraint([ids[0], ids[2]], 4.0)
+    _shift_click(controller, 100.0, 300.0)
+    before = controller.sketch.positions()
+
+    _ctrl_drag(controller, 120.0, 300.0, 170.0, 260.0)
+
+    assert np.array_equal(controller.sketch.positions(), before)
+    assert "links the selection to another molecule" in controller.status_message
+
+
+def test_a_selection_bonded_to_outside_atoms_blocks_the_move():
+    controller = _controller()
+    ids = _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    controller.sketch.add_bond(ids[0], ids[2])
+
+    _ctrl_drag(controller, 120.0, 300.0, 170.0, 260.0)
+
+    assert "bonded to atoms outside it" in controller.status_message
+
+
+# ------------------------------------------------------------------
+# Measuring
+# ------------------------------------------------------------------
+def _chain(controller):
+    """C1-C2-C3-C4 zigzag, one sketch pixel = 1/40 A."""
+    controller.import_structure(_chain_file())
+    return controller.sketch.ordered_atom_ids()
+
+
+def _chain_file(directory=None):
+    import tempfile
+    directory = Path(directory or tempfile.mkdtemp())
+    path = directory / "chain.xyz"
+    path.write_text("4\nchain\nC 0 0 0\nC 1.52 0 0\nC 2.03 1.43 0\nC 3.55 1.43 0.6\n", encoding="utf-8")
+    return path
+
+
+def _click_atom(controller, atom_id):
+    x, y, _ = controller.screen_positions()[atom_id]
+    _click(controller, x, y)
+
+
+def test_clicking_atoms_in_order_measures_length_angle_and_dihedral():
+    controller = _controller()
+    ids = _chain(controller)
+
+    _click_atom(controller, ids[0])
+    _click_atom(controller, ids[1])
+    assert controller.measurement_text() == "Bond length 1-2 (C-C): 1.5200 Å"
+    _click_atom(controller, ids[2])
+    assert controller.measurement_text().startswith("Bond angle 1-2-3 (C-C-C): ")
+    assert controller.measurement_text().endswith("°")
+    _click_atom(controller, ids[3])
+    kind, value = controller.current_measurement()
+    assert kind == "dihedral" and value == pytest.approx(
+        measure("dihedral", molecularFileFormats.read_structure_file(_chain_file()).coordinates, (0, 1, 2, 3)))
+    assert controller.sketch.atom_count == 4  # picking never draws
+
+
+def test_a_picked_atom_clicked_again_is_unpicked_and_a_fifth_pick_restarts():
+    controller = _controller()
+    ids = _chain(controller)
+    for atom_id in ids:
+        _click_atom(controller, atom_id)
+    _click_atom(controller, ids[1])  # already picked: unpicked
+    assert controller.picked_atoms == [ids[0], ids[2], ids[3]]
+    _click_atom(controller, ids[1])  # four picks again
+    _click(controller, 500.0, 40.0)  # an extra atom, away from the chain
+    extra = controller.sketch.ordered_atom_ids()[-1]
+    _click_atom(controller, extra)  # a fifth atom starts a new measurement
+    assert controller.picked_atoms == [extra]
+
+
+def test_picks_of_deleted_atoms_are_dropped():
+    controller = _controller()
+    ids = _chain(controller)
+    _click_atom(controller, ids[0])
+    _click_atom(controller, ids[1])
+    x, y, _ = controller.screen_positions()[ids[1]]
+
+    _right_click(controller, x, y)
+
+    assert controller.valid_picks() == [ids[0]]
+    assert controller.current_measurement() is None
+
+
+# ------------------------------------------------------------------
+# Editing a parameter
+# ------------------------------------------------------------------
+def _pick(controller, ids):
+    controller.picked_atoms = list(ids)
+
+
+def test_a_bond_length_is_set_to_the_typed_value(tmp_path):
+    controller = _controller()
+    ids = _chain(controller)
+    _pick(controller, ids[1:3])
+
+    applied, message = controller.apply_parameter_edit("1.6000")
+
+    assert applied and "set to 1.6000 Å" in message
+    assert controller.current_measurement()[1] == pytest.approx(1.6, abs=1e-9)
+    controller.undo()
+    assert controller.current_measurement()[1] == pytest.approx(
+        np.linalg.norm(np.subtract([2.03, 1.43, 0], [1.52, 0, 0])), abs=1e-9)
+
+
+@pytest.mark.parametrize("picks, value", [((0, 1, 2), 100.0), ((0, 1, 2, 3), -65.0)])
+def test_angles_and_dihedrals_are_set_and_other_bonds_keep_their_length(picks, value):
+    controller = _controller()
+    ids = _chain(controller)
+    _pick(controller, [ids[k] for k in picks])
+    lengths = [measure("distance", controller._angstrom_positions(), pair) for pair in ((0, 1), (1, 2), (2, 3))]
+
+    applied, _ = controller.apply_parameter_edit(str(value))
+
+    assert applied
+    assert controller.current_measurement()[1] == pytest.approx(value, abs=1e-6)
+    after = [measure("distance", controller._angstrom_positions(), pair) for pair in ((0, 1), (1, 2), (2, 3))]
+    assert np.allclose(after, lengths)
+
+
+def test_the_edit_dialog_information_names_atoms_value_and_unit():
+    controller = _controller()
+    ids = _chain(controller)
+    _pick(controller, ids[:3])
+
+    info = controller.parameter_edit_info()
+
+    assert info["label"] == "Bond angle" and info["atoms"] == "1-2-3 (C-C-C)"
+    assert info["unit"] == "°" and info["frozen"] is False
+
+
+@pytest.mark.parametrize("text, message", [("abc", "not a number"), ("0.05", "between 0.3")])
+def test_a_bad_value_is_refused_and_nothing_moves(text, message):
+    controller = _controller()
+    ids = _chain(controller)
+    _pick(controller, ids[:2])
+    before = controller.sketch.positions()
+
+    applied, reply = controller.apply_parameter_edit(text)
+
+    assert not applied and message in reply
+    assert np.array_equal(controller.sketch.positions(), before)
+
+
+def test_a_ring_bond_cannot_be_edited():
+    controller = _controller()
+    controller.import_structure(Path(__file__).parent / "data" / "fchk" / "inputs" / "benzene_631gd.gjf")
+    carbons = [a.atom_id for a in controller.sketch.atoms if a.element == "C"][:2]
+    _pick(controller, carbons)
+
+    with pytest.raises(ValueError, match="part of a ring"):
+        controller.parameter_edit_info()
+    assert controller.apply_parameter_edit("1.5")[0] is False
+
+
+def test_an_edit_that_would_change_a_frozen_parameter_is_refused():
+    controller = _controller()
+    ids = _chain(controller)
+    controller.sketch.set_constraint([ids[0], ids[3]], 3.9)  # end-to-end distance
+    _pick(controller, ids)
+
+    applied, message = controller.apply_parameter_edit("180")
+
+    assert not applied and "would change frozen parameters" in message
+
+
+def test_editing_with_freeze_freezes_the_new_value():
+    controller = _controller()
+    ids = _chain(controller)
+    _pick(controller, ids[:2])
+
+    applied, _ = controller.apply_parameter_edit("1.45", freeze=True)
+
+    assert applied
+    assert controller.sketch.find_constraint(ids[:2]).value == pytest.approx(1.45)
+    assert "frozen at 1.4500" in controller.measurement_text()
+
+
+def test_editing_needs_two_to_four_picks():
+    controller = _controller()
+    _chain(controller)
+    applied, message = controller.apply_parameter_edit("1.5")
+    assert not applied and "Click 2 atoms" in message
+
+
+# ------------------------------------------------------------------
+# Frozen parameters and constrained pre-optimization
+# ------------------------------------------------------------------
+def test_freezing_keeps_the_current_value_and_the_optimized_geometry():
+    controller = _controller()
+    ids = _chain(controller)
+    controller.last_result = _successful_result()
+    _pick(controller, ids)
+
+    frozen, message = controller.freeze_picked()
+
+    assert frozen and "Frozen: dihedral angle 1-2-3-4" in message
+    kind, atoms, value = controller.constraint_rows()[0]
+    assert (kind, atoms) == ("Dihedral", "1-2-3-4") and value.endswith("°")
+    assert controller.last_result is not None  # nothing moved
+
+
+def test_a_linear_angle_cannot_be_frozen():
+    controller = _controller()
+    controller.import_structure(_write_line())
+    _pick(controller, controller.sketch.ordered_atom_ids())
+
+    frozen, message = controller.freeze_picked()
+
+    assert not frozen and "linear angle cannot be held" in message
+    assert controller.sketch.constraints == []
+
+
+def _write_line():
+    import tempfile
+    path = Path(tempfile.mkdtemp()) / "co2.xyz"
+    path.write_text("3\n\nO -1.16 0 0\nC 0 0 0\nO 1.16 0 0\n", encoding="utf-8")
+    return path
+
+
+def test_constraints_can_be_listed_and_removed():
+    controller = _controller()
+    ids = _chain(controller)
+    for picks in (ids[:2], ids[:3], ids):
+        _pick(controller, picks)
+        controller.freeze_picked()
+    assert [row[0] for row in controller.constraint_rows()] == ["Length", "Angle", "Dihedral"]
+
+    assert controller.remove_constraint_at(1)
+    assert len(controller.sketch.constraints) == 2
+    assert not controller.remove_constraint_at(5)
+    controller.remove_all_constraints()
+    assert controller.sketch.constraints == []
+    controller.undo()
+    assert len(controller.sketch.constraints) == 2
+
+
+def test_pre_optimizing_holds_the_frozen_parameters():
+    controller = _controller()
+    ids = _chain(controller)
+    _pick(controller, ids)
+    controller.apply_parameter_edit("75", freeze=True)
+    _pick(controller, ids[:2])
+    controller.apply_parameter_edit("1.65", freeze=True)
+
+    asyncio.run(controller.pre_optimize(None))
+
+    assert controller.last_result.constraint_count == 2
+    _pick(controller, ids)
+    assert controller.current_measurement()[1] == pytest.approx(75.0, abs=1e-6)
+    _pick(controller, ids[:2])
+    assert controller.current_measurement()[1] == pytest.approx(1.65, abs=1e-8)
+    assert "Frozen parameters held: 2" in controller.describe_result(controller.last_result)
+
+
+def test_an_unsupported_constraint_is_reported_by_pre_optimize():
+    viewer = _StubViewer()
+    viewer.main_window = _StubDialogWindow()
+    controller = _controller(viewer=viewer)
+    ids = _chain(controller)
+    controller.sketch.set_constraint(ids[:3], 180.0)
+
+    asyncio.run(controller.pre_optimize(None))
+
+    assert controller.last_result is None
+    dialog = viewer.main_window.dialogs[-1]
+    assert type(dialog).__name__ == "ErrorDialog"
+
+
+# ------------------------------------------------------------------
+# Hydrogens
+# ------------------------------------------------------------------
+def test_hydrogens_complete_the_valences_in_one_undo_step():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    added, message, issues = controller.add_hydrogens()
+
+    assert added and "Added 6 hydrogens" in message and issues == []
+    assert sum(atom.element == "H" for atom in controller.sketch.atoms) == 6
+    assert controller.add_hydrogens()[0] is False  # nothing more to add
+    controller.undo()
+    assert controller.sketch.atom_count == 2
+
+
+def test_hydrogens_go_to_the_selected_molecule_only():
+    controller = _controller()
+    ids = _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+
+    added, message, _ = controller.add_hydrogens()
+
+    assert added and "to the selected molecule" in message
+    new_h = controller.sketch.ordered_atom_ids()[4:]
+    assert len(new_h) == 1
+    assert controller.sketch.neighbours(new_h[0]) == [ids[2]]
+    assert new_h[0] in controller.selected_atoms
+
+
+def test_ambiguous_atoms_are_reported_in_a_dialog():
+    viewer = _StubViewer()
+    viewer.main_window = _StubDialogWindow()
+    controller = _controller(viewer=viewer)
+    controller.select_element("N")
+    _click(controller, 100.0, 100.0)
+    for x, y in ((100.0, 40.0), (160.0, 100.0), (100.0, 160.0), (40.0, 100.0)):
+        controller.select_element("C")
+        _drag(controller, 100.0, 100.0, x, y)
+
+    asyncio.run(controller.add_hydrogens_button(None))
+
+    dialog = viewer.main_window.dialogs[-1]
+    assert type(dialog).__name__ == "InfoDialog"
+    assert controller.sketch.atom_count == 5 + 12  # the carbons completed, N left alone
+
+
+# ------------------------------------------------------------------
+# Background colour
+# ------------------------------------------------------------------
+def test_the_background_accepts_presets_and_hex_and_refuses_the_rest():
+    controller = _controller()
+    controller.test_view.on_background_changed = lambda color: setattr(controller.test_view, "bg", color)
+
+    assert controller.set_canvas_background("Black") == "#000000"
+    assert controller.test_view.bg == "#000000"
+    assert controller.set_canvas_background("A0B1C2") == "#a0b1c2"
+    with pytest.raises(ValueError, match="not a colour"):
+        controller.set_canvas_background("mauve")
+    assert controller.canvas_background == "#a0b1c2"
+    assert controller.undo_stack == []  # a view setting, not an edit
+
+
+def test_dark_backgrounds_get_light_bonds():
+    assert molecularDesign.canvas_palette("#000000")["bond"] != molecularDesign.BOND_COLOR
+    assert molecularDesign.canvas_palette("#ffffff")["bond"] == molecularDesign.BOND_COLOR
+
+
+def test_reading_the_keyboard_never_fails():
+    assert molecularDesign.read_keyboard_modifiers() <= {"shift", "ctrl"}
+
+
+# ------------------------------------------------------------------
+# Bringing a molecule back from the 3D viewer
+# ------------------------------------------------------------------
+class _ViewerWithFrame(_StubViewer):
+    def __init__(self, frame, bonds):
+        super().__init__()
+        self.frame, self.bonds = frame, bonds
+
+    def current_frame_with_bonds(self):
+        return list(self.frame), list(self.bonds)
+
+    def load_designed_molecule(self, frame, bonds=None):
+        super().load_designed_molecule(frame, bonds)
+        self.frame, self.bonds = frame, bonds
+
+
+WATER_FRAME = [("O", (0.0, 0.0, 0.117)), ("H", (0.0, 0.757, -0.469)), ("H", (0.0, -0.757, -0.469))]
+
+
+def test_the_viewer_molecule_comes_back_with_its_bonds():
+    controller = _controller(viewer=_ViewerWithFrame(WATER_FRAME, [(0, 1), (0, 2)]))
+
+    loaded, message, notes = controller.bring_from_viewer()
+
+    assert loaded and "Loaded 3 atoms and 2 bonds from the 3D viewer" in message
+    assert [atom.element for atom in controller.sketch.atoms] == ["O", "H", "H"]
+    assert controller.sketch.bond_index_pairs() == [(0, 1), (0, 2)]
+    exported = parse_structure_text(controller.frame_xyz_text(), "XYZ").coordinates
+    original = np.array([xyz for _, xyz in WATER_FRAME])
+    assert np.allclose(exported, original - original.mean(axis=0))
+    assert "no bond orders" in notes[0]
+
+
+def test_bond_orders_survive_a_round_trip_through_the_viewer():
+    viewer = _ViewerWithFrame([], [])
+    controller = _controller(viewer=viewer)
+    bond = _two_bonded_carbons(controller)
+    controller._cycle_bond(bond)                       # double
+    asyncio.run(controller.pre_optimize(None))
+    assert controller.transfer_to_viewer()[0]
+    controller.clear_canvas()
+
+    loaded, _, notes = controller.bring_from_viewer()
+
+    assert loaded and controller.sketch.bonds[0].order == 2.0
+    assert "restored" in notes[0]
+
+
+def test_adding_beside_keeps_the_drawing_and_does_not_overlap():
+    controller = _controller(viewer=_ViewerWithFrame(WATER_FRAME, [(0, 1), (0, 2)]))
+    _two_bonded_carbons(controller)
+    before = controller.sketch.positions()
+
+    loaded, message, _ = controller.bring_from_viewer("add")
+
+    after = controller.sketch.positions()
+    assert loaded and message.startswith("Added 3 atoms")
+    assert np.array_equal(after[:2], before)
+    assert after[2:, 0].min() > before[:, 0].max()
+    screen = controller.camera.project(after)
+    assert screen[:, 0].min() >= 0.0 and screen[:, 0].max() <= molecularDesign.CANVAS_WIDTH
+
+
+class _AnsweringWindow(_StubDialogWindow):
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+
+    async def dialog(self, dialog):
+        self.dialogs.append(dialog)
+        return self.answer if type(dialog).__name__ == "QuestionDialog" else None
+
+
+@pytest.mark.parametrize("answer, atoms", [(False, 2), (True, 5)])
+def test_a_drawing_is_never_overwritten_by_the_viewer_molecule(answer, atoms, monkeypatch):
+    viewer = _ViewerWithFrame(WATER_FRAME, [(0, 1), (0, 2)])
+    viewer.main_window = _AnsweringWindow(answer)
+    controller = _controller(viewer=viewer)
+    monkeypatch.setattr(controller, "open_design_canvas", lambda widget=None: None)
+    _two_bonded_carbons(controller)
+
+    asyncio.run(controller.import_from_viewer(None))
+
+    assert type(viewer.main_window.dialogs[0]).__name__ == "QuestionDialog"
+    assert controller.sketch.atom_count == atoms
+
+
+def test_an_empty_canvas_takes_the_viewer_molecule_without_asking(monkeypatch):
+    viewer = _ViewerWithFrame(WATER_FRAME, [(0, 1), (0, 2)])
+    viewer.main_window = _AnsweringWindow(False)
+    controller = _controller(viewer=viewer)
+    monkeypatch.setattr(controller, "open_design_canvas", lambda widget=None: None)
+
+    assert asyncio.run(controller.import_from_viewer(None)) is True
+    assert [type(d).__name__ for d in viewer.main_window.dialogs] == ["InfoDialog"]
+
+
+# ------------------------------------------------------------------
+# Drawing the overlays (recording context, no window)
+# ------------------------------------------------------------------
+class _RecordingContext:
+    def __init__(self):
+        self.calls = []
+
+    def clear(self):
+        self.calls.append(("clear",))
+
+    def _record(self, name, kwargs):
+        context = self
+
+        class _Path:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def __getattr__(self_inner, method):
+                return lambda *args, **kw: context.calls.append((name, method, kwargs.get("color"), args))
+        return _Path()
+
+    def Fill(self, **kwargs):
+        return self._record("fill", kwargs)
+
+    def Stroke(self, **kwargs):
+        return self._record("stroke", kwargs)
+
+
+def test_the_canvas_draws_background_selection_picks_and_measurement():
+    controller = _controller()
+    ids = _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    _pick(controller, ids[:2])
+    controller.set_canvas_background("Black")
+    window = molecularDesign.DesignCanvasWindow.__new__(molecularDesign.DesignCanvasWindow)
+    window.controller = controller
+    window.canvas = type("Canvas", (), {"context": _RecordingContext()})()
+
+    window._draw_sketch()
+
+    calls = window.canvas.context.calls
+    assert calls[1] == ("fill", "rect", "#000000", (0, 0, 560, 420))
+    assert any(call[2] == molecularDesign.PICK_COLOR and call[1] == "write_text" and call[3][0] == "#2"
+               for call in calls if len(call) > 2)
+    texts = [call[3][0] for call in calls if len(call) > 2 and call[1] == "write_text"]
+    assert any(text.startswith("Bond length 1-2 (C-C)") for text in texts)
+    halo = molecularDesign.blend_color(molecularDesign.SELECTION_COLOR, "#000000", 0.45)
+    assert sum(1 for call in calls if len(call) > 2 and call[2] == halo) == 2
+
+
+# ------------------------------------------------------------------
+# Responsiveness: what a drag event costs
+# ------------------------------------------------------------------
+def test_the_frame_primitives_render_to_a_bitmap():
+    """The fast path paints exactly these primitives; they must all render."""
+    from molecularCanvasRender import render_scene
+
+    controller = _controller()
+    ids = _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    _pick(controller, ids[:3])
+    window = molecularDesign.DesignCanvasWindow.__new__(molecularDesign.DesignCanvasWindow)
+    window.controller = controller
+
+    primitives = window.scene_primitives()
+
+    kinds = {primitive[0] for primitive in primitives}
+    assert {"rect", "disc", "line", "ring", "polyline", "text"} <= kinds
+    assert render_scene(primitives, (700, 525), 1.25).size == (700, 525)
+
+
+def test_a_ctrl_drag_follows_the_pointer_from_the_first_pixel():
+    controller = _controller()
+    _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    before = controller.sketch.positions()
+    controller.held = frozenset({"ctrl"})
+
+    controller.on_canvas_press(None, 120.0, 300.0)
+    controller.on_canvas_drag(None, 122.0, 301.0)  # inside the click threshold
+
+    assert np.allclose(controller.sketch.positions()[2:], before[2:] + [2.0, 1.0, 0.0])
+    controller.on_canvas_release(None, 122.0, 301.0)
+
+
+def test_a_ctrl_right_drag_turns_from_the_first_pixel():
+    controller = _controller()
+    _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    before = controller.sketch.positions()
+    controller.held = frozenset({"ctrl"})
+
+    controller.on_canvas_alt_press(None, 300.0, 300.0)
+    controller.on_canvas_alt_drag(None, 302.0, 300.0)
+
+    assert not np.allclose(controller.sketch.positions()[2:], before[2:])
+    controller.on_canvas_alt_release(None, 302.0, 300.0)
+
+
+def test_plain_drags_keep_the_click_threshold():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    anchor = controller.camera.anchor.copy()
+
+    controller.on_canvas_press(None, 300.0, 300.0)
+    controller.on_canvas_drag(None, 302.0, 301.0)
+    assert np.array_equal(controller.camera.anchor, anchor)  # no pan yet: could still be a click
+    controller.on_canvas_release(None, 302.0, 301.0)
+
+
+class _StubCanvas:
+    def __init__(self):
+        self.context = _RecordingContext()
+        self.redraws = 0
+
+    def redraw(self):
+        self.redraws += 1
+
+
+def _headless_window(controller):
+    window = molecularDesign.DesignCanvasWindow.__new__(molecularDesign.DesignCanvasWindow)
+    window.controller = controller
+    window.canvas = _StubCanvas()
+    window._bitmap_painting = True  # no native control here: falls back to Toga drawing
+    window._bitmap_active = False
+    window.element_label = type("Label", (), {"text": ""})()
+    window.status_label = type("Label", (), {"text": ""})()
+    window.panel_refreshes = 0
+    window._refresh_panel = lambda: setattr(window, "panel_refreshes", window.panel_refreshes + 1)
+    return window
+
+
+def test_the_side_panel_waits_for_the_end_of_a_drag():
+    controller = _controller()
+    _two_molecules(controller)
+    _shift_click(controller, 100.0, 300.0)
+    window = _headless_window(controller)
+    controller.register_view(window)  # registering paints once: start counting after it
+    window.panel_refreshes = 0
+    window.canvas.redraws = 0
+    controller.held = frozenset({"ctrl"})
+
+    controller.on_canvas_press(None, 120.0, 300.0)
+    for step in range(1, 11):
+        controller.on_canvas_drag(None, 120.0 + 3.0 * step, 300.0)
+    assert window.canvas.redraws == 10       # every move is painted...
+    assert window.panel_refreshes == 0       # ...but the panel is left alone
+    controller.on_canvas_release(None, 150.0, 300.0)
+    assert window.panel_refreshes >= 1
+    assert not controller.gesture_active
+
+
+def test_without_a_native_control_the_toga_canvas_draws():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    window = _headless_window(controller)
+
+    window.on_sketch_changed()
+
+    assert window._bitmap_painting is False  # tried once, then gave up for good
+    assert window.canvas.context.calls[0] == ("clear",)
+    assert window.canvas.redraws == 1
+
+
+# ------------------------------------------------------------------
+# Replacing an atom's element
+# ------------------------------------------------------------------
+def test_in_replace_mode_a_click_replaces_the_atom_in_place():
+    controller = _controller()
+    bond = _two_bonded_carbons(controller)
+    first, second = controller.sketch.ordered_atom_ids()
+    controller._cycle_bond(bond)                         # double
+    controller.sketch.set_constraint([first, second], 1.34)
+    controller.picked_atoms = [first, second]
+    controller.selected_atoms = {first, second}
+    before = controller.sketch.positions()
+    undo_depth = len(controller.undo_stack)
+
+    controller.set_replace_mode(True)
+    controller.select_element("N")
+    _click(controller, 100.0, 100.0)
+
+    assert controller.sketch.get_atom(first).element == "N"
+    assert controller.sketch.ordered_atom_ids() == [first, second]
+    assert np.array_equal(controller.sketch.positions(), before)
+    assert controller.sketch.bonds[0].order == 2.0
+    assert controller.picked_atoms == [first, second] and controller.selected_atoms == {first, second}
+    assert controller.sketch.constraints[0].atom_ids == (first, second)
+    assert len(controller.undo_stack) == undo_depth + 1
+    assert "C -> N" in controller.status_message
+    controller.undo()
+    assert controller.sketch.get_atom(first).element == "C"
+
+
+def test_replace_mode_off_a_click_still_picks():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.select_element("N")
+
+    _click(controller, 100.0, 100.0)
+
+    assert controller.sketch.atoms[0].element == "C"
+    assert controller.picked_atoms == [controller.sketch.ordered_atom_ids()[0]]
+
+
+def test_in_replace_mode_drawing_still_works():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.set_replace_mode(True)
+    controller.select_element("O")
+
+    _drag(controller, 200.0, 100.0, 260.0, 160.0)   # grow a bonded atom
+    _click(controller, 400.0, 300.0)               # place one
+
+    assert [atom.element for atom in controller.sketch.atoms] == ["C", "C", "O", "O"]
+    assert controller.sketch.bond_count == 2
+
+
+def test_replacing_with_the_same_element_changes_nothing():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.set_replace_mode(True)
+    undo_depth = len(controller.undo_stack)
+
+    replaced, message = controller.replace_atom(controller.sketch.ordered_atom_ids()[0])
+
+    assert not replaced and "already C" in message
+    assert len(controller.undo_stack) == undo_depth
+
+
+@pytest.mark.parametrize("element, order, phrase", [
+    ("H", 2.0, "double bond to atom 2 is above the single bond H usually forms"),
+    ("F", 1.0, None),
+    ("Og", 1.0, "no covalent radius"),
+    ("He", 1.0, "He now has 1 bond where 0 is typical"),
+])
+def test_unusual_replacements_are_reported_and_bonds_kept(element, order, phrase):
+    controller = _controller()
+    bond = _two_bonded_carbons(controller)
+    bond.order = order
+    controller.set_replace_mode(True)
+    controller.select_element(element)
+
+    replaced, message = controller.replace_atom(controller.sketch.ordered_atom_ids()[0])
+
+    assert replaced and controller.sketch.bonds[0].order == order
+    if phrase:
+        assert phrase in message
+    else:
+        assert "Note:" not in message
+
+
+def test_an_over_valent_replacement_is_reported():
+    controller = _controller()
+    controller.select_element("C")
+    _click(controller, 200.0, 200.0)
+    for x, y in ((200.0, 140.0), (260.0, 200.0), (200.0, 260.0)):
+        _drag(controller, 200.0, 200.0, x, y)
+    controller.set_replace_mode(True)
+    controller.select_element("O")
+
+    _, message = controller.replace_atom(controller.sketch.ordered_atom_ids()[0])
+
+    assert "O now has 3 bonds where 2 is typical" in message
+
+
+def test_selecting_an_element_in_replace_mode_says_what_a_click_does():
+    controller = _controller()
+    controller.set_replace_mode(True)
+    controller.select_element("Cl")
+    assert "replace it with Cl" in controller.status_message
+
+
+# ------------------------------------------------------------------
+# Atom numbers
+# ------------------------------------------------------------------
+def _numbered_window(controller):
+    window = _headless_window(controller)
+    controller.register_view(window)
+    return window
+
+
+def test_atom_numbers_are_drawn_only_when_switched_on():
+    controller = _controller()
+    _chain(controller)
+    window = _numbered_window(controller)
+
+    assert not [p for p in window.scene_primitives() if p[0] == "label"]
+    undo_depth = len(controller.undo_stack)
+    controller.set_show_atom_numbers(True)
+    labels = [p for p in window.scene_primitives() if p[0] == "label"]
+    assert [label[3] for label in labels] == ["1", "2", "3", "4"]
+    assert len(controller.undo_stack) == undo_depth  # a view setting, not an edit
+    assert "Atom numbers shown" in controller.status_message
+
+
+def test_numbers_follow_the_sketch_numbering_after_a_deletion():
+    controller = _controller()
+    ids = _chain(controller)
+    controller.set_show_atom_numbers(True)
+    window = _numbered_window(controller)
+    x, y, _ = controller.screen_positions()[ids[0]]
+    _right_click(controller, x, y)
+
+    labels = [p for p in window.scene_primitives() if p[0] == "label"]
+    assert [label[3] for label in labels] == ["1", "2", "3"]
+
+
+def test_numbers_are_laid_out_once_per_gesture(monkeypatch):
+    controller = _controller()
+    _two_molecules(controller)
+    controller.set_show_atom_numbers(True)
+    _shift_click(controller, 100.0, 300.0)
+    window = _numbered_window(controller)
+    calls = []
+    original = molecularDesign.place_atom_labels
+    monkeypatch.setattr(molecularDesign, "place_atom_labels",
+                        lambda *args, **kwargs: calls.append(1) or original(*args, **kwargs))
+    window.scene_primitives()  # a settled frame lays the numbers out
+    calls.clear()
+
+    controller.held = frozenset({"ctrl"})
+    controller.on_canvas_press(None, 120.0, 300.0)
+    for step in range(1, 6):
+        controller.on_canvas_drag(None, 120.0 + 5.0 * step, 300.0)
+    assert calls == []                      # offsets reused while dragging
+    labels = [p for p in window.scene_primitives() if p[0] == "label"]
+    atoms = controller.screen_positions()
+    o_id = controller.sketch.ordered_atom_ids()[2]
+    assert labels[2][1] - atoms[o_id][0] == pytest.approx(window._label_offsets[1][2][0])
+    controller.on_canvas_release(None, 145.0, 300.0)
+    assert calls                            # laid out again once it ends
+
+
+def test_the_window_switches_follow_the_controller():
+    controller = _controller()
+    window = _headless_window(controller)
+    window.replace_switch = type("Switch", (), {"text": "", "value": False})()
+    controller.register_view(window)
+
+    controller.select_element("Br")
+    controller.set_replace_mode(True)
+
+    assert window.replace_switch.text == "Click an atom to replace it with Br"
+    assert window.replace_switch.value is True
+
+
+def test_labels_are_only_assigned_a_new_text():
+    class _Label:
+        assignments = 0
+
+        def __init__(self):
+            self._text = "same"
+
+        @property
+        def text(self):
+            return self._text
+
+        @text.setter
+        def text(self, value):
+            self.assignments += 1
+            self._text = value
+
+    label = _Label()
+    molecularDesign._set_label_text(label, "same")
+    assert label.assignments == 0
+    molecularDesign._set_label_text(label, "new")
+    assert label.assignments == 1

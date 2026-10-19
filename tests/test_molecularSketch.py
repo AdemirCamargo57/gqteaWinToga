@@ -768,3 +768,86 @@ def test_a_refused_structure_leaves_the_drawing_untouched(elements, positions, b
         sketch.replace_contents(elements, positions, bonds)
 
     assert sketch.snapshot() == before
+
+
+def test_add_structure_keeps_the_existing_drawing():
+    sketch = _water()
+    new_ids = sketch.add_structure(["C", "O"], [[300.0, 0.0, 0.0], [348.0, 0.0, 0.0]], [(0, 1, 2.0)])
+
+    assert sketch.atom_count == 5 and sketch.bond_count == 3
+    assert sketch.find_bond(*new_ids).order == 2.0
+
+
+# ------------------------------------------------------------------
+# Frozen parameters
+# ------------------------------------------------------------------
+def test_a_parameter_is_the_same_read_backwards():
+    sketch = _water()
+    o, h1, h2 = sketch.ordered_atom_ids()
+    sketch.set_constraint([h1, o, h2], 104.5)
+
+    assert sketch.find_constraint([h2, o, h1]).value == 104.5
+    sketch.set_constraint([h2, o, h1], 100.0)  # replaces, never duplicates
+    assert len(sketch.constraints) == 1 and sketch.constraints[0].value == 100.0
+    assert sketch.constraints[0].kind == "angle"
+
+
+@pytest.mark.parametrize("atoms, message", [
+    ([1], "2, 3 or 4 atoms"), ([1, 1], "same atom twice"), ([1, 99], "Unknown atom id"),
+])
+def test_bad_constraints_are_refused(atoms, message):
+    with pytest.raises(ValueError, match=message):
+        _water().set_constraint(atoms, 1.0)
+
+
+def test_deleting_an_atom_removes_its_constraints():
+    sketch = _water()
+    o, h1, h2 = sketch.ordered_atom_ids()
+    sketch.set_constraint([o, h1], 0.96)
+    sketch.set_constraint([o, h2], 0.96)
+
+    sketch.remove_atom(h1)
+
+    assert [c.atom_ids for c in sketch.constraints] == [(o, h2)]
+
+
+def test_undo_snapshots_and_copies_carry_constraints():
+    sketch = _water()
+    o, h1, _ = sketch.ordered_atom_ids()
+    state = sketch.snapshot()
+    sketch.set_constraint([o, h1], 0.96)
+
+    assert sketch.copy().constraints == sketch.constraints
+    sketch.restore(state)
+    assert sketch.constraints == []
+
+
+def test_replacing_an_element_keeps_id_position_bonds_and_constraints():
+    sketch = _water()
+    o, h1, h2 = sketch.ordered_atom_ids()
+    sketch.find_bond(o, h1).order = 2.0
+    sketch.set_constraint([h1, o, h2], 104.5)
+    before_positions = sketch.positions()
+
+    previous = sketch.replace_element(o, "s")
+
+    assert previous == "O"
+    assert sketch.get_atom(o).element == "S"
+    assert sketch.ordered_atom_ids() == [o, h1, h2]
+    assert (sketch.positions() == before_positions).all()
+    assert sketch.find_bond(o, h1).order == 2.0 and sketch.find_bond(o, h2) is not None
+    assert sketch.constraints[0].atom_ids == (h1, o, h2)
+
+
+def test_replacing_an_unknown_atom_is_refused():
+    with pytest.raises(ValueError, match="Unknown atom id"):
+        _water().replace_element(99, "C")
+
+
+def test_the_selected_molecule_is_its_connected_fragment():
+    sketch = _water()
+    sketch.add_structure(["C"], [[400.0, 0.0, 0.0]])
+    o = sketch.ordered_atom_ids()[0]
+
+    assert sorted(sketch.fragment_containing(o)) == sorted(sketch.ordered_atom_ids()[:3])
+    assert sketch.describe_parameter(sketch.ordered_atom_ids()[:2]) == "1-2 (O-H)"

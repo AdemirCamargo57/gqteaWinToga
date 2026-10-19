@@ -984,3 +984,29 @@ def test_lossy_or_unknown_image_format_is_refused(tmp_path):
     for name in ("view.jpg", "view.xyz"):
         with pytest.raises(ValueError, match="PNG"):
             save_canvas_image(np.zeros((2, 2, 3), np.uint8), str(tmp_path / name))
+
+
+# ----------------------------------------------------------------------
+# Handing the displayed molecule back to the design canvas
+# ----------------------------------------------------------------------
+def test_the_current_frame_comes_with_its_drawn_bonds():
+    viewer = MolecularViewer()
+    viewer.load_designed_molecule(
+        [("O", (0.0, 0.0, 0.117)), ("H", (0.0, 0.757, -0.469)), ("H", (0.0, -0.757, -0.469))]
+    )
+
+    frame, bonds = viewer.current_frame_with_bonds()
+
+    assert [element for element, _ in frame] == ["O", "H", "H"]
+    assert bonds == [(0, 1), (0, 2)]
+
+
+def test_a_molecule_without_frames_gets_bonds_too():
+    viewer = MolecularViewer()
+    viewer.frames = []
+    viewer.molecule_data = [("C", (0.0, 0.0, 0.0)), ("C", (1.54, 0.0, 0.0)), ("C", (9.0, 0.0, 0.0))]
+
+    frame, bonds = viewer.current_frame_with_bonds()
+
+    assert len(frame) == 3 and bonds == [(0, 1)]
+    assert viewer.frames == []  # the temporary frame is not left behind

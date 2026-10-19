@@ -105,6 +105,29 @@ class SketchBond:
         return {self.atom_i, self.atom_j} == {atom_i, atom_j}
 
 
+# Frozen-parameter kinds, keyed by how many atoms define them.
+CONSTRAINT_KINDS = {2: "distance", 3: "angle", 4: "dihedral"}
+
+
+@dataclass
+class SketchConstraint:
+    """A bond length, angle or dihedral frozen during pre-optimization.
+
+    ``atom_ids`` are stable sketch ids in pick order; ``value`` is in Angstrom
+    for a distance and degrees for the angles -- physical units, because the
+    sketch's own pixel scale is not the molecule's.
+    """
+
+    kind: str
+    atom_ids: Tuple[int, ...]
+    value: float
+
+    def same_parameter(self, atom_ids: Sequence[int]) -> bool:
+        """True for the same atoms in the same or exactly reversed order."""
+        ids = tuple(atom_ids)
+        return ids in (self.atom_ids, tuple(reversed(self.atom_ids)))
+
+
 def normalise_element(symbol: str) -> str:
     """Return ``symbol`` in standard capitalisation ("cL" -> "Cl").
 
@@ -150,6 +173,7 @@ class MoleculeSketch:
     def __init__(self):
         self._atoms: Dict[int, SketchAtom] = {}
         self._bonds: List[SketchBond] = []
+        self._constraints: List[SketchConstraint] = []
         self._next_atom_id = 1
 
     # ------------------------------------------------------------------
@@ -250,12 +274,27 @@ class MoleculeSketch:
         self._next_atom_id += 1
         return atom
 
+    def replace_element(self, atom_id: int, element: str) -> str:
+        """Change an atom's element in place; returns the old element.
+
+        The atom keeps its id, position, bonds (orders included) and frozen
+        parameters -- only what it *is* changes, so picks, the selection and
+        constraints that name it stay valid. Whether the result is chemically
+        usual is :meth:`validate`'s business, as for any drawn atom.
+        """
+        atom = self.get_atom(atom_id)
+        previous = atom.element
+        atom.element = normalise_element(element)
+        return previous
+
     def remove_atom(self, atom_id: int) -> bool:
-        """Remove an atom and every bond touching it. False if it is unknown."""
+        """Remove an atom, every bond touching it and every frozen parameter
+        that names it. False if it is unknown."""
         if atom_id not in self._atoms:
             return False
         del self._atoms[atom_id]
         self._bonds = [bond for bond in self._bonds if not bond.connects(atom_id)]
+        self._constraints = [c for c in self._constraints if atom_id not in c.atom_ids]
         return True
 
     def add_bond(self, atom_i: int, atom_j: int, order: int = SINGLE_BOND) -> Optional[SketchBond]:
@@ -298,6 +337,7 @@ class MoleculeSketch:
     def clear(self):
         self._atoms.clear()
         self._bonds.clear()
+        self._constraints.clear()
 
     def replace_contents(
         self,
@@ -313,6 +353,32 @@ class MoleculeSketch:
         touched, so a bad structure leaves the sketch exactly as it was. New
         atoms get fresh ids -- ids are never reused, even across a reload.
         """
+        checked = self._checked_structure(elements, positions, bonds)
+        self.clear()
+        self._append_structure(*checked)
+
+    def add_structure(
+        self,
+        elements: Sequence[str],
+        positions: Sequence[Sequence[float]],
+        bonds: Sequence[Tuple[int, int, float]] = (),
+    ) -> List[int]:
+        """Add a structure beside what is already drawn; returns the new atom ids.
+
+        Same arguments and the same all-or-nothing checks as
+        :meth:`replace_contents`; bonds index the *new* atoms only.
+        """
+        return self._append_structure(*self._checked_structure(elements, positions, bonds))
+
+    def _append_structure(self, symbols, array, checked_bonds) -> List[int]:
+        ids = [self.add_atom(symbol, x, y, z).atom_id for symbol, (x, y, z) in zip(symbols, array)]
+        # Appended directly: the pairs are already known to be unique, and
+        # add_bond's linear duplicate search would make a large import quadratic.
+        self._bonds.extend(SketchBond(ids[i], ids[j], order) for i, j, order in checked_bonds)
+        return ids
+
+    def _checked_structure(self, elements, positions, bonds):
+        """Validate a structure for :meth:`replace_contents` / :meth:`add_structure`."""
         symbols = [normalise_element(element) for element in elements]
         array = np.asarray(positions, dtype=float)
         if array.shape != (len(symbols), 3):
@@ -345,12 +411,62 @@ class MoleculeSketch:
                 raise ValueError(f"Atoms {pair[0] + 1} and {pair[1] + 1} are bonded twice.")
             seen.add(pair)
             checked_bonds.append((i, j, order))
+        return symbols, array, checked_bonds
 
-        self.clear()
-        ids = [self.add_atom(symbol, x, y, z).atom_id for symbol, (x, y, z) in zip(symbols, array)]
-        # Appended directly: the pairs are already known to be unique, and
-        # add_bond's linear duplicate search would make a large import quadratic.
-        self._bonds = [SketchBond(ids[i], ids[j], order) for i, j, order in checked_bonds]
+    # ------------------------------------------------------------------
+    # Frozen parameters
+    # ------------------------------------------------------------------
+    @property
+    def constraints(self) -> List[SketchConstraint]:
+        return list(self._constraints)
+
+    def find_constraint(self, atom_ids: Sequence[int]) -> Optional[SketchConstraint]:
+        for constraint in self._constraints:
+            if constraint.same_parameter(atom_ids):
+                return constraint
+        return None
+
+    def set_constraint(self, atom_ids: Sequence[int], value: float) -> SketchConstraint:
+        """Freeze the parameter on these atoms at ``value`` (replacing an existing one)."""
+        ids = tuple(int(atom_id) for atom_id in atom_ids)
+        kind = CONSTRAINT_KINDS.get(len(ids))
+        if kind is None:
+            raise ValueError("A frozen parameter needs 2, 3 or 4 atoms.")
+        if len(set(ids)) != len(ids):
+            raise ValueError("A frozen parameter cannot use the same atom twice.")
+        for atom_id in ids:
+            self.get_atom(atom_id)
+        if not np.isfinite(float(value)):
+            raise ValueError("A frozen value must be a finite number.")
+        existing = self.find_constraint(ids)
+        if existing is not None:
+            self._constraints.remove(existing)
+        constraint = SketchConstraint(kind, ids, float(value))
+        self._constraints.append(constraint)
+        return constraint
+
+    def remove_constraint(self, constraint: SketchConstraint) -> bool:
+        if constraint not in self._constraints:
+            return False
+        self._constraints.remove(constraint)
+        return True
+
+    def clear_constraints(self):
+        self._constraints.clear()
+
+    def describe_parameter(self, atom_ids: Sequence[int]) -> str:
+        """'1-2 (C-O)' style label of a parameter, with 1-based atom numbers."""
+        numbers = "-".join(str(self.atom_number(atom_id)) for atom_id in atom_ids)
+        elements = "-".join(self.get_atom(atom_id).element for atom_id in atom_ids)
+        return f"{numbers} ({elements})"
+
+    def fragment_containing(self, atom_id: int) -> List[int]:
+        """The ids of the molecule (connected fragment) an atom belongs to."""
+        self.get_atom(atom_id)
+        for component in self.fragments():
+            if atom_id in component:
+                return component
+        return [atom_id]
 
     # ------------------------------------------------------------------
     # Bond order
@@ -575,19 +691,26 @@ class MoleculeSketch:
     # ------------------------------------------------------------------
     # Undo support
     # ------------------------------------------------------------------
-    def snapshot(self) -> Tuple[List[SketchAtom], List[SketchBond], int]:
-        """A deep-enough copy of the current state for :meth:`restore`."""
+    def snapshot(self) -> Tuple[List[SketchAtom], List[SketchBond], int, List[SketchConstraint]]:
+        """A deep-enough copy of the current state for :meth:`restore`.
+
+        Frozen parameters are part of it, so Undo brings them back with the
+        atoms they refer to.
+        """
         return (
             [replace(atom) for atom in self._atoms.values()],
             [replace(bond) for bond in self._bonds],
             self._next_atom_id,
+            [replace(constraint) for constraint in self._constraints],
         )
 
-    def restore(self, state: Tuple[List[SketchAtom], List[SketchBond], int]):
-        atoms, bonds, next_atom_id = state
+    def restore(self, state):
+        atoms, bonds, next_atom_id = state[:3]
+        constraints = state[3] if len(state) > 3 else []
         self._atoms = {atom.atom_id: replace(atom) for atom in atoms}
         self._bonds = [replace(bond) for bond in bonds]
         self._next_atom_id = next_atom_id
+        self._constraints = [replace(constraint) for constraint in constraints]
 
     def copy(self) -> "MoleculeSketch":
         """An independent duplicate, e.g. to optimize while the user keeps drawing."""

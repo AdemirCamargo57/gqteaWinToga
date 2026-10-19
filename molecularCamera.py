@@ -83,6 +83,14 @@ class ViewCamera:
         drag about its horizontal axis. The increment is applied in screen
         space, so the response is the same however the molecule is oriented.
         """
+        rotation = self.drag_increment(dx, dy) @ self.rotation
+        # Re-orthonormalize so thousands of small drags cannot accumulate
+        # into a shear or a scale.
+        left, _, right = np.linalg.svd(rotation)
+        self.rotation = left @ right
+
+    def drag_increment(self, dx: float, dy: float) -> np.ndarray:
+        """The screen-space rotation a drag of ``(dx, dy)`` pixels stands for."""
         about_vertical = -dx * self.ROTATION_PER_PIXEL
         about_horizontal = dy * self.ROTATION_PER_PIXEL
 
@@ -90,12 +98,19 @@ class ViewCamera:
         turn_y = np.array([[cos_y, 0.0, sin_y], [0.0, 1.0, 0.0], [-sin_y, 0.0, cos_y]])
         cos_x, sin_x = np.cos(about_horizontal), np.sin(about_horizontal)
         turn_x = np.array([[1.0, 0.0, 0.0], [0.0, cos_x, -sin_x], [0.0, sin_x, cos_x]])
+        return turn_x @ turn_y
 
-        rotation = turn_x @ turn_y @ self.rotation
-        # Re-orthonormalize so thousands of small drags cannot accumulate
-        # into a shear or a scale.
-        left, _, right = np.linalg.svd(rotation)
-        self.rotation = left @ right
+    def object_rotation(self, dx: float, dy: float) -> np.ndarray:
+        """The sketch-space rotation that turns an object the way a drag turns the view.
+
+        Applied about the object's own centre, it moves the object on screen
+        exactly as :meth:`rotate_by_drag` would move the whole picture.
+        """
+        return self.rotation.T @ self.drag_increment(dx, dy) @ self.rotation
+
+    def screen_to_sketch_delta(self, dx: float, dy: float) -> np.ndarray:
+        """The sketch displacement that moves a point ``(dx, dy)`` on screen, at constant depth."""
+        return self.rotation.T @ np.array([dx / self.zoom, dy / self.zoom, 0.0])
 
     def pan_by(self, dx: float, dy: float):
         self.anchor = self.anchor + np.array([dx, dy], dtype=float)

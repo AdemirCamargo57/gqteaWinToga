@@ -186,3 +186,31 @@ def test_the_camera_never_imports_toga():
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert output.stdout.strip() == "False"
+
+
+def test_turning_an_object_looks_like_turning_the_view():
+    """A molecule turned with object_rotation about its centre lands on screen
+    where rotating the whole view about that centre would put it."""
+    camera = ViewCamera()
+    camera.rotate_by_drag(40.0, -25.0)
+    points = np.random.default_rng(2).normal(scale=50.0, size=(5, 3))
+    centre = points.mean(axis=0)
+
+    turned = (points - centre) @ camera.object_rotation(30.0, 12.0).T + centre
+    object_screen = camera.project(turned)
+
+    camera.set_pivot(centre)
+    camera.rotate_by_drag(30.0, 12.0)
+    assert np.allclose(object_screen[:, :2], camera.project(points)[:, :2], atol=1e-9)
+
+
+def test_a_screen_delta_moves_a_point_by_that_many_pixels():
+    camera = ViewCamera()
+    camera.rotate_by_drag(70.0, 30.0)
+    camera.zoom_by(2.0, 100.0, 100.0)
+    point = np.array([[10.0, 20.0, 30.0]])
+
+    moved = point + camera.screen_to_sketch_delta(15.0, -7.0)
+
+    shift = camera.project(moved)[0] - camera.project(point)[0]
+    assert np.allclose(shift, [15.0, -7.0, 0.0])

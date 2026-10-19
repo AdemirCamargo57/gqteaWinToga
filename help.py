@@ -1568,7 +1568,11 @@ DRAWING
     atom also deletes every bond attached to it.
   . Undo steps back through the last 50 edits, including Clear.
 
-Hydrogens are never added for you: draw every atom you want in the structure.
+Hydrogens are not added while you draw. Draw them, or press 'Add hydrogens'
+(see ADDING HYDROGENS) once the heavy atoms and bond types are in place.
+
+Clicking an atom (without dragging) picks it for a measurement - see
+MEASURING.
 
 BUILDING IN 3D
 
@@ -1711,6 +1715,114 @@ The Gaussian input is a template: route '#P B3LYP/6-31G(d) Opt
 Geom=Connectivity', charge 0 and the lowest multiplicity the electron count
 allows (1 if even, 2 if odd). Check the charge, multiplicity and route before
 running it.
+
+SELECTING AND MOVING ONE MOLECULE
+
+When the canvas holds several separate molecules, one can be moved on its own:
+
+  . Shift + click an atom or a bond   select its whole molecule (orange halo)
+  . Shift + click empty space         clear the selection ('Deselect' too)
+  . Ctrl + drag                       move the selected molecule
+  . Ctrl + right-drag                 turn it about its own centre
+
+The molecule moves rigidly - its bond lengths and angles never change - and
+every other molecule stays where it is. Each drag is one Undo step. A move is
+refused (the status line says why) when nothing is selected, when the
+selection has since been bonded to another molecule, or when a frozen
+parameter links it to another molecule. Ctrl + right-click never deletes.
+
+MEASURING
+
+Click atoms in order (no drag): 2 atoms give a bond length in A, 3 a bond
+angle in degrees (the second atom is the vertex), 4 a dihedral angle in
+degrees (IUPAC sign). Picked atoms get a magenta ring and their order #1-#4;
+the value is shown on the canvas and in the Measure panel. Clicking a picked
+atom again unpicks it, a fifth atom starts a new measurement, and 'Clear'
+drops the picks. A measurement is never an edit.
+
+SETTING A VALUE
+
+'Edit value...' opens a dialog with the picked atoms, the current value and
+its unit. Type the new value and press Apply (or Enter). One side of the
+molecule moves rigidly: the second atom's side along a bond, the third atom's
+side about the vertex of an angle, the fourth atom's side about the central
+bond of a dihedral. The edit is refused, with the reason, for a value out of
+range (a length must be 0.3-20 A, an angle more than 0 and at most 180), a
+ring bond (no side can move alone), atoms that are not bonded in a chain
+(except a distance between two separate molecules, which moves the second
+molecule), a dihedral through three atoms in a line, or a change to another
+frozen parameter. Undo restores the previous geometry.
+
+FREEZING PARAMETERS
+
+'Freeze' holds the picked length, angle or dihedral at its current value
+during pre-optimization; the 'Freeze at the new value' box in the edit dialog
+does the same at the typed value. The 'Frozen parameters' list shows each one
+(kind, atoms, value); select a row and press 'Remove', or 'Remove all'. Undo
+covers freezing and removing too.
+
+Frozen parameters are held exactly at every step of the pre-optimization,
+not merely pulled towards their values; the report gives the largest
+deviation (about 1e-10). The pre-optimizer cannot hold a (nearly) linear
+angle (within 1 degree of 0 or 180) or a dihedral through three atoms in a
+line, and frozen values that contradict each other (three lengths no
+triangle has) cannot all hold: these are reported, and nothing runs, rather
+than being ignored. Deleting an atom removes the frozen parameters that use
+it.
+
+ADDING HYDROGENS
+
+'Add hydrogens' completes every atom's valence from its bonds (to the
+selected molecule only, if one is selected): C 4, N 3, O 2, halogens 1, ...
+with resonance bonds counting 1.5. Existing hydrogens count, so it never adds
+duplicates. Atoms whose state is ambiguous are listed and left unchanged:
+more bonds than the valence (likely a charge), a bond count between two
+valences of S or P, an O or N with half a bond over resonance, an aromatic N
+with two resonance bonds (pyridine-like or pyrrole N-H?), and elements with
+no valence rule (metals). New hydrogens go to the VSEPR positions at the
+reference X-H length; pre-optimize afterwards. Undo removes them.
+
+REPLACING AN ATOM'S ELEMENT
+
+Tick 'Click an atom to replace it with X' (top right of the canvas window;
+X is the element selected in the periodic table). While it is on, clicking
+an atom gives it that element. The atom keeps its position, its number, its
+bonds and their types, and any measurement or frozen parameter that uses it.
+Choose another element in the periodic table and keep clicking to replace
+more atoms. Each replacement is one Undo step. Anything unusual about the
+result is reported in the status line but left as drawn: more bonds than
+the element usually forms, a bond type it does not usually form (a double
+bond to H - click the bond to change it), or an element with no covalent
+radius (it cannot be pre-optimized). Clicking empty space still places an
+atom, and dragging still bonds and grows atoms. Untick the box to go back to
+picking atoms for measurements.
+
+ATOM NUMBERS
+
+Tick 'Atom numbers' in the View row to show each atom's number (the
+numbering used by measurements, frozen parameters and saved files) beside
+it in blue. Each number is placed next to its atom where it covers no atom,
+no bond, no other number and no measurement text, preferring the side away
+from the rest of the molecule (ring atoms are numbered outside the ring).
+The numbers are recomputed whenever the drawing or the view changes; while
+you drag, they move with their atoms and are rearranged when you release.
+This is a view setting, not an edit.
+
+BACKGROUND
+
+The 'Background' list in the Canvas panel changes the canvas colour; or type
+#rrggbb in 'Custom' and press Enter. On a dark background bonds are drawn
+light. This is a view setting, not an edit.
+
+BRINGING A MOLECULE BACK FROM THE 3D VIEWER
+
+'From 3D viewer' (File row), or 'Bring the 3D molecule to the design canvas'
+on the Design tab, copies the frame shown in the 3D viewer to the canvas:
+elements, coordinates and the bonds the viewer draws. The viewer stores no
+bond orders, so they come in as single bonds - except for a structure sent
+there from this canvas, whose bond orders are restored. If the canvas already
+holds a drawing you are asked first: Yes adds the molecule beside it, No
+changes nothing (press Clear first to replace the drawing).
 """
 
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)

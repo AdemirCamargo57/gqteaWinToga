@@ -305,6 +305,29 @@ class MolecularViewer:
                 return list(self.frames[self.current_frame])
             return list(self.molecule_data)
 
+    def current_frame_with_bonds(self) -> Tuple[Frame, List[Tuple[int, int]]]:
+        """The displayed frame and the bonds drawn for it (0-based pairs).
+
+        The seam the design canvas uses to take a molecule back for editing:
+        the same connectivity the user sees, judged by the current bond
+        settings. No bond orders -- the viewer keeps none.
+        """
+        frame = self.get_current_frame_data()
+        if self.frames:
+            self.calculate_bonds(self.current_frame)
+            with self._state_lock:
+                bonds = [(int(i), int(j)) for i, j in self.bonds]
+        else:
+            # molecule_data alone has no bond detection pass (calculate_bonds
+            # reads self.frames), so judge it the same way here.
+            with self._state_lock:
+                self.frames = [list(frame)]
+                try:
+                    bonds = self._compute_bonds_for_frame(0)
+                finally:
+                    self.frames = []
+        return frame, bonds
+
     def load_designed_molecule(self, frame_data: Frame, bonds: Optional[List[Tuple[int, int]]] = None):
         """Adopt a structure built in the Design tab as the current molecule.
 

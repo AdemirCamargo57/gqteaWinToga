@@ -11,6 +11,8 @@ producing a reasonable starting structure, not a calibrated force field.
 import numpy as np
 import pytest
 
+import molecularPreOptimizer
+from molecularGeometry import constraint_residuals, measure
 from molecularPreOptimizer import (
     PIXELS_PER_ANGSTROM,
     ForceField,
@@ -628,3 +630,79 @@ def test_optimizing_a_chiral_centre_keeps_its_handedness():
     assert np.sign(_signed_volume(result.sketch_positions, 0, 1, 2, 3)) == np.sign(
         _signed_volume(drawn, 0, 1, 2, 3)
     )
+
+
+# ----------------------------------------------------------------------
+# Frozen parameters
+# ----------------------------------------------------------------------
+def _butane_skeleton() -> MoleculeSketch:
+    sketch = MoleculeSketch()
+    ids = [sketch.add_atom("C", 100.0 + 60.0 * k, 100.0 + (25.0 if k % 2 else 0.0)).atom_id for k in range(4)]
+    for first, second in zip(ids, ids[1:]):
+        sketch.add_bond(first, second)
+    return sketch
+
+
+def test_frozen_parameters_hold_at_every_evaluated_geometry(monkeypatch):
+    sketch = _butane_skeleton()
+    ids = sketch.ordered_atom_ids()
+    sketch.set_constraint(ids, 60.0)
+    sketch.set_constraint(ids[:2], 1.60)
+    sketch.set_constraint(ids[:3], 100.0)
+    evaluated = []
+    original = molecularPreOptimizer.ForceField.energy_and_gradient
+
+    def recording(self, flat):
+        evaluated.append(np.array(flat).reshape(-1, 3))
+        return original(self, flat)
+
+    monkeypatch.setattr(molecularPreOptimizer.ForceField, "energy_and_gradient", recording)
+    result = optimize_sketch(sketch)
+
+    constraints = molecularPreOptimizer.sketch_constraints(sketch)
+    assert result.success and result.constraint_count == 3
+    assert result.constraint_deviation < 1e-8
+    assert max(np.abs(constraint_residuals(x, constraints)[0]).max() for x in evaluated) < 1e-9
+    assert measure("dihedral", result.coordinates, (0, 1, 2, 3)) == pytest.approx(60.0, abs=1e-6)
+    assert measure("distance", result.coordinates, (0, 1)) == pytest.approx(1.60, abs=1e-8)
+    assert measure("angle", result.coordinates, (0, 1, 2)) == pytest.approx(100.0, abs=1e-6)
+    # Unconstrained parts still relax: the free C-C bond goes to its reference.
+    assert measure("distance", result.coordinates, (2, 3)) == pytest.approx(
+        reference_bond_length("C", "C"), abs=1e-3)
+
+
+def test_a_constrained_run_is_also_a_minimum():
+    sketch = _butane_skeleton()
+    ids = sketch.ordered_atom_ids()
+    sketch.set_constraint(ids, 180.0)
+    result = optimize_sketch(sketch)
+    assert result.success
+    assert result.gradient_norm < 1e-3  # the tangent gradient, as for L-BFGS-B
+
+
+def test_without_frozen_parameters_the_result_is_unchanged():
+    first, second = _butane_skeleton(), _butane_skeleton()
+    ids = second.ordered_atom_ids()
+    second.set_constraint(ids[:2], 1.0)
+    second.clear_constraints()
+    assert np.array_equal(optimize_sketch(first).coordinates, optimize_sketch(second).coordinates)
+    assert optimize_sketch(first).constraint_count == 0
+
+
+def test_a_linear_frozen_angle_is_reported_as_unsupported():
+    sketch = _butane_skeleton()
+    ids = sketch.ordered_atom_ids()
+    sketch.set_constraint(ids[:3], 180.0)
+    with pytest.raises(ValueError, match="cannot be held by the pre-optimizer: angle 1-2-3"):
+        optimize_sketch(sketch)
+
+
+def test_contradictory_frozen_parameters_are_reported():
+    sketch = _butane_skeleton()
+    ids = sketch.ordered_atom_ids()
+    sketch.add_bond(ids[0], ids[2])
+    sketch.set_constraint(ids[:2], 1.0)
+    sketch.set_constraint(ids[1:3], 1.0)
+    sketch.set_constraint([ids[0], ids[2]], 3.0)
+    with pytest.raises(ValueError, match="cannot all hold"):
+        optimize_sketch(sketch)
