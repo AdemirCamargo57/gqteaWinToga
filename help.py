@@ -1888,7 +1888,7 @@ per axis) are slow to mesh and are held in memory.
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)
 
 Maps the molecular electrostatic potential V(r) onto an electron-density
-isosurface, shows it colour-coded in a 3D window and lists the surface
+isosurface, shows it colour-coded in this viewer's 3D window and lists the surface
 maxima and minima - the quantitative molecular surface analysis of
 Multiwfn (Lu & Chen, J. Mol. Graph. Model. 2012, 38, 314), drawn the way
 GaussView 6 draws a mapped ESP.
@@ -1939,16 +1939,30 @@ OUTPUT  (next to the .fchk unless another folder is chosen)
   and the nearest atom. 1 a.u. = 627.5094740631 kcal/mol (CODATA 2018);
   Multiwfn prints with 627.51, a difference below 1e-6.
 
-3D WINDOW
+ESP CUBE
+  Save ESP cube... writes V(r) in a.u. on the run's density grid (same box
+  and spacing) as a Gaussian cube. The save dialog suggests
+  <name>_ESP.cube in the output folder; choose any folder and name. With
+  'Also save the electron density cube' on (default), rho(r) on the same
+  grid is written beside it as <name>_density.cube - the pair GaussView or
+  VMD use for an ESP-mapped density surface. V is computed at every grid
+  point (seconds for a small molecule). A grid point exactly on a nucleus,
+  where V is infinite, is evaluated 0.001 bohr away (the status line says
+  so).
+
+3D WINDOW  (the 3D Molecular Viewer's own window)
+  Show surface draws the surface with the .fchk molecule. If the viewer
+  shows a different structure you are asked once per run whether to replace
+  it; No keeps it and draws the surface in the .fchk coordinates.
   Colour bar across the top, GaussView style: red = most negative,
   green = zero, blue = most positive, over a symmetric range +/- max|V|
   of the shown surface. Rotate with the left mouse button, zoom with the
   wheel. Markers: cyan = minimum, orange = maximum (larger = global); the
   number is the row in the extrema file.
-  Canvas background (Results tab): Black (default), White, Dark grey or
+  Canvas background (Results): Black (default), White, Dark grey or
   Light grey, applied at once; the colour-bar text turns black on a light
   background.
-  Export image... (Results tab) saves the 3D canvas exactly as shown - same
+  Export image... (Results) saves the 3D canvas exactly as shown - same
   orientation, zoom, framing, colours and background, at the window's pixel
   size, without the window frame. The view is not changed. Open the window
   with Show surface first. Formats: PNG (default), TIFF, BMP (lossless).

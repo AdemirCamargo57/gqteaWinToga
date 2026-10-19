@@ -264,7 +264,7 @@ as CPMD, Quantum ESPRESSO `cp.x`, ORCA, Gaussian, or Vanderbilt `runatom.x`.
 gqteaWinToga prepares and analyzes files for these programs, but it does not
 replace the external simulation engines.
 
-The Electrostatic Surface Potential tool reads Gaussian formatted checkpoints
+The Electrostatic Surface Potential tool (the ESP tab of the 3D Molecular Viewer) reads Gaussian formatted checkpoints
 (`.fchk`/`.fch`), made with Gaussian's `formchk` utility. It does not need
 Gaussian itself; if Gaussian's `cubegen` is installed it can optionally be used
 as the ESP engine.
@@ -1496,7 +1496,7 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-**Window layout.** The controls are arranged as a fixed header, six tabs, and a status line:
+**Window layout.** The controls are arranged as a fixed header, seven tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels.
@@ -1504,6 +1504,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
 - **Design** tab: draw, import and pre-optimize a molecule (see [Molecular Design](#molecular-design)).
 - **Cube** tab: Gaussian cube files as isosurfaces and slices, grid arithmetic, cube and image export (see [Cube tab](#cube-tab)).
+- **ESP** tab: the electrostatic potential mapped on electron-density isosurfaces of a Gaussian `.fchk`, its extrema, and ESP/density cube export (see [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)).
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
@@ -2196,8 +2197,8 @@ underlying cause and leave the structure available.
 
 #### Electrostatic Surface Potential (ESP)
 
-Use **Tools > Electrostatic Surface Potential (ESP)** to compute the molecular
-electrostatic potential of a Gaussian wavefunction on one or more
+Use the **ESP** tab of the **3D Molecular Viewer** (Tools > 3D Molecular Viewer)
+to compute the molecular electrostatic potential of a Gaussian wavefunction on one or more
 electron-density isosurfaces, view it colour-coded in 3D the way GaussView 6
 draws a mapped ESP, and list the maxima and minima of the potential on each
 surface, following the quantitative molecular surface analysis of Multiwfn.
@@ -2229,16 +2230,19 @@ only on the total (α + β) density.
 | Electron-density **isovalue** ρ<sub>iso</sub> | Defines *where* the surface is: the surface is the set of points where ρ(**r**) = ρ<sub>iso</sub>. | a.u. = e/bohr³ |
 | **ESP** V(**r**) | The property *mapped onto* that surface: the colours, the extrema and every value in the output. | a.u. = Hartree/e, or kcal/mol |
 
-The window, the results text, the colour bar and the output file all name the
+The tab, the results text, the colour bar and the output files all name the
 isovalue as "rho … (electron density isovalue)" and the potential as "ESP".
 
-##### Window layout
+##### Tab layout
 
-The top of the window holds the input file, the output folder and the buttons
-**Run**, **Show surface**, **Clear** and **Close**; below them are two tabs and a
-status line with a progress bar.
+The ESP tab is one scrolling page, top to bottom: **Input** (file and output
+folder), the surface definition and the mapped property, the buttons **Run**,
+**Show surface** and **Clear** with a status line and a progress bar,
+**Results**, **ESP cube**, and the text box (the help before a run, the results
+summary after it). The surface is drawn in the viewer's own 3D window, together
+with the molecule, so the other tabs (Display, Measure, Cube, ...) work on it too.
 
-**Setup tab**
+**Input and setup**
 
 | Control | Meaning | Default / range |
 |---|---|---|
@@ -2250,18 +2254,26 @@ status line with a progress bar.
 | ESP engine | **Built-in exact** (analytic integrals in this program) or **Gaussian cubegen** (Gaussian's own program). | Built-in exact |
 | cubegen executable | Path of `cubegen.exe`; pre-filled when one is found in `%GAUSS_EXEDIR%`, on `PATH`, in `C:\G09W` or in `C:\G16W`. Used only by the cubegen engine. | auto-detected |
 
-**Results tab**
+**Results**
 
 | Control | Meaning |
 |---|---|
 | Surface shown | Which isovalue's surface the 3D window displays (filled after a run). |
 | Colour-bar unit | `a.u.` or `kcal/mol` for the colour-bar labels. |
 | Surface | `Opaque` or `Transparent (50 %)`; **Show extrema markers** on/off. |
-| Canvas background | `Black` (default), `White`, `Dark grey` or `Light grey`. On a light background the colour-bar labels and caption are drawn in black so they stay readable. |
+| Canvas background | `Black` (default), `White`, `Dark grey` or `Light grey`, for the viewer's 3D window. On a light background the colour-bar labels and caption are drawn in black so they stay readable. |
 | Export image... | Saves the 3D canvas as an image file (see below). |
 | Text box | The help text before a run; the results summary after it. |
 
-Changing any Results-tab control updates an open 3D window immediately.
+Once the surface is shown, changing any Results control updates the 3D window
+immediately.
+
+**Which molecule is shown.** **Show surface** puts the `.fchk` molecule in the
+viewer. If the viewer shows nothing, or already shows that molecule, this
+happens without a question. If it shows a different structure (a trajectory,
+a designed molecule, a cube's atoms), you are asked once per run: **Yes**
+replaces it with the `.fchk` molecule, **No** keeps it and draws the surface in
+the `.fchk` coordinates.
 
 **Exporting the image.** Open the 3D window with **Show surface**, arrange the
 view, then press **Export image...**. The frame is captured the moment you press
@@ -2274,24 +2286,44 @@ and the view is not reset or changed. The suggested name is
 JPEG is refused because it would alter the colours). If the 3D window is
 minimised, restore it and export again.
 
+**ESP cube.** After a run, **Save ESP cube...** writes the electrostatic
+potential V(**r**) on the run's density grid (the same box and spacing the
+surfaces were built from) as a Gaussian cube file, in a.u. (Hartree/e), with
+the run's engine. A save dialog chooses the folder and the name; it opens in
+the output folder with the name `<name>_ESP.cube` (for `Eteno.fch`:
+`Eteno_ESP.cube`). With **Also save the electron density cube (same grid)** on
+(the default), the density ρ(**r**) used for the surfaces is written beside it
+as `<name>_density.cube`: the pair that GaussView or VMD use to draw an
+ESP-mapped density surface, and that the Cube tab can load. The potential is
+computed at every grid point, so this takes a few seconds for a small molecule
+(ethylene, 134 000 points, about 1 s with numba) and longer for a large one
+(benzene, 256 000 points, about 14 s); the progress bar follows it. V is
+infinite on a nucleus: a grid point that falls exactly on one is evaluated
+0.001 bohr away and the status line says so, so the file never holds an
+infinite value. If cubegen fails, the built-in engine is used and the status
+line says so.
+
 ##### Steps
 
-1. **Browse** to the `.fchk`/`.fch` file. Optionally choose an output folder.
-2. On the *Setup* tab, type the isovalue(s) or leave the field blank for
+1. Open **Tools > 3D Molecular Viewer** and choose the **ESP** tab.
+   **Browse** to the `.fchk`/`.fch` file. Optionally choose an output folder.
+2. Type the isovalue(s) or leave the field blank for
    0.000400; leave the grid spacing blank unless you need a finer surface.
 3. Keep **Built-in exact**, or choose **Gaussian cubegen** if Gaussian is
    installed. If cubegen is missing or fails, the built-in engine is used for
    the rest of the run and the summary says so in a `NOTE:` line.
 4. Press **Run**. The work runs in the background; the progress bar and status
    line report each stage (reading, density grid, and for each isovalue: surface,
-   ESP, extrema). When it finishes the *Results* tab opens with the summary, and
-   the extrema file is written automatically.
-5. Press **Show surface** to open the 3D window (pressing it again brings the
-   window to the front). Rotate with the left mouse button, zoom with the
-   wheel. Pick the surface, unit, opacity, markers and canvas background on the
-   *Results* tab, and press **Export image...** to save the canvas as shown.
-6. **Clear** discards the results and restores the help text; **Close** closes
-   the tool and its 3D window.
+   ESP, extrema). When it finishes, the text box shows the summary and the
+   extrema file is written automatically.
+5. Press **Show surface** to draw the surface in the viewer's 3D window (it
+   opens the window, or brings it to the front). Rotate with the left mouse
+   button, zoom with the wheel. Pick the surface, unit, opacity, markers and
+   canvas background under *Results*, and press **Export image...** to save the
+   canvas as shown.
+6. Optionally press **Save ESP cube...** to write the ESP (and density) cube.
+7. **Clear** discards the results, removes the surface from the 3D window and
+   restores the help text.
 
 ##### Results summary
 
@@ -2341,8 +2373,8 @@ style (`-2.097e-2 … 2.097e-2`; `-1.316e1 … 1.316e1` in kcal/mol), and the ca
 underneath states the unit and the density isovalue of the surface. The surface
 is drawn opaque with a specular highlight on a black background. Cyan spheres
 mark minima and orange spheres maxima (the larger sphere is the global one), each
-labelled with its row number in the extrema file. The window is built on the
-project's 3D molecular viewer and uses the same mouse controls.
+labelled with its row number in the extrema file. This is the 3D Molecular
+Viewer's own window, with its usual mouse controls.
 
 ##### Example: ethylene (B3LYP/6-31G)
 
