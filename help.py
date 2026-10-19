@@ -1836,8 +1836,15 @@ LOADING
 Load cube(s)... reads one or more files. An orbital cube holding several
 orbitals becomes one entry per orbital ("name MO 7", "name MO 8"). Cubes in
 bohr or in Angstrom, with skewed cells or different spacings per axis, are
-all read. The table lists each cube's grid, smallest and largest value and
-its integral (sum of the values x the voxel volume: electrons, for a density).
+all read. The list shows each cube's grid, smallest and largest value and
+its integral (sum of the values x the voxel volume: electrons, for a density),
+and ends in a Show box: tick it to draw that cube, clear it to hide it. Every
+ticked cube is drawn at once, superimposed on the same canvas. New cubes start
+ticked. Remove selected, Isosurface and Save act on the cube chosen in the
+Isosurface section's Cube list.
+
+Display reopens the 3D window if it was closed (or brings it to the front)
+and draws every ticked cube again, with the slice if it is on.
 
 The first cube decides which molecule is shown. With nothing displayed, its
 atoms are shown at once. If the viewer already shows the cube's own
@@ -1848,6 +1855,11 @@ structure; if their atoms differ, the status line says so.
 
 Show molecule hides or shows the atoms and bonds (hidden atoms cannot be
 clicked); Show volumetric data hides or shows every surface and the slice.
+
+Background: Background colour... opens the Windows colour picker, starting on
+the colour in use; or type a colour name or #rrggbb in the field and press
+Enter. The colour applies at once and changes nothing else (the ESP tab's
+Canvas background sets the same colour).
 
 ISOSURFACE
 

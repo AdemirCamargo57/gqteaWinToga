@@ -1560,7 +1560,16 @@ The **Cube** tab shows Gaussian cube files (`.cube`/`.cub`) in the 3D window: or
 - skewed cells and a different spacing along each axis, as written by periodic codes;
 - orbital cubes (negative atom count). Each orbital becomes its own entry, for example `phenol MO 24`.
 
-The table lists every cube with its grid size, smallest and largest value, and integral. The integral is the sum of the values times the voxel volume: the electron count, for a density. Cubes made by a grid operation are marked `(unsaved)`.
+The list shows every cube with its grid size, smallest and largest value, and integral. The integral is the sum of the values times the voxel volume: the electron count, for a density. Cubes made by a grid operation are marked `(unsaved)`.
+
+**Showing cubes.** Each row ends in a **Show** checkbox:
+
+- Tick it to draw that cube on the canvas; clear it to hide the cube. Hiding keeps the cube loaded with all its settings.
+- Tick two or more to draw those cubes together, superimposed on the same canvas (for example two orbitals, or a density and a Fukui function).
+- New cubes start ticked.
+- **Remove selected**, the **Isosurface** settings and **Save selected cube...** act on the cube chosen in the Isosurface section's **Cube** list, not on a clicked row. The **Visible** switch there and that cube's **Show** box are the same setting.
+
+**Display** reopens the 3D window if you closed it (or brings it to the front) and draws every ticked cube again, with the slice if it is on. Nothing is lost when the window is closed.
 
 **Which molecule is shown.** The first cube you load decides it:
 
@@ -1574,6 +1583,8 @@ Two switches control what is drawn:
 - **Show molecule** hides or shows the atoms and bonds. Hidden atoms cannot be clicked.
 - **Show volumetric data** hides or shows every surface and the slice.
 
+**Background.** **Background colour...** opens the Windows colour picker, starting on the colour in use. You can also type a colour name (Black, White, Grey, ...) or `#rrggbb` in the field beside the swatch and press Enter. The colour applies at once and changes nothing else: the same cubes stay shown, nothing is recomputed. It is the 3D window's background, so the ESP tab's **Canvas background** sets the same colour; the last one you choose wins.
+
 **Isosurface.** Choose the cube, type the **Isovalue** and press Enter.
 
 - For signed data (orbitals, differences), the positive surface is drawn at +isovalue and the negative one at −isovalue, each in its own colour.
@@ -1581,7 +1592,7 @@ Two switches control what is drawn:
 - Starting isovalues are 0.02 for orbitals and signed data and 0.0004 for densities, as in GaussView.
 - **Positive colour** and **Negative colour** take a name (Blue, Red, Green, Yellow, Orange, Cyan, Magenta, Purple, White, Grey) or `#rrggbb`. Press Enter to apply.
 - **Opacity** below 1 makes the surface translucent.
-- **Visible** hides one cube without removing it.
+- **Visible** hides one cube without removing it (the same setting as its **Show** box in the list).
 - If an isovalue cuts nothing, the status line says so and gives the cube's value range.
 
 **Slice.** A coloured plane through one cube's grid.

@@ -18,6 +18,7 @@ slice change does not re-mesh.
 from __future__ import annotations
 
 import asyncio
+import functools
 import math
 import re
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 import toga
 from toga.style import Pack
-from toga.style.pack import COLUMN, LEFT
+from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
 import cubeFile as cf
 import volumeData as vd
@@ -87,23 +88,108 @@ def _item_names(selection) -> List[str]:
     return [getattr(item, "value", item) for item in selection.items]
 
 
-def fit_table_columns_on_resize(table) -> None:
-    """Re-split a Toga Table's width between its columns every time it is resized.
+def rgb_to_hex(rgb) -> str:
+    """(r, g, b) in [0, 1] -> '#RRGGBB'."""
+    return "#" + "".join(f"{int(round(255 * min(1.0, max(0.0, float(c))))):02X}" for c in rgb)
 
-    On WinForms, Toga splits the width evenly only once, at the table's first
-    layout. The Cube tab is hidden then, so the table is ~140 px wide and every
-    column is fixed at ~19 px for good. Resizing happens when the tab is shown
-    and when the window changes size, so the columns follow both. Any other
-    backend keeps its own column sizing.
+
+def pick_colour(initial, owner=None) -> Optional[Tuple[float, float, float]]:
+    """The standard Windows colour dialog, opened on ``initial`` (RGB in [0, 1]).
+
+    Returns the chosen RGB, or None when cancelled. Raises RuntimeError where
+    WinForms is not available; the typed-colour field still works there.
+    The dialog is modal (``owner`` is the Toga window's native Form).
     """
-    impl = getattr(table, "_impl", None)
-    native = getattr(impl, "native", None)
-    if native is None or not hasattr(impl, "_resize_columns"):
-        return
     try:
-        native.Resize += lambda sender, event: impl._resize_columns()
-    except Exception:
-        pass  # sizing is cosmetic; never let it break the tab
+        import clr  # pythonnet; load the assemblies here rather than rely on toga_winforms having done it
+        clr.AddReference("System.Drawing")
+        clr.AddReference("System.Windows.Forms")
+        from System.Drawing import Color
+        from System.Windows.Forms import ColorDialog, DialogResult
+    except Exception as exc:
+        raise RuntimeError("The colour picker needs Windows; type a colour name or #rrggbb "
+                           "in the field and press Enter instead.") from exc
+    dialog = ColorDialog()
+    dialog.FullOpen = True
+    dialog.AnyColor = True
+    r, g, b = (int(round(255 * min(1.0, max(0.0, float(c))))) for c in initial)
+    dialog.Color = Color.FromArgb(r, g, b)
+    result = dialog.ShowDialog(owner) if owner is not None else dialog.ShowDialog()
+    if result != DialogResult.OK:
+        return None
+    chosen = dialog.Color
+    return chosen.R / 255.0, chosen.G / 255.0, chosen.B / 255.0
+
+
+# (heading, width in px; None = takes the remaining width)
+CUBE_LIST_COLUMNS = (("Name", None), ("Grid", 110), ("Min", 80), ("Max", 80), ("Integral", 80), ("Show", 46))
+CUBE_LIST_HEIGHT = 130
+
+
+class CubeList:
+    """The Cube files list: a header, then one row per cube - name, grid and
+    statistics - ending in a **Show** checkbox (a toga.Switch, which is a
+    native CheckBox on WinForms).
+
+    It replaces a toga.Table, which cannot hold checkboxes (on WinForms it is
+    a virtual ListView). Rows are rebuilt only when the cubes or their
+    statistics change, as one new content box swapped into the scroll
+    container (one layout pass); a visibility change only writes that box.
+    ``on_toggle(name, shown)`` is called for every box the user ticks.
+    """
+
+    def __init__(self, on_toggle):
+        self.on_toggle = on_toggle
+        self.names: List[str] = []
+        self.rows: Optional[List[Tuple[str, ...]]] = None
+        self.switches: Dict[str, toga.Switch] = {}
+        self.writes = 0  # widget writes made by show(): rebuilds and box changes
+        self.container = toga.ScrollContainer(horizontal=False,
+                                              style=Pack(height=CUBE_LIST_HEIGHT, margin=(0, 0, 6, 0)))
+        self.container.content = self._build([], [], [])
+
+    @staticmethod
+    def _cell(text: str, width: Optional[int], bold: bool = False) -> toga.Label:
+        weight = "bold" if bold else "normal"
+        if width is None:
+            return toga.Label(text, style=Pack(flex=1, margin=(2, 6, 2, 0), font_weight=weight))
+        return toga.Label(text, style=Pack(width=width, margin=(2, 6, 2, 0), font_weight=weight))
+
+    def _build(self, names, rows, visible) -> toga.Box:
+        box = toga.Box(style=Pack(direction=COLUMN, margin=(2, 4, 2, 4)))
+        header = toga.Box(style=Pack(direction=ROW))
+        for title, width in CUBE_LIST_COLUMNS:
+            header.add(self._cell(title, width, bold=True))
+        box.add(header)
+        switches = {}
+        for name, row, shown in zip(names, rows, visible):
+            line = toga.Box(style=Pack(direction=ROW, align_items=CENTER))
+            for text, (_, width) in zip(row, CUBE_LIST_COLUMNS[:-1]):
+                line.add(self._cell(text, width))
+            switch = toga.Switch("", value=bool(shown), on_change=functools.partial(self._toggled, name),
+                                 style=Pack(width=CUBE_LIST_COLUMNS[-1][1]))
+            switches[name] = switch
+            line.add(switch)
+            box.add(line)
+        self.switches = switches
+        return box
+
+    def _toggled(self, name: str, widget, **kwargs):
+        self.on_toggle(name, bool(widget.value))
+
+    def show(self, names: List[str], rows, visible: List[bool]):
+        """Bring the list up to date, writing only what changed."""
+        rows = [tuple(r) for r in rows]
+        if list(names) != self.names or rows != self.rows:
+            self.container.content = self._build(names, rows, visible)  # one layout pass
+            self.names, self.rows = list(names), rows
+            self.writes += 1
+            return
+        for name, shown in zip(names, visible):
+            switch = self.switches[name]
+            if switch.value != bool(shown):
+                switch.value = bool(shown)
+                self.writes += 1
 
 
 def default_cube_filename(name: str) -> str:
@@ -167,11 +253,13 @@ class CubeTabController:
         self._syncing = False
         self._refreshing = False
         self._refresh_pending = False
-        self._table_rows = None    # rows last written to the table (written only on change)
         self._last_status = None   # last message sent to the viewer's status line
         self._tasks = set()        # handler work in flight (see _start)
+        self._swatch_hex = None    # colour last written to the background swatch
         # Widgets (build_tab)
-        self.cube_table = None
+        self.cube_list: Optional[CubeList] = None
+        self.background_input = None
+        self.background_swatch = None
         self.show_molecule_switch = None
         self.show_volumes_switch = None
         self.iso_cube_selection = None
@@ -489,15 +577,12 @@ class CubeTabController:
     def sync_widgets(self, selected: Optional[str] = None):
         """Bring the table and selections up to date with the state, writing only what
         changed (see _assign); handlers are muted meanwhile."""
-        if self.cube_table is None:
+        if self.cube_list is None:
             return
         self._syncing = True
         try:
             names = self.names()
-            rows = [e.table_row() for e in self.entries]
-            if rows != self._table_rows:
-                self.cube_table.data = rows
-                self._table_rows = rows
+            self.cube_list.show(names, [e.table_row() for e in self.entries], [e.visible for e in self.entries])
             for selection in (self.iso_cube_selection, self.slice_cube_selection,
                               self.op_a_selection, self.op_b_selection):
                 if _item_names(selection) != names:
@@ -633,21 +718,70 @@ class CubeTabController:
         self.sync_widgets()
         await self.refresh_scene()
 
-    async def on_table_select(self, widget, **kwargs):
-        row = widget.selection
-        if row is None or self._syncing:
+    def on_cube_toggled(self, name: str, shown: bool):
+        """A Show box in the cube list: draw or hide that cube (others are untouched)."""
+        if self._syncing:
             return
         try:
-            index = list(widget.data).index(row)
+            entry = self.entry(name)
         except ValueError:
             return
-        if 0 <= index < len(self.entries):
+        if entry.visible == shown:
+            return
+        entry.visible = shown
+        # The Isosurface section's Visible switch is the same setting for the cube it edits.
+        if self.visible_switch is not None and self.iso_cube_selection is not None \
+                and self.iso_cube_selection.value == name:
+            was = self._syncing
             self._syncing = True
             try:
-                self.iso_cube_selection.value = self.entries[index].name
+                _assign(self.visible_switch, "value", shown)
             finally:
-                self._syncing = False
-            self._load_isosurface_fields()
+                self._syncing = was
+        self._start(self.refresh_scene())
+
+    async def on_display(self, widget):
+        """Reopen the 3D window (or bring it forward) and redraw every ticked cube."""
+        self.set_status("Opening the 3D viewer...")
+        ready, error = await self.viewer.ensure_viewer_window()
+        if not ready:
+            await self._show_error("The 3D viewer could not be opened", error)
+            return
+        await self.refresh_scene()
+
+    # --- canvas background (a view setting: no cube is re-meshed or hidden) ---
+    def apply_background(self, rgb):
+        hex_colour = rgb_to_hex(rgb)
+        self.viewer.set_background_color(tuple(float(c) for c in rgb))
+        if self.background_input is not None:
+            _assign(self.background_input, "value", hex_colour)
+        if self.background_swatch is not None and hex_colour != self._swatch_hex:
+            self.background_swatch.style.background_color = hex_colour
+            self._swatch_hex = hex_colour
+
+    def on_background_confirm(self, widget, **kwargs):
+        """A colour typed in the field (name or #rrggbb) and Enter."""
+        try:
+            rgb = vd.parse_colour(widget.value)
+        except ValueError as exc:
+            self.apply_background(self.viewer.background_color)  # show the colour in use again
+            self._start(self._show_error("Background colour", str(exc)))
+            return
+        self.apply_background(rgb)
+
+    def on_background_pick(self, widget, **kwargs):
+        """The Windows colour picker, opened on the colour in use."""
+        try:
+            owner = self._window()._impl.native
+        except Exception:
+            owner = None
+        try:
+            rgb = pick_colour(tuple(float(c) for c in self.viewer.background_color), owner)
+        except RuntimeError as exc:
+            self._start(self._show_error("Background colour", str(exc)))
+            return
+        if rgb is not None:
+            self.apply_background(rgb)
 
     def on_iso_cube_change(self, widget, **kwargs):
         if not self._syncing:
@@ -787,19 +921,29 @@ class CubeTabController:
         tab.add(v._section_heading("Cube files"))
         tab.add(v._form_row(
             toga.Button("Load cube(s)...", on_press=self.on_load, style=Pack(flex=1, margin=(0, 8, 0, 0))),
-            toga.Button("Remove selected", on_press=self.on_remove, style=Pack(flex=1)),
+            toga.Button("Remove selected", on_press=self.on_remove, style=Pack(flex=1, margin=(0, 8, 0, 0))),
+            toga.Button("Display", on_press=self.on_display, style=Pack(flex=1)),
         ))
-        self.cube_table = toga.Table(
-            headings=["Name", "Grid", "Min", "Max", "Integral"],
-            accessors=["name", "grid", "minimum", "maximum", "integral"],
-            data=[], on_select=self.on_table_select, style=Pack(height=110, margin=(0, 0, 6, 0)))
-        fit_table_columns_on_resize(self.cube_table)
-        tab.add(self.cube_table)
+        self.cube_list = CubeList(self.on_cube_toggled)
+        tab.add(self.cube_list.container)
+        # Toga labels do not wrap: keep each hint line short enough for the window.
+        tab.add(v._hint("Tick Show to draw a cube; ticked cubes are drawn together. "
+                        "Display reopens the 3D window."))
+        tab.add(v._hint("Remove selected, Isosurface and Save act on the cube chosen under Isosurface > Cube."))
         self.show_molecule_switch = toga.Switch("Show molecule", value=True, on_change=self.on_show_molecule_change,
                                                 style=Pack(margin=(0, 16, 0, 0)))
         self.show_volumes_switch = toga.Switch("Show volumetric data", value=True,
                                                on_change=self.on_show_volumes_change)
         tab.add(v._form_row(self.show_molecule_switch, self.show_volumes_switch))
+        current = rgb_to_hex(self.viewer.background_color)
+        self.background_swatch = toga.Box(style=Pack(width=24, height=18, margin=(0, 8, 0, 0),
+                                                     background_color=current))
+        self._swatch_hex = current
+        self.background_input = toga.TextInput(value=current, on_confirm=self.on_background_confirm,
+                                               style=Pack(width=field_width, margin=(0, 8, 0, 0)))
+        tab.add(v._form_row(v._form_label("Background:"), self.background_swatch, self.background_input,
+                            toga.Button("Background colour...", on_press=self.on_background_pick,
+                                        style=Pack(width=150))))
 
         # Isosurface
         tab.add(v._section_heading("Isosurface"))

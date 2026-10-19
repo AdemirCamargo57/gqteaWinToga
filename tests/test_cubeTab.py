@@ -318,30 +318,6 @@ class TestOperations:
         assert len(notes) == 1 and "atoms" in notes[0]
 
 
-class TestTableColumns:
-    def test_columns_are_refitted_whenever_the_native_table_is_resized(self):
-        """Toga's WinForms Table splits its width between the columns once, at its first
-        layout; on a hidden tab that is a few pixels, so every column stayed ~19 px."""
-        class Event:
-            def __init__(self):
-                self.handlers = []
-
-            def __iadd__(self, handler):
-                self.handlers.append(handler)
-                return self
-
-        refits = []
-        impl = SimpleNamespace(native=SimpleNamespace(Resize=Event()), _resize_columns=lambda: refits.append(1))
-        table = SimpleNamespace(_impl=impl)
-        ct.fit_table_columns_on_resize(table)
-        for handler in impl.native.Resize.handlers:
-            handler(None, None)
-        assert refits == [1]
-
-    def test_other_backends_are_left_alone(self):
-        ct.fit_table_columns_on_resize(SimpleNamespace())  # no _impl.native: nothing to do, no error
-
-
 class TestSaving:
     def test_save_marks_the_entry_saved(self, tmp_path):
         c = loaded(tmp_path, p_orbital_volume(), p_orbital_volume())
@@ -447,7 +423,7 @@ class Recorder:
 
 
 def recorded_widgets(c):
-    c.cube_table = Recorder(data=[])
+    c.cube_list = ct.CubeList(c.on_cube_toggled)
     for name in ("iso_cube_selection", "slice_cube_selection", "op_a_selection", "op_b_selection"):
         setattr(c, name, Recorder(items=[], value=None))
     c.isovalue_input = Recorder(value="")
@@ -467,13 +443,14 @@ def recorded_widgets(c):
 
 def all_writes(c):
     widgets = [w for w in vars(c).values() if isinstance(w, Recorder)]
-    return sum(len(w.writes) for w in widgets)
+    return sum(len(w.writes) for w in widgets) + c.cube_list.writes
 
 
 def clear_writes(c):
     for w in vars(c).values():
         if isinstance(w, Recorder):
             object.__setattr__(w, "writes", [])
+    c.cube_list.writes = 0
 
 
 class TestNoFlicker:
@@ -512,3 +489,143 @@ class TestNoFlicker:
         c._syncing = False
         getattr(c, handler)(SimpleNamespace(value=True))
         assert len(started) == 1
+
+
+
+# ----------------------------------------------------------------------
+# Cube list with a Show checkbox per cube, Display button, background colour
+# ----------------------------------------------------------------------
+def listed(tmp_path, n=2):
+    c = recorded_widgets(loaded(tmp_path, *[p_orbital_volume() for _ in range(n)]))
+    c.sync_widgets(selected="cube0")
+    c.started = []
+    c._start = lambda coroutine: c.started.append(coroutine.__name__) or coroutine.close()
+    return c
+
+
+class TestCubeList:
+    def test_one_row_per_cube_with_a_checked_show_box(self, tmp_path):
+        c = listed(tmp_path)
+        assert c.cube_list.names == ["cube0", "cube1"]
+        assert [sw.value for sw in c.cube_list.switches.values()] == [True, True]  # new cubes start checked
+        assert c.cube_list.rows[0][0] == "cube0" and c.cube_list.rows[0][1] == "21 x 21 x 21"
+
+    def test_rows_are_rebuilt_only_when_the_cubes_change(self, tmp_path):
+        c = listed(tmp_path)
+        c.cube_list.writes = 0
+        c.entries[1].visible = False
+        c.sync_widgets()
+        assert c.cube_list.writes == 1 and c.cube_list.switches["cube1"].value is False  # one box, no rebuild
+        c.add_entries(c.read_entries(write(tmp_path, "more.cube", p_orbital_volume())))
+        c.sync_widgets()
+        assert c.cube_list.names == ["cube0", "cube1", "more"]
+
+    def test_unchecking_hides_that_cube_only(self, tmp_path):
+        c = listed(tmp_path)
+        for e in c.entries:
+            e.isovalue = 0.1
+        both = len(c.compute_scene_items()[0])
+        c.cube_list.switches["cube1"].value = False  # a real Toga on_change event
+        assert c.entries[1].visible is False and c.entries[0].visible is True
+        assert c.started == ["refresh_scene"]
+        assert len(c.compute_scene_items()[0]) == both // 2  # only cube0's surfaces remain
+
+    def test_two_checked_cubes_are_drawn_together(self, tmp_path):
+        c = listed(tmp_path)
+        for e in c.entries:
+            e.isovalue = 0.1
+        c.cube_list.switches["cube1"].value = False
+        c.cube_list.switches["cube1"].value = True
+        assert len(c.compute_scene_items()[0]) == 4  # + and - lobes of both cubes
+
+    def test_the_row_box_and_the_visible_switch_stay_in_step(self, tmp_path):
+        c = listed(tmp_path)
+        c.cube_list.switches["cube0"].value = False  # cube0 is the one being edited
+        assert c.visible_switch.value is False
+        c.visible_switch.value = True
+        c.entries[0].visible = True  # what apply_isosurface_fields does with it
+        c.sync_widgets()
+        assert c.cube_list.switches["cube0"].value is True
+
+    def test_the_tabs_own_updates_are_not_toggles(self, tmp_path):
+        c = listed(tmp_path)
+        c.entries[0].visible = False
+        c.sync_widgets()  # writes the box programmatically
+        assert c.started == []
+
+
+class TestDisplayButton:
+    def test_reopens_the_window_and_redraws_the_checked_cubes(self, tmp_path):
+        c = listed(tmp_path)
+        for e in c.entries:
+            e.isovalue = 0.1
+        c.entries[1].visible = False
+        opened = []
+
+        async def ensure(timeout=5.0):
+            opened.append(True)
+            return True, None
+        c.viewer.ensure_viewer_window = ensure
+        asyncio.run(c.on_display(None))
+        assert opened == [True] and len(c.viewer.cube_layer.items()) == 2  # cube0 only
+
+    def test_a_window_that_cannot_open_is_a_dialog(self, tmp_path):
+        c = listed(tmp_path)
+        errors = []
+
+        async def ensure(timeout=5.0):
+            return False, "no OpenGL"
+
+        async def show_error(title, message):
+            errors.append((title, message))
+        c.viewer.ensure_viewer_window = ensure
+        c._show_error = show_error
+        asyncio.run(c.on_display(None))
+        assert errors == [("The 3D viewer could not be opened", "no OpenGL")]
+
+
+class TestBackgroundColour:
+    def background_widgets(self, c):
+        c.viewer.background_color = (0.0, 0.0, 0.0)
+        c.viewer.set_background_color = lambda rgb: setattr(c.viewer, "background_color", tuple(rgb))
+        c.background_input = Recorder(value="#000000")
+        c.background_swatch = Recorder(style=SimpleNamespace(background_color="#000000"))
+        return c
+
+    def test_hex_text(self):
+        assert ct.rgb_to_hex((1.0, 0.5, 0.0)) == "#FF8000"
+        assert ct.rgb_to_hex((0.0, 0.0, 0.0)) == "#000000"
+
+    def test_typed_colour_applies_at_once_and_leaves_the_cubes_alone(self, tmp_path):
+        c = self.background_widgets(listed(tmp_path))
+        c.entries[1].visible = False
+        visible = [e.visible for e in c.entries]
+        c.background_input.value = "white"
+        c.on_background_confirm(c.background_input)
+        assert c.viewer.background_color == (1.0, 1.0, 1.0)
+        assert c.background_input.value == "#FFFFFF" and c.background_swatch.style.background_color == "#FFFFFF"
+        assert [e.visible for e in c.entries] == visible and c.started == []  # nothing redrawn or re-meshed
+
+    def test_bad_colour_is_a_dialog_and_changes_nothing(self, tmp_path):
+        c = self.background_widgets(listed(tmp_path))
+        errors = []
+        c._start = lambda coroutine: errors.append(coroutine.__name__) or coroutine.close()
+        c.background_input.value = "teal-ish"
+        c.on_background_confirm(c.background_input)
+        assert c.viewer.background_color == (0.0, 0.0, 0.0) and errors == ["_show_error"]
+        assert c.background_input.value == "#000000"  # the field shows the colour in use again
+
+    def test_picker_starts_on_the_current_colour_and_applies_the_choice(self, tmp_path, monkeypatch):
+        c = self.background_widgets(listed(tmp_path))
+        c.viewer.background_color = (0.25, 0.25, 0.25)
+        seen = []
+        monkeypatch.setattr(ct, "pick_colour", lambda initial, owner=None: seen.append(initial) or (0.0, 0.0, 1.0))
+        c.on_background_pick(None)
+        assert seen == [(0.25, 0.25, 0.25)] and c.viewer.background_color == (0.0, 0.0, 1.0)
+        assert c.background_input.value == "#0000FF"
+
+    def test_cancelled_picker_changes_nothing(self, tmp_path, monkeypatch):
+        c = self.background_widgets(listed(tmp_path))
+        monkeypatch.setattr(ct, "pick_colour", lambda initial, owner=None: None)
+        c.on_background_pick(None)
+        assert c.viewer.background_color == (0.0, 0.0, 0.0) and c.background_input.writes == []
