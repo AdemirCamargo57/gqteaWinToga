@@ -374,12 +374,18 @@ class TopologyPath:
         return float(np.sum(np.linalg.norm(np.diff(self.points, axis=0), axis=1)))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Plane:
-    """A plane through ``origin`` spanned by the orthonormal ``u`` and ``v`` (bohr)."""
+    """A plane through ``origin`` spanned by the orthonormal ``u`` and ``v`` (bohr).
+
+    ``label`` describes it (for titles); ``axis_names`` name the in-plane
+    coordinates (x/y for an XY plane, u/v for a plane through three atoms).
+    """
     origin: np.ndarray
     u: np.ndarray
     v: np.ndarray
+    label: str = ""
+    axis_names: Tuple[str, str] = ("u", "v")
 
     @property
     def normal(self) -> np.ndarray:
@@ -397,6 +403,52 @@ class Plane:
     def to_space(self, st: np.ndarray) -> np.ndarray:
         st = np.asarray(st, dtype=float).reshape(-1, 2)
         return self.origin + st[:, :1] * self.u + st[:, 1:] * self.v
+
+
+COLLINEAR_TOLERANCE = 1e-3   # |sin| of the angle at the first atom below which three atoms are collinear
+AXIS_PLANES = {"XY": (0, 1, 2), "XZ": (0, 2, 1), "YZ": (1, 2, 0)}   # in-plane axes, normal axis
+
+
+def plane_from_atoms(coords: np.ndarray, i: int, j: int, k: int, symbols: Optional[Sequence[str]] = None) -> Plane:
+    """The plane of atoms i, j, k (0-based): origin at their centroid, u along i->j."""
+    coords = np.asarray(coords, dtype=float).reshape(-1, 3)
+    n = len(coords)
+    if len({i, j, k}) != 3 or min(i, j, k) < 0 or max(i, j, k) >= n:
+        raise ValueError(f"A plane needs three different atoms between 1 and {n}.")
+    a, b, c = coords[i], coords[j], coords[k]
+    u = b - a
+    w = c - a
+    if np.linalg.norm(np.cross(u, w)) <= COLLINEAR_TOLERANCE * np.linalg.norm(u) * np.linalg.norm(w):
+        raise ValueError(f"Atoms {i + 1}, {j + 1} and {k + 1} are collinear and define no plane; "
+                         "choose other atoms or an XY / XZ / YZ plane.")
+    u = u / np.linalg.norm(u)
+    v = w - (w @ u) * u
+    v = v / np.linalg.norm(v)
+    names = [f"{symbols[x]}{x + 1}" if symbols else str(x + 1) for x in (i, j, k)]
+    return Plane((a + b + c) / 3.0, u, v, label="plane of " + ", ".join(names), axis_names=("u", "v"))
+
+
+def axis_plane(name: str, offset_bohr: float = 0.0) -> Plane:
+    """The XY, XZ or YZ plane at ``offset_bohr`` along its normal axis."""
+    key = name.upper()
+    if key not in AXIS_PLANES:
+        raise ValueError(f"Unknown plane '{name}'; use XY, XZ or YZ.")
+    p, q, r = AXIS_PLANES[key]
+    eye = np.eye(3)
+    origin = offset_bohr * eye[r]
+    offset = offset_bohr * BOHR_RADIUS_ANGSTROM
+    return Plane(origin, eye[p], eye[q], label=f"{key} plane, {'xyz'[r]} = {offset:g} A",
+                 axis_names=(key[0].lower(), key[1].lower()))
+
+
+def default_plane_atoms(coords: np.ndarray) -> Tuple[int, int, int]:
+    """The first three atoms (in index order) that are not collinear."""
+    coords = np.asarray(coords, dtype=float).reshape(-1, 3)
+    for i, j, k in combinations(range(len(coords)), 3):
+        u, w = coords[j] - coords[i], coords[k] - coords[i]
+        if np.linalg.norm(np.cross(u, w)) > COLLINEAR_TOLERANCE * np.linalg.norm(u) * np.linalg.norm(w):
+            return i, j, k
+    raise ValueError("The molecule has fewer than three non-collinear atoms; use an XY, XZ or YZ plane.")
 
 
 def trace_paths(wfn: gw.FchkWavefunction, starts: np.ndarray, direction: float, targets: np.ndarray,

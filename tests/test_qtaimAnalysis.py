@@ -192,3 +192,101 @@ def test_modules_do_not_import_toga():
     code = "import sys, qtaimTopology, qtaimAnalysis; print('toga' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+class TestPlaneMap:
+    @pytest.fixture(scope="class")
+    def benzene_map(self):
+        res = results_for("benzene_631gd.fchk")
+        w = res.wavefunction
+        plane = qt.plane_from_atoms(w.coordinates, *qt.default_plane_atoms(w.coordinates), symbols=w.atom_symbols())
+        return res, plane, qa.QTAIMAnalyser().plane_map(res, plane, qa.PlaneMapOptions(points=60))
+
+    def test_every_cp_of_a_planar_molecule_is_shown(self, benzene_map):
+        res, _, m = benzene_map
+        assert Counter(p[0] for p in m.points) == Counter({qt.NCP: 12, qt.BCP: 12, qt.RCP: 1})
+        assert {p[3] for p in m.points if p[0] == qt.NCP} == {f"C{i}" for i in range(1, 7)} | {f"H{i}" for i in range(7, 13)}
+
+    def test_lines(self, benzene_map):
+        _, _, m = benzene_map
+        kinds = Counter(k for k, _ in m.lines)
+        assert kinds["gradient"] == 12 * 24 and kinds["bond_path"] == 24 and kinds["interbasin"] == 24
+        for kind, pts in m.lines:
+            assert kind in qa.MAP_LINE_KINDS and pts.shape[1] == 2 and len(pts) >= 2
+            assert pts[:, 0].min() >= m.extent[0] - 0.1 and pts[:, 0].max() <= m.extent[1] + 0.1
+
+    def test_gradient_lines_start_next_to_a_nucleus(self, benzene_map):
+        _, _, m = benzene_map
+        nuclei = np.array([(p[1], p[2]) for p in m.points if p[0] == qt.NCP])
+        for kind, pts in m.lines:
+            if kind == "gradient":
+                d = np.linalg.norm(nuclei - pts[0], axis=1).min()
+                assert d == pytest.approx(qa.GRADIENT_LINE_START_RADIUS * qt.BOHR_RADIUS_ANGSTROM, abs=1e-3)
+
+    def test_grid_and_contours(self, benzene_map):
+        _, _, m = benzene_map
+        assert m.grid.shape == (60, 60) and np.all(m.grid > 0)
+        assert m.contour_levels and set(m.contour_levels) <= set(qa.BADER_CONTOURS)
+        assert max(m.contour_levels) <= m.grid.max()
+
+    def test_extent_covers_atoms_plus_margin(self, benzene_map):
+        res, plane, m = benzene_map
+        st = plane.to_plane(res.wavefunction.coordinates) * qt.BOHR_RADIUS_ANGSTROM
+        assert m.extent[0] == pytest.approx(st[:, 0].min() - 2.0) and m.extent[3] == pytest.approx(st[:, 1].max() + 2.0)
+
+    def test_manifest_is_json_and_complete(self, benzene_map):
+        import json
+        entry = json.loads(json.dumps(qa.plane_manifest(benzene_map[2])))
+        assert entry["type"] == "plane_map"
+        assert set(entry) == {"type", "title", "xlabel", "ylabel", "extent", "grid", "contours", "lines", "points"}
+        assert len(entry["grid"]) == 60 and len(entry["grid"][0]) == 60
+        assert entry["xlabel"] == "u (Angstrom)" and "plane of C1, C2, C3" in entry["title"]
+
+    def test_switches_and_far_plane(self):
+        res = results_for("water_631gd_6d.fchk")
+        far = qa.QTAIMAnalyser().plane_map(res, qt.axis_plane("XY", 5.0),
+                                           qa.PlaneMapOptions(points=20, contours=False, gradient_lines=False,
+                                                              interbasin=False))
+        assert far.grid is None and far.lines == [] and far.points == []
+        assert qa.plane_manifest(far)["grid"] is None
+
+    def test_water_in_its_own_plane(self):
+        res = results_for("water_631gd_6d.fchk")
+        # water lies in the YZ plane of its fchk (x = 0)
+        m = qa.QTAIMAnalyser().plane_map(res, qt.axis_plane("YZ"), qa.PlaneMapOptions(points=30))
+        assert Counter(p[0] for p in m.points) == Counter({qt.NCP: 3, qt.BCP: 2})
+        assert qa.plane_manifest(m)["xlabel"] == "y (Angstrom)"
+
+    @pytest.mark.parametrize("kwargs, message", [({"points": 5}, "20 to 1000"), ({"margin_angstrom": -1}, "margin"),
+                                                 ({"lines_per_atom": 2}, "lines per atom"),
+                                                 ({"show_distance_bohr": 0}, "distance")])
+    def test_option_validation(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            qa.PlaneMapOptions(**kwargs).validate()
+
+
+class TestPlanes:
+    def test_plane_from_atoms(self):
+        coords = np.array([[0, 0, 0], [2, 0, 0], [0, 3, 0.0]])
+        p = qt.plane_from_atoms(coords, 0, 1, 2, symbols=["O", "H", "H"])
+        assert np.allclose(p.u, [1, 0, 0]) and np.allclose(p.v, [0, 1, 0]) and np.allclose(p.normal, [0, 0, 1])
+        assert np.allclose(p.origin, coords.mean(axis=0)) and p.label == "plane of O1, H2, H3"
+
+    def test_collinear_atoms_are_rejected(self):
+        coords = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0.0]])
+        with pytest.raises(ValueError, match="collinear"):
+            qt.plane_from_atoms(coords, 0, 1, 2)
+        assert qt.default_plane_atoms(coords) == (0, 1, 3)
+        with pytest.raises(ValueError, match="three different atoms"):
+            qt.plane_from_atoms(coords, 0, 0, 2)
+
+    def test_linear_molecule_has_no_default_plane(self):
+        with pytest.raises(ValueError, match="non-collinear"):
+            qt.default_plane_atoms(np.array([[0, 0, 0], [0, 0, 1], [0, 0, 2.0]]))
+
+    def test_axis_planes(self):
+        p = qt.axis_plane("xz", 1.0)
+        assert np.allclose(p.u, [1, 0, 0]) and np.allclose(p.v, [0, 0, 1]) and np.allclose(p.origin, [0, 1, 0])
+        assert p.axis_names == ("x", "z") and "y = 0.529177" in p.label
+        with pytest.raises(ValueError, match="Unknown plane"):
+            qt.axis_plane("AB")

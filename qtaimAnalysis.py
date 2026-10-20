@@ -77,6 +77,85 @@ def assignment_label(cp: qt.CriticalPoint, symbols: Sequence[str]) -> str:
     return "ring" if cp.kind == RCP else "cage"
 
 
+# ----------------------------------------------------------------------
+# 2D plane map (Multiwfn main function 4 with topology, manual 3.5.5)
+# ----------------------------------------------------------------------
+# Bader's contour series 1, 2, 4, 8 x 10^n a.u. (n = -3 ... 1)
+BADER_CONTOURS = [m * 10.0 ** n for n in range(-3, 2) for m in (1, 2, 4, 8)]
+GRADIENT_LINE_START_RADIUS = 0.1   # bohr: gradient lines start on a circle this far from each nucleus
+GRADIENT_LINE_MAX_POINTS = 2000
+MAP_LINE_KINDS = ("gradient", "interbasin", "bond_path", "ring_path")
+
+
+@dataclass
+class PlaneMapOptions:
+    margin_angstrom: float = 2.0      # around the projected atoms
+    points: int = 200                 # grid points along each in-plane axis
+    contours: bool = True
+    gradient_lines: bool = True
+    interbasin: bool = True
+    lines_per_atom: int = 24
+    show_distance_bohr: float = 0.5   # Multiwfn's default for CPs and path points
+
+    def validate(self) -> "PlaneMapOptions":
+        if not (np.isfinite(self.margin_angstrom) and self.margin_angstrom >= 0):
+            raise ValueError(f"The map margin must be zero or positive, not {self.margin_angstrom}.")
+        if int(self.points) != self.points or not 20 <= self.points <= 1000:
+            raise ValueError(f"The map grid needs 20 to 1000 points per axis, not {self.points}.")
+        if int(self.lines_per_atom) != self.lines_per_atom or not 4 <= self.lines_per_atom <= 360:
+            raise ValueError(f"Gradient lines per atom must be 4 to 360, not {self.lines_per_atom}.")
+        if not (np.isfinite(self.show_distance_bohr) and self.show_distance_bohr > 0):
+            raise ValueError(f"The display distance from the plane must be positive, not {self.show_distance_bohr}.")
+        return self
+
+
+@dataclass
+class PlaneMap:
+    plane: qt.Plane
+    extent: Tuple[float, float, float, float]          # Angstrom, plane coordinates
+    grid: Optional[np.ndarray]                          # rho (points_v, points_u) or None
+    contour_levels: List[float]
+    lines: List[Tuple[str, np.ndarray]]                 # (kind, (m, 2) Angstrom)
+    points: List[Tuple[str, float, float, str]]         # (CP type, u, v, label)
+    title: str
+
+
+def _runs_near_plane(plane: qt.Plane, points: np.ndarray, distance: float) -> List[np.ndarray]:
+    """The stretches of a 3D polyline within ``distance`` of the plane (each >= 2 points)."""
+    inside = np.abs(plane.distance(points)) <= distance
+    runs, start = [], None
+    for k, flag in enumerate(np.append(inside, False)):
+        if flag and start is None:
+            start = k
+        elif not flag and start is not None:
+            if k - start >= 2:
+                runs.append(points[start:k])
+            start = None
+    return runs
+
+
+def _round(x: float) -> float:
+    return float(f"{x:.6g}")
+
+
+def plane_manifest(plane_map: PlaneMap) -> dict:
+    """The plot-viewer manifest entry ({"type": "plane_map"}) for a plane map."""
+    u, v = plane_map.plane.axis_names
+    return {
+        "type": "plane_map",
+        "title": plane_map.title,
+        "xlabel": f"{u} (Angstrom)",
+        "ylabel": f"{v} (Angstrom)",
+        "extent": [round(x, 6) for x in plane_map.extent],
+        "grid": None if plane_map.grid is None else [[_round(x) for x in row] for row in plane_map.grid],
+        "contours": [_round(x) for x in plane_map.contour_levels],
+        "lines": [{"kind": kind, "points": [[round(float(a), 5), round(float(b), 5)] for a, b in pts]}
+                  for kind, pts in plane_map.lines],
+        "points": [{"type": kind, "x": round(s, 5), "y": round(t, 5), "label": label}
+                   for kind, s, t, label in plane_map.points],
+    }
+
+
 class QTAIMAnalyser:
     """Headless QTAIM topology analysis of the Total SCF Density."""
 
@@ -214,6 +293,97 @@ class QTAIMAnalyser:
         for path in written:
             lines.append(f"Written: {path}")
         return "\n".join(lines) + "\n"
+
+    # --- 2D plane map ------------------------------------------------------
+    def plane_map(self, results: QTAIMResults, plane: qt.Plane, options: Optional["PlaneMapOptions"] = None,
+                  use_numba: Optional[bool] = None, progress: Optional[ProgressCallback] = None) -> "PlaneMap":
+        """Multiwfn-style plane map: rho contours, gradient lines, interbasin lines, CPs and paths.
+
+        Everything within ``show_distance_bohr`` of the plane is projected onto
+        it; lengths in the result are Angstrom, in the plane's (u, v) frame.
+        """
+        def report(fraction: float, message: str):
+            if progress is not None:
+                try:
+                    progress(fraction, message)
+                except Exception:
+                    pass
+
+        options = (options or PlaneMapOptions()).validate()
+        wfn = results.wavefunction
+        symbols = wfn.atom_symbols()
+        margin = options.margin_angstrom / BOHR_RADIUS_ANGSTROM
+        st_atoms = plane.to_plane(wfn.coordinates)
+        bounds = (st_atoms[:, 0].min() - margin, st_atoms[:, 0].max() + margin,
+                  st_atoms[:, 1].min() - margin, st_atoms[:, 1].max() + margin)
+        near = options.show_distance_bohr
+        cps = [c for c in results.critical_points if abs(plane.distance(c.position)[0]) <= near]
+        # the plane's own copy of each nearby CP (traced lines stop there)
+        flat = np.array([plane.to_space(plane.to_plane(c.position))[0] for c in cps]).reshape(-1, 3)
+
+        grid = None
+        levels: List[float] = []
+        if options.contours:
+            report(0.0, "Electron density on the plane...")
+            s = np.linspace(bounds[0], bounds[1], options.points)
+            t = np.linspace(bounds[2], bounds[3], options.points)
+            ss, tt = np.meshgrid(s, t)
+            pts = plane.to_space(np.stack([ss.ravel(), tt.ravel()], axis=1))
+            grid = gw.electron_density(wfn, pts, use_numba=use_numba).reshape(ss.shape)
+            levels = [x for x in BADER_CONTOURS if x <= grid.max()]
+
+        lines: List[Tuple[str, np.ndarray]] = []
+        stop_at = np.array([flat[n] for n, c in enumerate(cps) if c.kind in (BCP, RCP, CCP)]).reshape(-1, 3)
+        long_paths = qt.PathParameters(max_points=GRADIENT_LINE_MAX_POINTS, step=results.paths.step,
+                                       stop_distance=results.paths.stop_distance)
+        if options.gradient_lines:
+            report(0.4, "Gradient lines...")
+            starts = []
+            angles = 2.0 * np.pi * np.arange(options.lines_per_atom) / options.lines_per_atom
+            ring = np.stack([np.cos(angles), np.sin(angles)], axis=1) * GRADIENT_LINE_START_RADIUS
+            for n, c in enumerate(cps):
+                if c.kind == NCP:
+                    starts.append(plane.to_space(plane.to_plane(c.position) + ring))
+            if starts:
+                traced = qt.trace_paths(wfn, np.vstack(starts), -1.0, stop_at, long_paths, plane=plane,
+                                        bounds=bounds, keep_unfinished=True, use_numba=use_numba)
+                lines += [("gradient", r[0]) for r in traced if r is not None and len(r[0]) > 1]
+        if options.interbasin:
+            report(0.75, "Interbasin lines...")
+            starts = []
+            for n, c in enumerate(cps):
+                if c.kind != BCP:
+                    continue
+                vec = c.properties.eigenvectors[:, :2]          # the two negative-curvature directions
+                inplane = np.stack([vec.T @ plane.u, vec.T @ plane.v], axis=1)   # (2, 2)
+                best = inplane[int(np.argmax(np.linalg.norm(inplane, axis=1)))]
+                if np.linalg.norm(best) < 1e-6:
+                    continue
+                d = best / np.linalg.norm(best) * results.paths.step
+                centre = plane.to_plane(c.position)[0]
+                starts += [plane.to_space(centre + d)[0], plane.to_space(centre - d)[0]]
+            if starts:
+                rcp_cps = np.array([flat[n] for n, c in enumerate(cps) if c.kind in (RCP, CCP)]).reshape(-1, 3)
+                traced = qt.trace_paths(wfn, np.array(starts), -1.0, rcp_cps, long_paths, plane=plane,
+                                        bounds=bounds, keep_unfinished=True, use_numba=use_numba)
+                lines += [("interbasin", r[0]) for r in traced if r is not None and len(r[0]) > 1]
+        for kind, paths in (("bond_path", results.bond_paths), ("ring_path", results.ring_paths)):
+            for p in paths:
+                for run in _runs_near_plane(plane, p.points, near):
+                    lines.append((kind, run))
+
+        to_a = BOHR_RADIUS_ANGSTROM
+        lines_2d = [(kind, plane.to_plane(pts) * to_a) for kind, pts in lines]
+        points = []
+        for c in cps:
+            s_, t_ = plane.to_plane(c.position)[0] * to_a
+            label = assignment_label(c, symbols) if c.kind == NCP else str(c.index)
+            points.append((c.kind, float(s_), float(t_), label))
+        report(1.0, "Done.")
+        stem = Path(results.fchk_path).stem
+        return PlaneMap(plane=plane, extent=tuple(float(b) * to_a for b in bounds), grid=grid,
+                        contour_levels=levels, lines=lines_2d, points=points,
+                        title=f"{stem}: QTAIM topology, {plane.label}")
 
     def write_outputs(self, results: QTAIMResults, output_dir: str) -> List[str]:
         """Write <stem>_QTAIM.txt into ``output_dir``; returns the written paths."""
