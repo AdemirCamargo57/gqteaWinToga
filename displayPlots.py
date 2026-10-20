@@ -154,6 +154,34 @@ def draw_plane_map(axes, figure_entry, font_style=None):
         axes.legend(loc="upper right", fontsize=8)
 
 
+PLANE_MAP_IMAGE_SUFFIXES = (".png", ".svg", ".pdf", ".tif", ".tiff")
+
+
+def save_plane_map_image(figure_entry, path, dpi=200):
+    """Write a "plane_map" entry to an image file; returns the path written.
+
+    Drawn by draw_plane_map on an off-screen Agg figure (no pyplot state), so
+    the file matches the interactive viewer. No suffix means PNG; other
+    suffixes than PLANE_MAP_IMAGE_SUFFIXES are refused with a ValueError.
+    """
+    import os
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    root, suffix = os.path.splitext(str(path))
+    if not suffix:
+        path, suffix = root + ".png", ".png"
+    if suffix.lower() not in PLANE_MAP_IMAGE_SUFFIXES:
+        raise ValueError(f"Save the map as {', '.join(s[1:] for s in PLANE_MAP_IMAGE_SUFFIXES)}, "
+                         f"not '{suffix}'.")
+    figure = Figure(figsize=(9, 8))
+    FigureCanvasAgg(figure)
+    draw_plane_map(figure.add_subplot(), figure_entry)
+    figure.tight_layout()
+    figure.savefig(str(path), dpi=dpi)
+    return str(path)
+
+
 class DisplayPlots():
 
     font_style = {'color':  'darkred','weight': 'normal','size': 14}

@@ -7,7 +7,7 @@ but neither Toga, GLFW nor molecularViewer, so molecularViewer can import it.
 
 Colours follow Multiwfn's 3D topology GUI (manual 4.2.1): magenta (3,-3),
 orange (3,-1), yellow (3,+1), green (3,+3) spheres, brown bond paths and
-cyan CP-index labels.
+cyan CP-index labels (dark teal on a light background).
 """
 
 from __future__ import annotations
@@ -25,12 +25,24 @@ CP_COLOURS = {"(3,-3)": (1.0, 0.0, 1.0), "(3,-1)": (1.0, 0.55, 0.0),
               "(3,+1)": (1.0, 1.0, 0.0), "(3,+3)": (0.0, 0.85, 0.0)}
 BOND_PATH_COLOUR = (0.55, 0.33, 0.12)
 RING_PATH_COLOUR = (0.2, 0.7, 0.4)
-LABEL_COLOUR = (0.0, 1.0, 1.0)
+LABEL_COLOUR = (0.0, 1.0, 1.0)              # cyan, on a dark background (Multiwfn's)
+LABEL_COLOUR_ON_LIGHT = (0.0, 0.42, 0.48)    # dark teal: cyan is unreadable on white
 HIGHLIGHT_COLOUR = (1.0, 1.0, 1.0)
 CP_RADIUS = 0.10          # Angstrom
 HIGHLIGHT_RADIUS = 0.18   # Angstrom
 LABEL_OFFSET = 0.15       # Angstrom, along each axis
+LABEL_SCREEN_OFFSET = 0.2  # Angstrom, to the screen lower right (atom numbers sit upper right)
+ON_TOP_DEPTH_RANGE = 0.01  # depth range of CPs painted over flat atoms: in front, still self-sorted
 PATH_LINE_WIDTH = 2.5
+
+
+def cp_label_colour(background) -> Tuple[float, float, float]:
+    """CP-number colour that stays readable on ``background`` (r, g, b in [0, 1]).
+
+    Same luminance rule as the Molecular Design Canvas's palette (is_dark).
+    """
+    r, g, b = (float(c) for c in background)
+    return LABEL_COLOUR if 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5 else LABEL_COLOUR_ON_LIGHT
 
 
 @dataclass(frozen=True)
@@ -128,18 +140,45 @@ class QTAIMSceneLayer:
             paths += [(p, RING_PATH_COLOUR) for p in s.ring_paths]
         if paths:
             self._draw_paths(paths)
+        # With flat atom discs (the viewer's Design style) a bond point of an X-H
+        # bond lies inside the H disc, so (3,-1), (3,+1) and (3,+3) points and the
+        # CP numbers are painted over the discs; a (3,-3) stays under its own atom.
+        # The spheres keep the depth test (switching it off would paint their back
+        # halves over their fronts) and are squeezed into the front of the range.
+        flat = bool(getattr(viewer, "atoms_are_flat", lambda: False)())
         cps = self.visible_cps()
         for c in cps:
             highlighted = c.index == self.highlight
             colour = HIGHLIGHT_COLOUR if highlighted else CP_COLOURS.get(c.kind, (0.7, 0.7, 0.7))
+            on_top = flat and c.kind != CP_TYPES[0]
+            if on_top:
+                glDepthRange(0.0, ON_TOP_DEPTH_RANGE)
             glPushMatrix()
             glTranslatef(*c.position)
             glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, (*colour, 1.0))
             viewer.draw_sphere(HIGHLIGHT_RADIUS if highlighted else CP_RADIUS)
             glPopMatrix()
-        if self.show_labels:
-            for c in cps:
-                viewer._draw_text_3d(tuple(x + LABEL_OFFSET for x in c.position), str(c.index), color=LABEL_COLOUR)
+            if on_top:
+                glDepthRange(0.0, 1.0)
+        # On flat discs a (3,-3)'s number would repeat its atom's number (both follow
+        # atom order), right next to it, so only the other points are numbered there.
+        labelled = [c for c in cps if not (flat and c.kind == CP_TYPES[0])]
+        if self.show_labels and labelled:
+            colour = cp_label_colour(getattr(viewer, "background_color", (0.0, 0.0, 0.0)))
+            offset = np.full(3, LABEL_OFFSET)
+            axes = getattr(viewer, "current_screen_axes", None)
+            if axes is not None:
+                right, up, _ = axes()
+                offset = (np.asarray(right) - np.asarray(up)) * LABEL_SCREEN_OFFSET
+            if flat:
+                glDisable(GL_DEPTH_TEST)
+            try:
+                for c in labelled:
+                    viewer._draw_text_3d(tuple(float(x) for x in np.asarray(c.position) + offset), str(c.index),
+                                         color=colour)
+            finally:
+                if flat:
+                    glEnable(GL_DEPTH_TEST)
 
     @staticmethod
     def _draw_paths(paths: Sequence[Tuple[np.ndarray, Tuple[float, float, float]]]):

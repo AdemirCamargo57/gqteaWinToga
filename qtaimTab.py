@@ -24,6 +24,7 @@ import qtaimAnalysis as qa
 import qtaimTopology as qt
 from cubeTab import _assign  # write-only-on-change: every widget write re-lays out the viewer
 from help import HelpGqteaWin
+from molecularDesign import CANVAS_BACKGROUNDS, parse_hex_color  # the Design Canvas's background choices
 from qtaimLayer import scene_from_results
 from qtaimTopology import BOHR_RADIUS_ANGSTROM, CP_NAMES, CP_TYPES
 from volumeData import same_structure  # shared with the Cube and ESP tabs
@@ -50,6 +51,43 @@ PATH_FIELDS = (
 INTEGER_FIELDS = {"max_iterations", "max_points"}
 TABLE_HEADINGS = ["Row", "Type", "Assignment", "rho (a.u.)", "Laplacian", "Ellipticity"]
 TABLE_ACCESSORS = ["number", "kind", "assignment", "rho", "laplacian", "ellipticity"]
+# Share of the table's width per column. WinForms (Toga's Table) splits the width
+# evenly once, at the first layout, while the tab may still be a few pixels wide
+# -- which left every column unreadably narrow -- so the tab sizes them itself.
+TABLE_COLUMN_FRACTIONS = (0.08, 0.12, 0.20, 0.20, 0.20, 0.18)
+MIN_COLUMN_WIDTH = 40
+IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]          # the 3D canvas: lossless only
+MAP_IMAGE_FILE_TYPES = ["png", "svg", "pdf", "tif", "tiff"]
+
+
+def background_presets() -> Dict[str, str]:
+    """The Molecular Design Canvas's background presets (label -> #rrggbb)."""
+    return CANVAS_BACKGROUNDS
+
+
+def background_label(rgb) -> Optional[str]:
+    """The preset whose colour is ``rgb`` (r, g, b in [0, 1]), or None."""
+    current = "#" + "".join(f"{int(round(float(c) * 255)):02x}" for c in rgb)
+    return next((label for label, colour in CANVAS_BACKGROUNDS.items() if colour == current), None)
+
+
+def fit_table_columns(table, fractions=TABLE_COLUMN_FRACTIONS) -> None:
+    """Give the native WinForms columns their share of the table's current width.
+
+    A no-op without a native ListView (other backends, headless tests) or
+    before the table has a width.
+    """
+    native = getattr(getattr(table, "_impl", None), "native", None)
+    if native is None:
+        return
+    try:
+        width = int(native.ClientSize.Width)
+        if width <= 0:
+            return
+        for column, fraction in zip(native.Columns, fractions):
+            column.Width = max(MIN_COLUMN_WIDTH, int(width * fraction))
+    except Exception:
+        pass  # sizing columns must never break the tab
 
 
 def parse_optional_float(text: Optional[str], default: Optional[float], name: str,
@@ -109,6 +147,7 @@ class QTAIMTabController:
         self._syncing = False
         self._structure_settled_for: Optional[qa.QTAIMResults] = None
         self._tasks = set()
+        self.last_map_entry: Optional[dict] = None   # the plotted 2D map, for Export 2D image
 
     # --- layout -----------------------------------------------------------
     def _label(self, text):
@@ -167,6 +206,33 @@ class QTAIMTabController:
         self.gradient_switch = toga.Switch("Gradient lines", value=True, style=Pack(margin_right=10))
         self.interbasin_switch = toga.Switch("Interbasin paths", value=True)
         self.map_button = toga.Button("Plot 2D map", on_press=self.plot_map, style=Pack(width=130, margin=5))
+        self.export_2d_button = toga.Button("Export 2D image...", on_press=self.export_2d_image,
+                                            style=Pack(width=150, margin=5))
+
+        # Canvas: the 3D window's look, as on the Molecular Design Canvas. Style
+        # and labels are the viewer's shared settings (the Display tab shows the
+        # same ones); values are set while muted, since writing one fires on_change.
+        from molecularViewer import ATOM_STYLES  # molecularViewer imports this module
+        self._syncing = True
+        try:
+            self.background_selection = toga.Selection(items=list(CANVAS_BACKGROUNDS),
+                                                       on_change=self.on_background_change, style=Pack(width=200))
+            label = background_label(self.viewer.background_color)
+            if label is not None:
+                self.background_selection.value = label
+            self.background_input = toga.TextInput(placeholder="#rrggbb, Enter", on_confirm=self.on_custom_background,
+                                                   style=Pack(width=200))
+            self.style_selection = toga.Selection(items=list(ATOM_STYLES), on_change=self.on_style_change,
+                                                  style=Pack(width=200))
+            self.style_selection.value = self.viewer.atom_display_style
+            self.symbols_switch = toga.Switch("Element symbols", value=bool(self.viewer.show_atom_symbols),
+                                              on_change=self.on_label_change, style=Pack(margin_right=12))
+            self.numbers_switch = toga.Switch("Atom numbers", value=bool(self.viewer.show_atom_numbers),
+                                              on_change=self.on_label_change)
+        finally:
+            self._syncing = False
+        self.export_3d_button = toga.Button("Export 3D image...", on_press=self.export_3d_image,
+                                            style=Pack(width=150, margin=5))
 
         self.report_output = toga.MultilineTextInput(readonly=True, value=HelpGqteaWin.help_qtaim,
                                                      style=Pack(height=300, font_family="monospace"))
@@ -195,6 +261,13 @@ class QTAIMTabController:
             self.cp_table,
             self._row(*self.type_switches.values()),
             self._row(self.bond_path_switch, self.ring_path_switch, self.label_switch),
+            self._heading("Canvas (3D window)"),
+            self._row(self._label("Background:"), self.background_selection),
+            self._row(self._label("Custom background:"), self.background_input),
+            self._row(self._label("Molecule style:"), self.style_selection),
+            self._hint("Design style draws the molecule as the Molecular Design Canvas does."),
+            self._row(self._label("Atom labels:"), self.symbols_switch, self.numbers_switch),
+            self._row(self.export_3d_button),
             self._heading("2D plane map"),
             self._row(self._label("Plane:"), self.plane_selection),
             self._row(self._label("Plane atoms (three atoms):"), self.plane_atoms_input),
@@ -202,10 +275,21 @@ class QTAIMTabController:
             self._row(self._label("Margin around the atoms (A):"), self.margin_input),
             self._row(self._label("Grid points per axis:"), self.grid_points_input),
             self._row(self.contour_switch, self.gradient_switch, self.interbasin_switch),
-            self._row(self.map_button),
+            self._row(self.map_button, self.export_2d_button),
             self.report_output,
         ]
+        self._attach_column_fitting()
         return toga.Box(children=children, style=Pack(direction=COLUMN, margin=10))
+
+    def _attach_column_fitting(self):
+        """Re-fit the table's columns whenever its native control is resized (WinForms)."""
+        native = getattr(getattr(self.cp_table, "_impl", None), "native", None)
+        if native is None:
+            return
+        try:
+            native.Resize += lambda sender, event: fit_table_columns(self.cp_table)
+        except Exception:
+            pass
 
     # --- dialogs ------------------------------------------------------------
     def _window(self):
@@ -364,6 +448,7 @@ class QTAIMTabController:
         try:
             _assign(self.summary_label, "text", self.summary_text())
             self.cp_table.data = self.table_rows()
+            fit_table_columns(self.cp_table)
         finally:
             self._syncing = False
 
@@ -466,7 +551,9 @@ class QTAIMTabController:
                                                 progress=self._progress_callback(), **params)
             path = self.map_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps([qa.plane_manifest(plane_map)]), encoding="utf-8")
+            entry = qa.plane_manifest(plane_map)
+            path.write_text(json.dumps([entry]), encoding="utf-8")
+            self.last_map_entry = entry
         except (ValueError, OSError, MemoryError) as exc:
             self.status_label.text = "The 2D map was not made."
             self.progress_bar.value = 0
@@ -480,8 +567,108 @@ class QTAIMTabController:
             await self._show_info("2D Map Saved", f"The plot viewer could not be started. The map was saved as\n"
                                                   f"{path}\nand can be opened with Plotter (JSON plot type).")
 
+    # --- canvas: background, molecule style and labels ----------------------------
+    def apply_background(self, colour: str):
+        from molecularViewer import hex_to_rgb  # molecularViewer imports this module
+        self.viewer.set_background_color(hex_to_rgb(colour))
+        self.viewer.invalidate_scene_cache()
+        _assign(self.status_label, "text", f"Canvas background {colour}.")
+
+    def on_background_change(self, widget, **kwargs):
+        if self._syncing:
+            return
+        colour = CANVAS_BACKGROUNDS.get(self.background_selection.value)
+        if colour is not None:
+            self.apply_background(colour)
+
+    def on_custom_background(self, widget, **kwargs):
+        if self._syncing:
+            return
+        try:
+            colour = parse_hex_color(self.background_input.value)
+        except ValueError as exc:
+            self._start(self._show_error("Canvas background", str(exc)))
+            return
+        self.apply_background(colour)
+
+    def on_style_change(self, widget, **kwargs):
+        if self._syncing or not self.style_selection.value:
+            return
+        self.viewer.apply_view_settings(style=self.style_selection.value)
+
+    def on_label_change(self, widget, **kwargs):
+        if self._syncing:
+            return
+        self.viewer.apply_view_settings(symbols=bool(self.symbols_switch.value),
+                                        numbers=bool(self.numbers_switch.value))
+
+    def sync_canvas_widgets(self):
+        """Show the viewer's style and label settings (changed here or on the Display tab)."""
+        if getattr(self, "style_selection", None) is None:
+            return  # the tab is not built yet
+        previous, self._syncing = self._syncing, True
+        try:
+            _assign(self.style_selection, "value", self.viewer.atom_display_style)
+            _assign(self.symbols_switch, "value", bool(self.viewer.show_atom_symbols))
+            _assign(self.numbers_switch, "value", bool(self.viewer.show_atom_numbers))
+        finally:
+            self._syncing = previous
+
+    # --- image export -----------------------------------------------------------
+    def _stem(self) -> str:
+        return Path(self.results.fchk_path).stem if self.results is not None else "QTAIM"
+
+    async def _ask_save_path(self, title: str, suggested: str, file_types):
+        return await self._window().dialog(toga.SaveFileDialog(title=title, suggested_filename=suggested,
+                                                               file_types=list(file_types)))
+
+    async def export_3d_image(self, widget):
+        """Save the 3D canvas exactly as shown. The frame is captured first, the
+        instant the button is pressed, so the save dialog can neither cover the
+        canvas nor let the view drift (as the ESP tab does)."""
+        from molecularViewer import save_canvas_image  # molecularViewer imports this module
+
+        if not self.viewer.viewer_window_is_open():
+            await self._show_info("No Image", "Open the 3D view with Display first; the image is taken from "
+                                              "that window as shown.")
+            return
+        try:
+            image = await self.viewer.capture_frame()
+        except RuntimeError as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        try:
+            path = await self._ask_save_path("Export the 3D view", f"{self._stem()}_QTAIM_3D.png", IMAGE_FILE_TYPES)
+            if not path:
+                return
+            saved = save_canvas_image(image, str(path))
+        except (ValueError, OSError) as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        height, width = image.shape[:2]
+        _assign(self.status_label, "text", f"Image saved ({width} x {height} px): {saved}")
+
+    async def export_2d_image(self, widget):
+        """Save the last plotted 2D map, drawn exactly as in the plot viewer."""
+        from displayPlots import save_plane_map_image  # pins Agg: import only when needed
+
+        if self.last_map_entry is None:
+            await self._show_info("No Map", "Make the map with Plot 2D map first.")
+            return
+        try:
+            path = await self._ask_save_path("Export the 2D map", f"{self._stem()}_QTAIM_map.png",
+                                             MAP_IMAGE_FILE_TYPES)
+            if not path:
+                return
+            saved = await asyncio.to_thread(save_plane_map_image, self.last_map_entry, str(path))
+        except (ValueError, OSError) as exc:
+            await self._show_error("Export Image Error", str(exc))
+            return
+        _assign(self.status_label, "text", f"2D map saved: {saved}")
+
     def clear_output(self, widget):
         self.results = None
+        self.last_map_entry = None
         self.report_path = None
         self._structure_settled_for = None
         self._syncing = True

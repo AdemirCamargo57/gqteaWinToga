@@ -1501,7 +1501,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 **Window layout.** The controls are arranged as a fixed header, eight tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
-- **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels.
+- **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels. The atom styles are Line, CPK (ball and stick), vdW (space-filling) and **Design style**, which draws the molecule as the Molecular Design Canvas does: equal flat discs in the canvas colours with a thin outline, single bond lines, the element symbol centred on each disc and the atom number beside it, in colours that stay readable on the current background. The *Atom numbers* and *Atomic symbols* switches are independent (either, both or neither) and are the same settings as the QTAIM tab's *Atom labels*.
 - **Dynamics** tab: frame navigation, trajectory playback, and per-frame bond recomputation.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
 - **Design** tab: draw, import and pre-optimize a molecule (see [Molecular Design](#molecular-design)).
@@ -2510,10 +2510,26 @@ needed at run time. The theory is summarised in
   (opening it if needed). The molecule of the `.fchk` is loaded silently when
   the viewer shows nothing or the same molecule; otherwise you are asked first.
 - **Results**: the counts and the Poincaré–Hopf check, then a table of every CP
-  (row, type, assignment, ρ, ∇²ρ, ellipticity). Selecting a row highlights that
+  (row, type, assignment, ρ, ∇²ρ, ellipticity; the columns are re-fitted to the
+  table's width whenever it changes). Selecting a row highlights that
   CP in white and prints its position, ρ, ∇²ρ, G, V and H in the status line.
   Below the table, switches show or hide each CP type, the bond paths, the ring
   paths and the CP numbers.
+- **Canvas (3D window)**: the look of the 3D window, with the Molecular Design
+  Canvas's choices. *Background* offers the canvas presets (Off-white, White,
+  Light grey, Pale blue, Cream, Dark grey, Black); *Custom background* takes any
+  `#rrggbb` (press Enter). *Molecule style* is Line, CPK, vdW or **Design style**
+  (the canvas look). *Atom labels* has independent *Element symbols* and *Atom
+  numbers* switches. Style and labels are the viewer's own settings, so the
+  Display tab follows them and vice versa. In Design style the (3,−1), (3,+1)
+  and (3,+3) points and their numbers are painted over the atom discs (a bond
+  point of an X–H bond lies inside the H disc), a (3,−3) is covered by its own
+  atom and its number is left out (it equals the atom number), and CP numbers
+  sit at the lower right of each point while atom numbers sit at the upper
+  right of each disc. CP numbers are cyan on a dark background and dark teal on
+  a light one. **Export 3D image...** saves the 3D window exactly as shown
+  (PNG, TIFF or BMP; the frame is taken when you press the button, before the
+  file dialog opens).
 - **2D plane map**: the plane (*Three atoms*, or the *XY*, *XZ* or *YZ* plane at
   an offset along its normal), the three plane atoms (blank = the first three
   atoms that are not collinear), the margin around the projected atoms (2 Å),
@@ -2521,6 +2537,8 @@ needed at run time. The theory is summarised in
   gradient lines and the interbasin paths. **Plot 2D map** opens the map in the
   interactive plot viewer (zoom, pan, save) and saves its data as
   `<name>_QTAIM_map.json`, which **Plotter** (*JSON plot type*) reopens later.
+  **Export 2D image...** saves the last plotted map, drawn exactly as in the
+  plot viewer, as PNG, SVG, PDF or TIFF (200 dpi for the bitmap formats).
 - The report text, below everything.
 
 ##### Steps

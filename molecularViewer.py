@@ -22,12 +22,63 @@ from cubeTab import CubeTabController
 from electrostaticSurfacePotential import ESPTabController
 from espSurfaceLayer import ESPSurfaceLayer
 from help import AtomicData
-from molecularDesign import MolecularDesignController
+from cubeTab import _assign  # write-only-on-change: every widget write re-lays out the window
+from molecularDesign import (ATOM_CANVAS_COLORS, ATOM_LABEL_COLOR, DEFAULT_ATOM_COLOR, MolecularDesignController,
+                             canvas_palette, parse_hex_color)
 from qtaimLayer import QTAIMSceneLayer
 from qtaimTab import QTAIMTabController
 
 Atom = Tuple[str, Tuple[float, float, float]]
 Frame = List[Atom]
+
+# "Design style" draws the molecule as the Molecular Design Canvas does: equal,
+# flat discs in the canvas's element colours with a thin outline, single bond
+# lines, the element symbol centred on each disc and the atom number beside it,
+# all in the canvas palette for the current background.
+DESIGN_STYLE = "Design style"
+ATOM_STYLES = ("Line style", "CPK style", "vdW style", DESIGN_STYLE)
+DESIGN_ATOM_RADIUS = 0.28      # Angstrom: the canvas's 11 px disc at 40 px per Angstrom
+DESIGN_OUTLINE_SCALE = 1.12    # the outline is a back-face sphere this much larger
+DESIGN_SYMBOL_FONT = ogl_glut.GLUT_BITMAP_HELVETICA_12
+DESIGN_NUMBER_FONT = ogl_glut.GLUT_BITMAP_HELVETICA_10
+DESIGN_SYMBOL_DROP = 4.0       # pixels: centres a 12 px cap height on the disc
+
+
+def hex_to_rgb(text: str) -> Tuple[float, float, float]:
+    """'#rrggbb' (or 'rrggbb') -> (r, g, b) in [0, 1]; ValueError for anything else."""
+    colour = parse_hex_color(text)
+    return tuple(int(colour[k:k + 2], 16) / 255.0 for k in (1, 3, 5))
+
+
+def rgb_to_hex(rgb) -> str:
+    return "#" + "".join(f"{int(round(float(c) * 255)):02x}" for c in rgb)
+
+
+def design_atom_colour(element: str) -> Tuple[float, float, float]:
+    """The Molecular Design Canvas's colour for an element."""
+    return hex_to_rgb(ATOM_CANVAS_COLORS.get(element, DEFAULT_ATOM_COLOR))
+
+
+def design_palette(background_rgb) -> Dict[str, Tuple[float, float, float]]:
+    """Bond, outline, number and symbol colours of the canvas for this background."""
+    palette = canvas_palette(rgb_to_hex(background_rgb))
+    return {"bond": hex_to_rgb(palette["bond"]), "outline": hex_to_rgb(palette["outline"]),
+            "number": hex_to_rgb(palette["number"]), "symbol": hex_to_rgb(ATOM_LABEL_COLOR)}
+
+
+def screen_axes(modelview) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Unit vectors (in the molecule's frame) pointing screen-right, screen-up and at the viewer.
+
+    ``modelview`` is the 4x4 array glGetDoublev returns (column-major, so its
+    first three columns are the rows of the eye rotation).
+    """
+    m = np.asarray(modelview, dtype=float).reshape(4, 4)
+    axes = []
+    for k in range(3):
+        v = m[:3, k]
+        n = np.linalg.norm(v)
+        axes.append(v / n if n > 0 else np.eye(3)[k])
+    return axes[0], axes[1], axes[2]
 
 # Lossless formats only: an exported canvas must be the displayed pixels.
 CANVAS_IMAGE_FORMATS = {".png": "PNG", ".tif": "TIFF", ".tiff": "TIFF", ".bmp": "BMP"}
@@ -1095,6 +1146,8 @@ class MolecularViewer:
     # Chemistry helpers
     # ------------------------------------------------------------------
     def get_atom_radius(self, element: str) -> float:
+        if self.atom_display_style == DESIGN_STYLE:
+            return DESIGN_ATOM_RADIUS
         if self.atom_display_style == "vdW style":
             return self.vdw_radii.get(element, self.default_vdw_radius)
         if self.atom_display_style == "CPK style":
@@ -1669,53 +1722,56 @@ class MolecularViewer:
             measure_type, measure_indices, frame_data
         )
 
-        if self.show_bonds_as_lines():
-            for i, j in bonds:
-                start_element, start = frame_data[i]
-                end_element, end = frame_data[j]
-                start_color = self.atom_colors.get(start_element, (0.6, 0.6, 0.6))
-                end_color = self.atom_colors.get(end_element, (0.6, 0.6, 0.6))
-                self.draw_bond_line(start, end, start_color, end_color)
+        if self.atom_display_style == DESIGN_STYLE:
+            self._render_design(frame_data, bonds, highlighted_atoms)
+        else:
+            if self.show_bonds_as_lines():
+                for i, j in bonds:
+                    start_element, start = frame_data[i]
+                    end_element, end = frame_data[j]
+                    start_color = self.atom_colors.get(start_element, (0.6, 0.6, 0.6))
+                    end_color = self.atom_colors.get(end_element, (0.6, 0.6, 0.6))
+                    self.draw_bond_line(start, end, start_color, end_color)
 
-        for idx, (element, position) in enumerate(frame_data, start=1):
-            atom_index = idx - 1
-            color = (
-                self.measurement_highlight_color
-                if atom_index in highlighted_atoms
-                else self.atom_colors.get(element, (0.6, 0.6, 0.6))
-            )
-            radius = self.get_atom_radius(element) * self.atom_scale_factor
-            if self.show_atoms_as_spheres() or atom_index in highlighted_atoms:
-                glPushMatrix()
-                glTranslatef(*position)
-                glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, (*color, 1.0))
-                highlight_radius = radius if self.show_atoms_as_spheres() else max(radius, 0.18)
-                if atom_index in highlighted_atoms:
-                    highlight_radius = max(highlight_radius, radius * 1.15)
-                self.draw_sphere(highlight_radius)
-                glPopMatrix()
+            for idx, (element, position) in enumerate(frame_data, start=1):
+                atom_index = idx - 1
+                color = (
+                    self.measurement_highlight_color
+                    if atom_index in highlighted_atoms
+                    else self.atom_colors.get(element, (0.6, 0.6, 0.6))
+                )
+                radius = self.get_atom_radius(element) * self.atom_scale_factor
+                if self.show_atoms_as_spheres() or atom_index in highlighted_atoms:
+                    glPushMatrix()
+                    glTranslatef(*position)
+                    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, (*color, 1.0))
+                    highlight_radius = radius if self.show_atoms_as_spheres() else max(radius, 0.18)
+                    if atom_index in highlighted_atoms:
+                        highlight_radius = max(highlight_radius, radius * 1.15)
+                    self.draw_sphere(highlight_radius)
+                    glPopMatrix()
 
-            if not self.fast_playback_mode:
-                label_parts = []
-                if self.show_atom_symbols:
-                    label_parts.append(element)
-                if self.show_atom_numbers:
-                    label_parts.append(str(idx))
-                if label_parts:
-                    label_pos = (
-                        position[0] + radius * 0.45,
-                        position[1] + radius * 0.45,
-                        position[2] + radius * 0.45,
-                    )
-                    self._draw_text_3d(label_pos, '-'.join(label_parts))
+                if not self.fast_playback_mode:
+                    label_parts = []
+                    if self.show_atom_symbols:
+                        label_parts.append(element)
+                    if self.show_atom_numbers:
+                        label_parts.append(str(idx))
+                    if label_parts:
+                        label_pos = (
+                            position[0] + radius * 0.45,
+                            position[1] + radius * 0.45,
+                            position[2] + radius * 0.45,
+                        )
+                        self._draw_text_3d(label_pos, '-'.join(label_parts))
 
-        if self.show_bonds_as_cylinders():
-            glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, (0.5, 0.5, 0.5, 1.0))
-            cylinder_slices = 12 if self.fast_playback_mode else 24
-            for i, j in bonds:
-                start = frame_data[i][1]
-                end = frame_data[j][1]
-                self.create_cylinder(start, end, slices=cylinder_slices)
+            if self.show_bonds_as_cylinders():
+                glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, (0.5, 0.5, 0.5, 1.0))
+                cylinder_slices = 12 if self.fast_playback_mode else 24
+                for i, j in bonds:
+                    start = frame_data[i][1]
+                    end = frame_data[j][1]
+                    self.create_cylinder(start, end, slices=cylinder_slices)
 
         for i, j in self.get_measurement_segments(measure_type, measure_indices):
             if 0 <= i < len(frame_data) and 0 <= j < len(frame_data):
@@ -1763,6 +1819,89 @@ class MolecularViewer:
                 self._draw_text_3d(
                     label_pos, str(atom_index + 1), color=self.pick_label_color
                 )
+
+    def atoms_are_flat(self) -> bool:
+        """True in Design style: atoms are flat discs, so overlays are painted over them."""
+        return self.atom_display_style == DESIGN_STYLE
+
+    def current_screen_axes(self):
+        """screen_axes of the current modelview matrix (render thread, inside the molecule's matrix)."""
+        return screen_axes(glGetDoublev(GL_MODELVIEW_MATRIX))
+
+    def design_label_positions(self, position, radius, right, up, toward):
+        """Where Design style puts an atom's symbol (on the disc, just in front of
+        it) and its number (beside the disc, screen upper right), in Angstrom."""
+        p = np.asarray(position, dtype=float)
+        front = p + toward * radius * 1.05
+        return front, front + (right + up) * radius * 1.1
+
+    def _draw_text_window(self, position, text_value, color, font, centred, view):
+        """Bitmap text at a 3D point, placed in window coordinates.
+
+        ``view`` = (modelview, projection, viewport) from glGet. The text is
+        centred on the point when ``centred``, otherwise it starts there; its
+        depth is the point's, so atoms in front still hide it.
+        """
+        if not text_value or not self._glut_ready:
+            return
+        win = self._project_atom(position, *view)
+        if win is None or not 0.0 <= win[2] <= 1.0:
+            return
+        x, y, z = win
+        if centred:
+            x -= sum(glutBitmapWidth(font, ord(ch)) for ch in text_value) / 2.0
+            y -= DESIGN_SYMBOL_DROP
+        glColor3f(*color)
+        glWindowPos3f(x, y, z)
+        for ch in text_value:
+            glutBitmapCharacter(font, ord(ch))
+
+    def _render_design(self, frame_data: Frame, bonds: List[Tuple[int, int]], highlighted_atoms):
+        """The Molecular Design Canvas look (see DESIGN_STYLE), unlit."""
+        palette = design_palette(self.background_color)
+        radius = DESIGN_ATOM_RADIUS * self.atom_scale_factor
+        glDisable(GL_LIGHTING)
+        try:
+            if bonds:
+                glLineWidth(max(1.0, self.bond_thickness_scale_factor * 2.0))
+                glColor3f(*palette["bond"])
+                glBegin(GL_LINES)
+                for i, j in bonds:
+                    glVertex3f(*frame_data[i][1])
+                    glVertex3f(*frame_data[j][1])
+                glEnd()
+            # The outline is the back half of a slightly larger sphere: it shows
+            # only as a ring round the disc, from any direction.
+            glEnable(GL_CULL_FACE)
+            for index, (element, position) in enumerate(frame_data):
+                fill = (self.measurement_highlight_color if index in highlighted_atoms
+                        else design_atom_colour(element))
+                glPushMatrix()
+                glTranslatef(*position)
+                glCullFace(GL_FRONT)
+                glColor3f(*palette["outline"])
+                self.draw_sphere(radius * DESIGN_OUTLINE_SCALE)
+                glCullFace(GL_BACK)
+                glColor3f(*fill)
+                self.draw_sphere(radius)
+                glPopMatrix()
+            glDisable(GL_CULL_FACE)
+            if not self.fast_playback_mode and (self.show_atom_symbols or self.show_atom_numbers):
+                view = (np.asarray(glGetDoublev(GL_MODELVIEW_MATRIX), dtype=float),
+                        np.asarray(glGetDoublev(GL_PROJECTION_MATRIX), dtype=float),
+                        glGetIntegerv(GL_VIEWPORT))
+                right, up, toward = screen_axes(view[0])
+                for number, (element, position) in enumerate(frame_data, start=1):
+                    symbol_at, number_at = self.design_label_positions(position, radius, right, up, toward)
+                    if self.show_atom_symbols:
+                        self._draw_text_window(symbol_at, element, palette["symbol"], DESIGN_SYMBOL_FONT,
+                                               True, view)
+                    if self.show_atom_numbers:
+                        self._draw_text_window(number_at, str(number), palette["number"], DESIGN_NUMBER_FONT,
+                                               False, view)
+        finally:
+            glLineWidth(1.0)
+            glEnable(GL_LIGHTING)
 
     def render_scene_extras(self):
         """Hook: extra geometry in the molecule's own frame (Angstrom).
@@ -2170,7 +2309,7 @@ class MolecularViewerUI(MolecularViewer):
         tab_box.add(self._form_row(self._form_label("Projection:"), self.visualization_selection))
 
         self.atom_display_style_selection = toga.Selection(
-            items=["Line style", "CPK style", "vdW style"],
+            items=list(ATOM_STYLES),
             style=Pack(width=180),
             on_change=self.set_atom_display_style,
         )
@@ -2754,12 +2893,41 @@ class MolecularViewerUI(MolecularViewer):
                 "Invalid Input", "Please enter a valid positive number for atom size scale."
             )
 
+    def apply_view_settings(self, style: Optional[str] = None, symbols: Optional[bool] = None,
+                            numbers: Optional[bool] = None):
+        """Atom style and label switches, shared by the Display and QTAIM tabs.
+
+        None leaves a setting unchanged. Both tabs' widgets are brought in line
+        afterwards; they are written only when they differ, so the on_change
+        each write fires comes back here with nothing left to do.
+        """
+        if style is not None:
+            if style not in ATOM_STYLES:
+                raise ValueError(f"Unknown atom style '{style}'; use one of {', '.join(ATOM_STYLES)}.")
+            self.atom_display_style = style
+            self.invalidate_scene_cache()
+            self._clamp_perspective_zoom()
+            if self.glfw_initialized:
+                self.request_projection_update()
+        if symbols is not None:
+            self.show_atom_symbols = bool(symbols)
+        if numbers is not None:
+            self.show_atom_numbers = bool(numbers)
+        self._sync_view_widgets()
+
+    def _sync_view_widgets(self):
+        if getattr(self, "atom_display_style_selection", None) is not None:
+            _assign(self.atom_display_style_selection, "value", self.atom_display_style)
+        if getattr(self, "atom_symbols_switch", None) is not None:
+            _assign(self.atom_symbols_switch, "value", self.show_atom_symbols)
+        if getattr(self, "atom_numbers_switch", None) is not None:
+            _assign(self.atom_numbers_switch, "value", self.show_atom_numbers)
+        controller = getattr(self, "qtaim_controller", None)
+        if controller is not None:
+            controller.sync_canvas_widgets()
+
     def set_atom_display_style(self, widget):
-        self.atom_display_style = self.atom_display_style_selection.value or "Line style"
-        self.invalidate_scene_cache()
-        self._clamp_perspective_zoom()
-        if self.glfw_initialized:
-            self.request_projection_update()
+        self.apply_view_settings(style=self.atom_display_style_selection.value or "Line style")
         self.set_status_message(
             f"Atom display style set to {self.atom_display_style}."
         )
@@ -2983,13 +3151,13 @@ class MolecularViewerUI(MolecularViewer):
             self.set_status_message("Box display disabled.")
 
     def toggle_atom_numbers(self, widget):
-        self.show_atom_numbers = bool(self.atom_numbers_switch.value)
+        self.apply_view_settings(numbers=bool(self.atom_numbers_switch.value))
         self.set_status_message(
             "Atom numbering enabled." if self.show_atom_numbers else "Atom numbering disabled."
         )
 
     def toggle_atom_symbols(self, widget):
-        self.show_atom_symbols = bool(self.atom_symbols_switch.value)
+        self.apply_view_settings(symbols=bool(self.atom_symbols_switch.value))
         self.set_status_message(
             "Atomic symbols enabled." if self.show_atom_symbols else "Atomic symbols disabled."
         )
