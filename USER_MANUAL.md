@@ -17,6 +17,7 @@
   - [Common Units](#common-units)
 - [Basic Workflows](#basic-workflows)
   - [Analyze a Bond Length](#analyze-a-bond-length)
+  - [Run a QTAIM Topology Analysis](#run-a-qtaim-topology-analysis)
   - [Build CPMD Input Files](#build-cpmd-input-files)
   - [Select Frames and Generate Gaussian Inputs](#select-frames-and-generate-gaussian-inputs)
   - [Plot CPMD Energy Data](#plot-cpmd-energy-data)
@@ -94,11 +95,13 @@
   - [Example 6: Analyze All Solute Bond Angles](#example-6-analyze-all-solute-bond-angles)
   - [Example 7: Analyze All Solute Dihedral Angles](#example-7-analyze-all-solute-dihedral-angles)
   - [Example 8: Read a Fukui Function Figure (phenol, f⁺)](#example-8-read-a-fukui-function-figure-phenol-f)
+  - [Example 9: QTAIM Analysis of a Hydrogen Bond (water dimer)](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
 - [Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool)
 - [Formulas and Methods (Fukui Function tool)](#formulas-and-methods-fukui-function-tool)
+- [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules)
 - [Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab)
 - [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
 - [Troubleshooting](#troubleshooting)
@@ -360,6 +363,20 @@ Most analysis tools use 1-based atom labels. For example, `1 2` means atom 1 and
 10. Click **Analyze**.
 
 Typical outputs include bond length time series, distribution data, free-energy data, summary text, and optional CSV files. Progress appears as text in the output box, and the run ends by showing a summary of the parameters used and the results obtained. Figures open in the interactive viewer; no PNG files are written.
+
+### Run a QTAIM Topology Analysis
+
+1. Run a Gaussian single point (or optimization) that keeps a checkpoint file, and convert it: `formchk name.chk name.fchk`.
+2. Open **Tools > 3D Molecular Viewer** and choose the **QTAIM** tab.
+3. Browse to `name.fchk`; optionally choose an output folder.
+4. Leave the four starting-point switches on and the Advanced fields blank (Multiwfn's defaults).
+5. Click **Run** and check that the summary says *Poincare-Hopf = 1 (satisfied)*.
+6. Click **Display** to see the critical points and bond paths with the molecule; click a table row to locate a point.
+7. Optionally set the **Canvas** (background, *Design style*, element symbols, atom numbers) and click **Export 3D image...**.
+8. Choose a plane and click **Plot 2D map**; **Export 2D image...** saves it.
+9. Read `name_QTAIM.txt` in the output folder.
+
+The full procedure, with every option and what to do when points are missing, is in [QTAIM Topology Analysis](#qtaim-topology-analysis) (*Step-by-step procedure*); a worked example with real numbers is [Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer); the theory is in [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules).
 
 ### Build CPMD Input Files
 
@@ -2541,18 +2558,98 @@ needed at run time. The theory is summarised in
   plot viewer, as PNG, SVG, PDF or TIFF (200 dpi for the bitmap formats).
 - The report text, below everything.
 
-##### Steps
+##### Step-by-step procedure
 
-1. Open the 3D Molecular Viewer and choose the **QTAIM** tab.
-2. Browse to the `.fchk` file (and an output folder if wanted).
-3. Leave the four search modes on (or turn off triangles/tetrahedra for a
-   large molecule without rings) and press **Run**.
-4. Check the Poincaré–Hopf line. If it is *NOT satisfied*, some CPs are
-   missing: lower the step-size scale, set a trust radius (e.g. 0.1 bohr) or
-   tighten the singular-Hessian threshold, and run again.
-5. Press **Display** to see the CPs and bond paths with the molecule; click a
-   table row to find a CP in the view.
-6. Choose a plane and press **Plot 2D map**.
+**A. Prepare the wavefunction (Gaussian)**
+
+1. Choose the geometry. QTAIM describes the density of *one* structure, so use
+   an optimized geometry (or the exact structure you want to study). For a
+   complex, optimize the complex, not the separate molecules.
+2. Choose the level of theory. Any HF or DFT method works; use a basis with
+   polarization functions (6-31G(d) or better) — properties at bond points of
+   polar bonds and hydrogen bonds change noticeably without them. All-electron
+   basis sets are preferred: with an ECP the core density is missing (see the
+   limitations below).
+3. Keep the checkpoint file: put `%chk=name.chk` in the input. The density
+   read is the SCF density (`Total SCF Density`); for MP2, CCSD or TD-DFT jobs
+   the correlated density is not used.
+4. After the job ends normally, convert the checkpoint:
+   `formchk name.chk name.fchk` (Gaussian's `formchk` utility; `.fch` works
+   too).
+
+**B. Load and run**
+
+5. Open **Tools > 3D Molecular Viewer** and choose the **QTAIM** tab.
+6. **Formatted checkpoint**: Browse to `name.fchk`. **Output folder**: leave
+   it blank to write next to the `.fchk`, or Browse to another folder.
+7. **Critical point search – starting points**: leave all four switches on
+   (nuclei, atom pairs, triangles, tetrahedra). For a large molecule with no
+   rings you may turn off *triangles* and *tetrahedra* to save time.
+8. **Advanced**: leave every field blank for Multiwfn's defaults.
+9. Click **Run**. The progress bar follows the search, then the paths; small
+   molecules take well under a second with `numba` installed.
+
+**C. Check that the topology is complete**
+
+10. Read the summary line under **Results**, e.g.
+    `(3,-3) 6   (3,-1) 5   (3,+1) 0   (3,+3) 0     Poincare-Hopf = 1 (satisfied)`.
+    - The number of (3,−3) points should equal the number of atoms (more means
+      a non-nuclear attractor, shown as `NNA`).
+    - Every expected bond should have a (3,−1) point, and every ring a (3,+1).
+    - *NOT satisfied* means points are missing. Try, one at a time, and run
+      again: **Step-size scale factor** 0.5; **Trust radius** 0.1 bohr; a
+      larger **Maximum iterations** (e.g. 300); for points far from the atoms
+      a smaller **Singular Hessian** threshold (e.g. 1e-25). A satisfied rule
+      is necessary, not sufficient: also check the 3D view.
+11. Read the `NOTE:` lines at the end of the report text (incomplete bond
+    paths, ECP atoms, open shell).
+
+**D. Read the results**
+
+12. The **table** lists every point: row, type, assignment (`O1`, `O1-H2`,
+    `ring`, `cage`), ρ, ∇²ρ and ellipticity. Click a row: the point is
+    highlighted in white in the 3D view and its position, ρ, ∇²ρ, G, V and H
+    appear in the status line.
+13. The **report** `name_QTAIM.txt` (also shown at the bottom of the tab) has
+    every property of every point and the bond-path lengths. How to interpret
+    the numbers is explained in [Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)
+    and in [Theoretical Background](#theoretical-background-the-quantum-theory-of-atoms-in-molecules).
+
+**E. Look at the result in 3D**
+
+14. Click **Display**. The `.fchk` molecule is loaded into the viewer (you are
+    asked first if the viewer shows another structure) and the 3D window opens.
+15. Use the switches under the table to show or hide each point type, the bond
+    paths, the ring paths and the CP numbers.
+16. In **Canvas (3D window)** choose the **Background**, a **Molecule style**
+    (*Design style* draws the molecule as the Molecular Design Canvas does) and
+    the **Atom labels** (element symbols, atom numbers, both or neither).
+17. Rotate and zoom with the mouse, then click **Export 3D image...** to save
+    the window as shown (PNG, TIFF or BMP).
+
+**F. Make a 2D plane map**
+
+18. Choose the **Plane**:
+    - *Three atoms*: type three atom numbers (e.g. `1, 2, 3`), or leave the
+      field blank for the first three atoms that are not on one line. For a
+      planar molecule any three of its atoms give its plane; for a hydrogen
+      bond choose the donor, the H and the acceptor.
+    - *XY*, *XZ* or *YZ*: a Cartesian plane, moved along its normal by
+      **Offset** (Å).
+19. Adjust **Margin** (Å around the atoms) and **Grid points** (more = smoother
+    contours, slower), and the switches for density contours, gradient lines
+    and interbasin paths.
+20. Click **Plot 2D map**. The map opens in the interactive plot viewer (zoom,
+    pan, save) and is saved as `name_QTAIM_map.json` (reopen it later with
+    **Plotter**, *JSON plot type*). Only points and paths within 0.5 bohr of the
+    plane are drawn.
+21. **Export 2D image...** saves the map as PNG, SVG, PDF or TIFF.
+
+**G. Start again**
+
+22. **Clear** removes the results, the 3D points and paths and the map; change
+    the file or the settings and click **Run** again. Each run rewrites
+    `name_QTAIM.txt`.
 
 ##### Output file
 
@@ -2604,7 +2701,7 @@ Multiwfn 2026.7.15 run with modes 2, 3, 4 and 5 and its default parameters:
 | benzene 6-31G(d) | 12 / 12 / 1 / 0 | 1×10⁻⁹ bohr | 4×10⁻⁹ | 2×10⁻⁶ bohr |
 | methyl radical UB3LYP/6-31G(d) | 4 / 3 / 0 / 0 | 1×10⁻⁹ bohr | 6×10⁻⁹ | 5×10⁻⁶ bohr |
 | water dimer 6-31G(d) | 6 / 5 / 0 / 0 | 4×10⁻¹⁰ bohr | 3×10⁻⁹ | 4×10⁻⁶ bohr |
-| bicyclo[1.1.1]pentane 6-31G(d) | 13 / 14 / 3 / 1 | 3×10⁻⁹ bohr | 2×10⁻⁸ | 1×10⁻⁴ bohr |
+| bicyclo[1.1.1]pentane 6-31G(d) | 13 / 14 / 3 / 1 | 2×10⁻⁹ bohr | 7×10⁻⁹ | 5×10⁻⁶ bohr |
 
 The property differences are at the level of Multiwfn's printed digits (ten
 significant figures). With `numba` installed the run and the map are 4–46×
@@ -3238,6 +3335,58 @@ The condensed (per-atom) indices in the report put numbers on this picture; scro
   - `DD` (the dual descriptor, f⁺ − f⁻) shows both in one figure: positive where nucleophiles attack, negative where electrophiles attack.
 - **Show extrema markers** has no effect in the *Isosurfaces* display. The markers appear with *Mapped on ρ(N) surface*.
 - The mapping surface used in this run was ρ(N) = 0.001 a.u. (shown as `surface` in the report header). The default and recommended value is 0.01 a.u., because the Fukui functions are very small on the 0.001 surface. Use 0.01 when you switch to the mapped display.
+
+### Example 9: QTAIM Analysis of a Hydrogen Bond (water dimer)
+
+This example follows the [step-by-step procedure](#qtaim-topology-analysis) for the water dimer at B3LYP/6-31G(d), the file `tests/data/qtaim/water_dimer_631gd.fchk` shipped with the program (input: `tests/data/qtaim/inputs/water_dimer_631gd.gjf`, the S22 geometry, O···O 2.90 Å). Atoms: O1, H2, H3 form the donor molecule (H3 points at the acceptor), O4, H5, H6 the acceptor.
+
+#### 1. Run
+
+QTAIM tab → Browse to the file → all four starting-point switches on, Advanced blank → **Run**. Summary:
+
+```
+(3,-3) 6   (3,-1) 5   (3,+1) 0   (3,+3) 0     Poincare-Hopf = 1 (satisfied)
+```
+
+Six atoms give six (3,−3) points; four O–H bonds plus one hydrogen bond give five (3,−1) points; 6 − 5 = 1, so the topology is complete.
+
+#### 2. The bond critical points (from the report)
+
+| Row | Bond | ρ | ∇²ρ | ε | G | V | H | \|V\|/G | H/ρ |
+|---|---|---|---|---|---|---|---|---|---|
+| 7 | O1–H2 (covalent) | 0.3576 | −1.8730 | 0.022 | 0.0699 | −0.6081 | −0.5382 | 8.70 | −1.505 |
+| 8 | O1–H3 (donor O–H) | 0.3470 | −1.8813 | 0.022 | 0.0648 | −0.5999 | −0.5351 | 9.26 | −1.542 |
+| 9 | **H3···O4 (hydrogen bond)** | **0.0280** | **+0.0799** | 0.037 | 0.0221 | −0.0242 | **−0.0021** | **1.10** | −0.076 |
+| 10, 11 | O4–H5, O4–H6 | 0.3540 | −1.9001 | 0.022 | 0.0643 | −0.6037 | −0.5393 | 9.39 | −1.524 |
+
+All values in atomic units.
+
+#### 3. How to read them
+
+1. **There is a bond path from H3 to O4.** The (3,−1) point 9 lies on it. The path joins the (3,−3) points of H3 and O4, which are 1.98 Å apart, and is practically straight (path length / distance = 1.0003).
+2. **Covalent O–H bonds** (rows 7, 8, 10, 11): large ρ (about 0.35 a.u.), strongly negative ∇²ρ (charge concentrated between the nuclei), strongly negative H, and |V|/G ≈ 9 (far above 2). This is the *shared-shell* signature.
+3. **The hydrogen bond** (row 9) is a *closed-shell* interaction: ρ is small (0.028 a.u.) and ∇²ρ is positive (charge depleted at the bond point). Both values fall inside the Koch–Popelier ranges for hydrogen bonds (ρ 0.002–0.034 a.u., ∇²ρ 0.024–0.139 a.u.).
+4. **But it is not purely electrostatic**: H is slightly negative (−0.0021 a.u.) and |V|/G = 1.10 lies between 1 and 2, the *intermediate* region of Espinosa et al. — a hydrogen bond with a small covalent contribution, as expected for the water dimer.
+5. **The donor O–H bond is weakened by the hydrogen bond**: ρ at O1–H3 (0.3470) is lower than at the free O1–H2 (0.3576) of the same molecule.
+6. **An estimate of the hydrogen-bond energy** (not computed by the program; by hand): the relation of Emamian, Lu *et al.* (2019) for neutral hydrogen bonds, BE ≈ −223.08 ρ<sub>BCP</sub> + 0.7423 kcal/mol, gives −223.08 × 0.0280 + 0.74 = **−5.5 kcal/mol**, close to the accepted binding energy of the water dimer (about −5 kcal/mol). Espinosa's older BE ≈ V/2 = −0.0121 Hartree = −7.6 kcal/mol overestimates it, as Emamian *et al.* found in general.
+
+#### 4. Figures
+
+- **3D**: **Display**; then Canvas → Background *White*, Molecule style *Design style*, Element symbols and Atom numbers on → **Export 3D image...**. The (3,−1) points of the O–H bonds lie inside the H discs, so they are painted over the discs; atom numbers sit at the upper right of each atom, CP numbers at the lower right of each point.
+- **2D**: Plane *Three atoms*, atoms `1, 2, 3` (the donor molecule's plane, which also contains O4) → **Plot 2D map**. The map shows the contours of ρ, the gradient lines leaving each nucleus, the bond paths O1–H2, O1–H3 and H3···O4, and the deep-blue interbasin paths: the one through point 9 separates the two molecules. **Export 2D image...** saves it.
+
+#### 5. A ring and a cage (bicyclo[1.1.1]pentane)
+
+The second fixture, `tests/data/qtaim/bicyclopentane_631gd.fchk` (B3LYP/6-31G(d), optimized in D₃h symmetry and checked by a frequency calculation: no imaginary frequency; C–C 1.556 Å), shows the other two point types:
+
+```
+(3,-3) 13   (3,-1) 14   (3,+1) 3   (3,+3) 1     Poincare-Hopf = 1 (satisfied)
+```
+
+- 13 atoms; 14 bonds (six C–C, eight C–H); three four-membered rings (three (3,+1) points); one cage (one (3,+3) point): 13 − 14 + 3 − 1 = 1. Ring paths join each (3,+1) to the (3,+3) point.
+- There is **no** bond path between the two bridgehead carbons, although they are only 1.88 Å apart: the density between them has no saddle point.
+- The strained C–C bonds are **curved** ("banana bonds"): their path is 1.0027 × the internuclear distance (a straight bond gives 1.0000), bowed outwards from the cage. ρ<sub>BCP</sub> = 0.233 a.u. is a single-bond value (benzene's C–C bonds: 0.311 a.u.).
+- The three ring points (ρ = 0.0994 a.u.) lie only 0.25 Å from the cage point (0.0969 a.u.), with almost the same density: in this small cage the density is very flat, and the topology is close to a *catastrophe point*, where a small change of geometry can make ring and cage points merge and disappear. Such flat regions are where the search is most sensitive to its parameters.
 
 ## Formulas and Methods (All Bond / Angle / Dihedral tools)
 
@@ -4980,6 +5129,160 @@ regenerate the reference files.
 
 The full methodological discussion, with the verified Multiwfn workflow, is in
 `docs/superpowers/specs/2026-10-16-fukui-function-design.md`.
+
+## Theoretical Background: the Quantum Theory of Atoms in Molecules
+
+This section explains the ideas behind the [QTAIM tab](#qtaim-topology-analysis). The exact formulas and algorithms the program uses are in [Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab). Atomic units are used throughout (ρ in e/bohr³, energy densities in Hartree/bohr³).
+
+### 1. The idea
+
+The *Quantum Theory of Atoms in Molecules* (QTAIM), developed by R. F. W. Bader and co-workers from the 1970s, defines atoms, bonds, rings and cages from a single physical quantity: the electron density
+
+$$
+\rho(\mathbf{r}) = N \int |\Psi(\mathbf{x}_1, \mathbf{x}_2, \ldots, \mathbf{x}_N)|^2 \, ds_1\, d\mathbf{x}_2 \cdots d\mathbf{x}_N .
+$$
+
+ρ(**r**) is an observable (it is measured by X-ray diffraction) and does not depend on how the wavefunction is written — orbitals, basis functions or localization schemes. QTAIM reads the chemical structure from the *topology* of ρ: its maxima, minima and saddle points, and the lines of steepest ascent that connect them.
+
+### 2. The gradient field and atomic basins
+
+At every point, the gradient ∇ρ points in the direction in which the density increases fastest. Following ∇ρ from a point traces a **gradient path**. Almost every gradient path ends at a nucleus, because ρ has a sharp maximum at each nucleus: the nuclei are the **attractors** of the gradient field.
+
+The set of points whose gradient paths end at the same nucleus is that nucleus's **atomic basin** Ω. A QTAIM *atom* is a nucleus together with its basin. Two neighbouring basins meet at an **interatomic surface**, which no gradient path crosses:
+
+$$
+\nabla\rho(\mathbf{r}) \cdot \mathbf{n}(\mathbf{r}) = 0 \quad \text{for every point } \mathbf{r} \text{ of the surface}
+$$
+
+(**n** is the unit normal of the surface). This *zero-flux condition* is what makes the QTAIM atom a proper quantum subsystem: within a zero-flux basin, quantum mechanics (Schwinger's principle of stationary action) defines the atom's energy and other properties, and they add up to the molecular values. Because the flux of ∇ρ through the surface of a zero-flux basin is zero,
+
+$$
+\int_\Omega \nabla^2\rho \, d\mathbf{r} = \oint_{S(\Omega)} \nabla\rho \cdot \mathbf{n} \, dS = 0 ,
+$$
+
+which is why kinetic energy densities that differ by a multiple of ∇²ρ (section 6) give the same atomic kinetic energy, and why the virial theorem holds atom by atom. Integrating ρ over a basin gives the atom's electron population N(Ω) and its charge q(Ω) = Z − N(Ω). *(The QTAIM tab finds the topology; it does not integrate the basins. Atomic charges and volumes are Multiwfn's basin analysis, main function 17.)*
+
+### 3. Critical points
+
+A **critical point** (CP) is a point where ∇ρ = 0. Its character comes from the **Hessian** of ρ, the 3 × 3 matrix of second derivatives ∂²ρ/∂x<sub>i</sub>∂x<sub>j</sub>. Its eigenvalues λ₁ ≤ λ₂ ≤ λ₃ are the curvatures of ρ along three perpendicular directions (the eigenvectors). A CP is labelled (ω, σ): the **rank** ω is the number of non-zero eigenvalues and the **signature** σ is the sum of their signs. In molecules practically all CPs have rank 3:
+
+| Type | Curvatures | What it is | Name |
+|---|---|---|---|
+| (3,−3) | three negative | a maximum of ρ | nuclear CP (NCP): a nucleus, or rarely a non-nuclear attractor (NNA) |
+| (3,−1) | two negative, one positive | a saddle: a maximum in a plane, a minimum along the third direction | bond CP (BCP) |
+| (3,+1) | one negative, two positive | a saddle: a minimum in a plane, a maximum along the third direction | ring CP (RCP) |
+| (3,+3) | three positive | a minimum of ρ | cage CP (CCP) |
+
+- At a **BCP**, λ₃ > 0 points along the bond: ρ is a *minimum* along the bond path. λ₁ and λ₂ < 0 span the interatomic surface: ρ is a *maximum* within it.
+- An **RCP** lies inside a ring of bonded atoms, at the lowest density of the ring surface; a **CCP** lies inside a cage enclosed by rings.
+- **Non-nuclear attractors** are maxima away from nuclei. They occur in some metal clusters and in Li₂, and with poor basis sets.
+- A CP with a zero eigenvalue (rank < 3) is **degenerate** and unstable: a tiny change of geometry turns it into ordinary CPs or makes it vanish.
+
+The numbers of CPs of an isolated molecule obey the **Poincaré–Hopf relation**
+
+$$
+n_\text{NCP} - n_\text{BCP} + n_\text{RCP} - n_\text{CCP} = 1 .
+$$
+
+It is a check of completeness: if it fails, CPs are missing. If it holds, CPs may still be missing in pairs (one BCP and one RCP, for example), so the relation is necessary, not sufficient.
+
+### 4. Bond paths and the molecular graph
+
+From a BCP, two gradient paths climb, one to each of two nuclei (they start along the eigenvector of λ₃). Together they form the **bond path**, the line of maximum density linking the two nuclei. The set of all bond paths is the **molecular graph**, the QTAIM picture of the structure: in ordinary molecules it reproduces the bonds of the Lewis structure.
+
+- A bond path can be **curved**. Its length is then longer than the internuclear distance; strained rings give "banana bonds" (in bicyclo[1.1.1]pentane the C–C paths are 0.27 % longer than the C–C distances, [Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)).
+- A BCP is generally not at the midpoint: it is displaced towards the less electronegative atom (or the smaller basin). In O–H bonds it lies much closer to H.
+- Bond paths also appear for weak interactions: hydrogen bonds, halogen bonds, van der Waals contacts, metal–ligand bonds.
+- **Interpretation.** Bader first described a bond path as the necessary and sufficient condition for two atoms to be bonded. Later, prompted by paths between atoms that are not bonded in any chemical sense (for example the H···H paths in planar biphenyl), he described it instead as a *privileged exchange channel* — a line of accumulated density shared by two atoms — and stressed that a bond path is not the same as a chemical bond (Bader, 2009). Read a bond path between weakly interacting atoms as evidence of an interaction, then judge its nature from the properties below.
+- Topologies can change abruptly with geometry: a BCP and an RCP that approach each other merge and disappear (a *catastrophe*). Rings whose ρ at the RCP is close to ρ at a BCP, or ring and cage points with almost equal density, are close to such a point and fragile.
+
+### 5. The Laplacian of the density
+
+The Laplacian ∇²ρ = λ₁ + λ₂ + λ₃ measures whether charge is locally **concentrated** (∇²ρ < 0: ρ is larger than its average in the immediate neighbourhood) or **depleted** (∇²ρ > 0). Around an atom, −∇²ρ shows the electron shells, and in the valence shell its local maxima correspond to the bonded and non-bonded (lone) pairs of the Lewis and VSEPR models.
+
+At a BCP, the sign of ∇²ρ tells which curvatures dominate:
+
+- **Shared-shell (covalent) interactions**: charge is concentrated between the nuclei. ρ<sub>BCP</sub> is large (typically > 0.1 a.u.) and ∇²ρ < 0, because |λ₁| and |λ₂| (contraction towards the bond path) exceed λ₃; η = |λ₁|/λ₃ > 1.
+- **Closed-shell interactions** (ionic bonds, hydrogen bonds, van der Waals contacts): charge is depleted at the BCP and concentrated in each atom separately. ρ<sub>BCP</sub> is small (typically < 0.05 a.u.), ∇²ρ > 0, and η < 1.
+
+Koch and Popelier proposed that a hydrogen bond has a BCP with ρ between 0.002 and 0.034 a.u. and ∇²ρ between 0.024 and 0.139 a.u.
+
+For a given pair of elements, ρ<sub>BCP</sub> grows with bond order. In the program's test molecules (B3LYP) the C–C value is 0.233 a.u. in bicyclo[1.1.1]pentane (single bonds), 0.311 in benzene (aromatic) and 0.326 in ethylene (double bond, 6-31G).
+
+### 6. Energy densities
+
+Two kinetic energy densities are used, because the kinetic energy density is not unique:
+
+- the **Lagrangian** G(**r**) = ½ Σ<sub>i</sub> n<sub>i</sub> |∇φ<sub>i</sub>|², which is never negative;
+- the **Hamiltonian** K(**r**) = −¼ Σ<sub>i</sub> n<sub>i</sub> (φ<sub>i</sub>*∇²φ<sub>i</sub> + φ<sub>i</sub>∇²φ<sub>i</sub>*), which can be negative.
+
+They differ by K = G − ¼∇²ρ, which integrates to zero over a zero-flux basin, so both give the same atomic kinetic energy. The **local virial theorem** relates G and the potential energy density V(**r**) to the Laplacian:
+
+$$
+\tfrac14 \nabla^2\rho(\mathbf{r}) = 2G(\mathbf{r}) + V(\mathbf{r}) .
+$$
+
+G > 0 and V < 0 everywhere. A negative Laplacian therefore means that the potential energy dominates locally, a positive one that the kinetic energy does. The **total energy density**
+
+$$
+H(\mathbf{r}) = G(\mathbf{r}) + V(\mathbf{r}) = -K(\mathbf{r})
+$$
+
+is negative where the potential energy dominates. At a BCP:
+
+- **Cremer and Kraka** criterion: H < 0 indicates a covalent contribution, even when ∇²ρ > 0. This is the case for strong hydrogen bonds and many metal–ligand bonds.
+- **Espinosa et al.** use the ratio |V|/G:
+  - below 1, a pure closed-shell interaction (∇²ρ > 0 and H > 0);
+  - between 1 and 2, intermediate (∇²ρ > 0 but H < 0), partly covalent;
+  - above 2, a shared-shell (covalent) interaction (∇²ρ < 0).
+- H/ρ (the "bond degree") and G/ρ are also used. G/ρ is well below 1 for covalent bonds (0.2 for the O–H bonds of the water dimer) and near or above 1 for closed-shell interactions (0.8 for its hydrogen bond).
+
+In the water dimer ([Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)) the O–H bonds have |V|/G ≈ 9, and the hydrogen bond 1.10 with a slightly negative H: intermediate.
+
+The **hydrogen-bond energy** has been estimated from BCP properties. Espinosa, Molins and Lecomte proposed BE ≈ V/2. Emamian, Lu *et al.* (2019) showed that a linear relation in ρ<sub>BCP</sub> is more reliable: BE ≈ −223.08 ρ + 0.7423 kcal/mol for neutral hydrogen bonds and BE ≈ −332.34 ρ − 1.0661 kcal/mol for charged ones. Both are estimates; the program reports ρ and V, not BE.
+
+### 7. Ellipticity
+
+At a BCP, the **ellipticity**
+
+$$
+\varepsilon = \frac{\lambda_1}{\lambda_2} - 1 \ge 0
+$$
+
+measures how much the density is drawn out in one direction perpendicular to the bond (λ₁ is the more negative curvature).
+
+- ε = 0 for a cylindrically symmetric bond: single σ bonds and triple bonds.
+- ε grows with π character in one plane. In the test molecules (B3LYP) ε is about 0.01–0.02 for C–H bonds, 0.209 for the C–C bonds of benzene and 0.252 for the C=C bond of ethylene (6-31G).
+- A large ε at a weak BCP signals a structurally unstable bond, close to the catastrophe described in section 4.
+
+The direction of the λ₂ eigenvector (the softer curvature) gives the orientation of the π system.
+
+### 8. Ring and cage points
+
+ρ at an RCP grows with the electron delocalization in the ring, and has been used as an aromaticity indicator (Howard and Krygowski, 1997). They found that the curvature of ρ perpendicular to the ring plane correlates even better. Benzene at B3LYP/6-31G(d) has ρ<sub>RCP</sub> = 0.0200 a.u. with ∇²ρ = +0.162 a.u. A CCP shows that rings enclose a cage, such as the three four-membered rings of bicyclo[1.1.1]pentane.
+
+### 9. Practical considerations
+
+- **Method and basis.** ρ at the BCPs of polar bonds and weak interactions depends on the basis set and, less, on the method. Compare values computed at the same level. Use polarization functions; add diffuse functions for anions and weak complexes.
+- **Gaussian basis sets** have no cusp at the nucleus, so the (3,−3) point of a hydrogen atom lies a few hundredths of a bohr from the nucleus (about 0.06 bohr in water at 6-31G(d)). The program — like Multiwfn — reports the CP where it is, and measures bond-path ratios between the CPs.
+- **Effective core potentials** remove the core electrons from the density. The (3,−3) point of such an atom and properties close to it are not meaningful; bond points farther out are usually still usable.
+- **One structure.** The topology belongs to one geometry. For flexible or fluxional systems, analyse the structures that matter, such as minima, transition states or snapshots.
+- **Correlated densities** (MP2, CCSD) can be analysed in principle, but this program reads the SCF density only.
+
+### 10. References
+
+- R. F. W. Bader, *Atoms in Molecules: A Quantum Theory*, Oxford University Press (1990).
+- R. F. W. Bader, "A quantum theory of molecular structure and its applications", *Chem. Rev.* 91, 893 (1991).
+- P. L. A. Popelier, *Atoms in Molecules: An Introduction*, Prentice Hall (2000).
+- C. F. Matta, R. J. Boyd (eds.), *The Quantum Theory of Atoms in Molecules*, Wiley-VCH (2007).
+- R. F. W. Bader, "Bond paths are not chemical bonds", *J. Phys. Chem. A* 113, 10391 (2009).
+- D. Cremer, E. Kraka, *Angew. Chem. Int. Ed. Engl.* 23, 627 (1984) (energy density criterion).
+- U. Koch, P. L. A. Popelier, *J. Phys. Chem.* 99, 9747 (1995) (hydrogen-bond criteria).
+- E. Espinosa, E. Molins, C. Lecomte, *Chem. Phys. Lett.* 285, 170 (1998) (BE ≈ V/2).
+- E. Espinosa, I. Alkorta, J. Elguero, E. Molins, *J. Chem. Phys.* 117, 5529 (2002) (|V|/G regions).
+- S. Emamian, T. Lu, H. Kruse, H. Emamian, *J. Comput. Chem.* 40, 2868 (2019) (hydrogen-bond energies from ρ<sub>BCP</sub>).
+- S. T. Howard, T. M. Krygowski, *Can. J. Chem.* 75, 1174 (1997) (ring critical points and aromaticity).
+- T. Lu, F. Chen, *J. Comput. Chem.* 33, 580 (2012); T. Lu, *J. Chem. Phys.* 161, 082503 (2024) (Multiwfn, whose topology algorithms the program follows).
 
 ## Formulas and Methods (QTAIM tab)
 
