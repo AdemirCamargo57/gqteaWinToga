@@ -95,9 +95,40 @@ class TestDensityDerivatives:
         assert np.allclose(dd.kinetic_g, g, rtol=1e-12, atol=0)
         assert np.all(dd.kinetic_g >= 0)
 
+    def test_unknown_order_is_rejected(self, wfn):
+        with pytest.raises(ValueError, match="order"):
+            gw.density_derivatives(wfn, POINTS, order=0, use_numba=False)
+
     def test_chunking_does_not_change_results(self, wfn):
         pts = random_points(wfn, 37, seed=1)
         a = gw.density_derivatives(wfn, pts, chunk=5, use_numba=False)
         b = gw.density_derivatives(wfn, pts, chunk=1000, use_numba=False)
         assert np.allclose(a.rho, b.rho, rtol=1e-13, atol=0)
         assert np.allclose(a.hessian, b.hessian, rtol=1e-12, atol=1e-15)
+
+
+class TestNumbaKernels:
+    @pytest.fixture(autouse=True)
+    def _need_numba(self):
+        pytest.importorskip("numba")
+
+    def test_ao_derivatives_agree_with_numpy(self, wfn):
+        pts = random_points(wfn, 300, seed=3)
+        for order in (1, 2):
+            a = gw.evaluate_cartesian_ao_derivatives(wfn, pts, order=order, use_numba=False)
+            b = gw.evaluate_cartesian_ao_derivatives(wfn, pts, order=order, use_numba=True)
+            assert np.max(np.abs(a - b)) <= 1e-12 * np.max(np.abs(a))
+
+    def test_fused_density_derivatives_agree_with_numpy(self, wfn):
+        pts = np.vstack([random_points(wfn, 300, seed=4), wfn.coordinates + 1e-3])
+        a = gw.density_derivatives(wfn, pts, use_numba=False)
+        b = gw.density_derivatives(wfn, pts, use_numba=True)
+        for x, y in ((a.rho, b.rho), (a.gradient, b.gradient), (a.hessian, b.hessian), (a.kinetic_g, b.kinetic_g)):
+            assert np.max(np.abs(x - y)) <= 1e-12 * np.max(np.abs(x))
+        c = gw.density_derivatives(wfn, pts, order=1, use_numba=True)
+        assert c.hessian is None
+        assert np.max(np.abs(c.gradient - a.gradient)) <= 1e-12 * np.max(np.abs(a.gradient))
+
+    def test_numba_kernel_module_list_unchanged(self):
+        from test_solventPacking import NUMBA_KERNEL_MODULES
+        assert NUMBA_KERNEL_MODULES == {"espNumba.py", "densityNumba.py", "solventPackingNumba.py", "volumeNumba.py"}
