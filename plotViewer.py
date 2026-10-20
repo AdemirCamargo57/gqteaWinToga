@@ -20,7 +20,15 @@ percentage line on a twin axis::
       "line": {"label": "...", "values": [...], "ylabel": "..."},
       "xlabel": "...", "ylabel": "...", "title": "..."}, ...]
 
-(``errors`` and ``line`` are optional.) Entries written before this shape
+(``errors`` and ``line`` are optional.) A fourth shape is the QTAIM 2D plane
+map (qtaimAnalysis.plane_manifest)::
+
+    [{"type": "plane_map", "extent": [xmin, xmax, ymin, ymax], "grid": [[...]] or null,
+      "contours": [...], "lines": [{"kind": "gradient"|"interbasin"|"bond_path"|"ring_path",
+      "points": [[x, y], ...]}], "points": [{"type": "(3,-1)", "x", "y", "label"}],
+      "xlabel": "...", "ylabel": "...", "title": "..."}, ...]
+
+Entries written before these shapes
 existed carry no ``"type"`` key at all, so the plain curve stays the default.
 
 Usage::
@@ -35,7 +43,7 @@ import json
 # the TkAgg pin would silently re-pin Agg and this viewer would open no
 # window at all. See draw_bar_comparison's docstring for why the renderer
 # lives there instead of here.
-from displayPlots import draw_bar_comparison, series_style_kwargs
+from displayPlots import draw_bar_comparison, draw_plane_map, series_style_kwargs
 
 import matplotlib
 # Pin an interactive GUI backend explicitly. In a packaged (frozen) build
@@ -61,6 +69,10 @@ def build_figures(figures):
         figure = plt.figure(i)
         if fig.get("type") == "bars":
             draw_bar_comparison(figure.gca(), fig, FONT_STYLE)
+            plt.tight_layout()
+            continue
+        if fig.get("type") == "plane_map":
+            draw_plane_map(figure.gca(), fig, FONT_STYLE)
             plt.tight_layout()
             continue
         if "series" in fig:

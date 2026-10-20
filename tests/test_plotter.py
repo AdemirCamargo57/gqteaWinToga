@@ -1036,3 +1036,53 @@ class TestBarModeWiring:
         assert figure["type"] == "bars"
         assert figure["title"] == "condensed.txt"
         assert [g["label"] for g in figure["groups"]] == ["f+", "f-"]
+
+
+# --------------------------------------------------------------------------- #
+# QTAIM plane maps ({"type": "plane_map"}, written by the viewer's QTAIM tab)   #
+# --------------------------------------------------------------------------- #
+def plane_map():
+    return {"type": "plane_map", "title": "benzene map", "extent": [-3.0, 3.0, -2.0, 2.0],
+            "grid": [[0.1, 0.2], [0.3, 0.4]], "contours": [0.2],
+            "lines": [{"kind": "bond_path", "points": [[0.0, 0.0], [1.0, 0.5]]}],
+            "points": [{"type": "(3,-1)", "x": 0.5, "y": 0.25, "label": "13"}]}
+
+
+class TestPlaneMapManifests:
+    def test_accepted(self):
+        assert PlotterBase.validate_plot_manifest([plane_map()])[0]["type"] == "plane_map"
+
+    def test_accepted_without_grid_lines_or_points(self):
+        fig = {"type": "plane_map", "extent": [0, 1, 0, 1], "grid": None}
+        assert len(PlotterBase.validate_plot_manifest([fig])) == 1
+
+    @pytest.mark.parametrize("change, message", [
+        (lambda f: f.update(extent=[1, 0, 0, 1]), "Figure 1: 'extent'"),
+        (lambda f: f.update(extent=[0, 1, 0]), "Figure 1: 'extent'"),
+        (lambda f: f.update(grid=[[0.1, 0.2], [0.3]]), "Figure 1: 'grid' rows"),
+        (lambda f: f.update(grid=[[0.1, "x"], [0.3, 0.4]]), "Figure 1: 'grid' row"),
+        (lambda f: f["lines"][0].update(kind="spline"), "Figure 1, line 1: 'kind'"),
+        (lambda f: f["lines"][0].update(points=[[0.0]]), "Figure 1, line 1: 'points'"),
+        (lambda f: f["points"][0].update(type="(3,+5)"), "Figure 1, point 1: 'type'"),
+        (lambda f: f["points"][0].update(x="left"), "Figure 1, point 1"),
+    ])
+    def test_rejected_with_a_message_naming_the_figure(self, change, message):
+        fig = plane_map()
+        change(fig)
+        with pytest.raises(ValueError) as info:
+            PlotterBase.validate_plot_manifest([fig])
+        assert message in str(info.value)
+
+    def test_described(self):
+        text = PlotterBase.describe_json_figures([plane_map()])
+        assert "benzene map - 1 critical points, 1 lines" in text
+
+    def test_a_real_qtaim_manifest_round_trips(self, tmp_path):
+        import qtaimAnalysis as qa
+        import qtaimTopology as qt
+        from qtaim_fixtures import fchk as fixture
+        res = qa.QTAIMAnalyser().run(str(fixture("water_631gd_6d.fchk")), modes=(2, 3))
+        entry = qa.plane_manifest(qa.QTAIMAnalyser().plane_map(res, qt.axis_plane("YZ"),
+                                                                qa.PlaneMapOptions(points=20)))
+        path = write(tmp_path, [entry])
+        assert PlotterBase.load_json_plot_file(path)[0]["type"] == "plane_map"

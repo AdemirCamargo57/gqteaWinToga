@@ -100,6 +100,60 @@ def draw_bar_comparison(axes, figure_entry, font_style=None):
     return twin
 
 
+# Multiwfn's plane-map colours (manual 3.5.5): brown (3,-3), blue (3,-1),
+# orange (3,+1), green (3,+3); bold dark-brown bond paths, deep-blue interbasin paths.
+PLANE_MAP_POINT_COLOURS = {"(3,-3)": "#8B4513", "(3,-1)": "blue", "(3,+1)": "orange", "(3,+3)": "green"}
+PLANE_MAP_LINE_STYLES = {
+    "gradient": {"color": "0.55", "linewidth": 0.6},
+    "interbasin": {"color": "#00008B", "linewidth": 1.4},
+    "bond_path": {"color": "#5C2E0B", "linewidth": 2.4},
+    "ring_path": {"color": "#2E8B57", "linewidth": 1.6},
+}
+
+
+def draw_plane_map(axes, figure_entry, font_style=None):
+    """Draw one "plane_map" manifest entry (the QTAIM 2D map) onto `axes`.
+
+    Public for the same reason as draw_bar_comparison: plotViewer.py and the
+    static fallback must draw the identical figure. Contours of the density
+    grid (levels as given), then the lines (gradient, interbasin, bond and
+    ring paths), then the critical points with their labels; equal aspect.
+    """
+    font_style = font_style or {'color': 'darkred', 'weight': 'normal', 'size': 14}
+    xmin, xmax, ymin, ymax = figure_entry.get("extent", (0.0, 1.0, 0.0, 1.0))
+    grid = figure_entry.get("grid")
+    levels = figure_entry.get("contours") or []
+    if grid is not None and levels:
+        rows, cols = len(grid), len(grid[0])
+        xs = [xmin + (xmax - xmin) * i / (cols - 1) for i in range(cols)]
+        ys = [ymin + (ymax - ymin) * j / (rows - 1) for j in range(rows)]
+        axes.contour(xs, ys, grid, levels=sorted(levels), colors="black", linewidths=0.6)
+    for line in figure_entry.get("lines", []):
+        pts = line.get("points", [])
+        if len(pts) >= 2:
+            axes.plot([p[0] for p in pts], [p[1] for p in pts],
+                      **PLANE_MAP_LINE_STYLES.get(line.get("kind"), {"color": "grey", "linewidth": 0.8}))
+    for kind, colour in PLANE_MAP_POINT_COLOURS.items():
+        chosen = [p for p in figure_entry.get("points", []) if p.get("type") == kind]
+        if not chosen:
+            continue
+        axes.scatter([p["x"] for p in chosen], [p["y"] for p in chosen], s=36 if kind == "(3,-3)" else 22,
+                     color=colour, edgecolors="black", linewidths=0.4, zorder=5, label=kind)
+        for p in chosen:
+            if p.get("label"):
+                axes.annotate(p["label"], (p["x"], p["y"]), xytext=(4, 4), textcoords="offset points",
+                              fontsize=8, color=colour, zorder=6,
+                              bbox={"boxstyle": "round,pad=0.1", "fc": "white", "ec": "none", "alpha": 0.7})
+    axes.set_xlim(xmin, xmax)
+    axes.set_ylim(ymin, ymax)
+    axes.set_aspect("equal")
+    axes.set_xlabel(figure_entry.get("xlabel", ""), fontdict=font_style)
+    axes.set_ylabel(figure_entry.get("ylabel", ""), fontdict=font_style)
+    axes.set_title(figure_entry.get("title", ""), fontdict=font_style)
+    if figure_entry.get("points"):
+        axes.legend(loc="upper right", fontsize=8)
+
+
 class DisplayPlots():
 
     font_style = {'color':  'darkred','weight': 'normal','size': 14}

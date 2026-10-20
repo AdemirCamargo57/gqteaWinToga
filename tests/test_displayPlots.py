@@ -214,3 +214,57 @@ def test_viewer_still_renders_the_two_older_manifest_shapes():
     assert plt.figure(2).axes[0].get_title() == "overlay"
     assert len(plt.figure(2).axes[0].get_legend().get_texts()) == 1
     plt.close("all")
+
+
+# --------------------------------------------------------------------------- #
+# The QTAIM plane map ("type": "plane_map")                                     #
+# --------------------------------------------------------------------------- #
+def plane_map_entry():
+    return {
+        "type": "plane_map", "title": "map", "xlabel": "u (Angstrom)", "ylabel": "v (Angstrom)",
+        "extent": [-2.0, 2.0, -1.0, 1.0],
+        "grid": [[0.001 * (1 + i + j) for i in range(5)] for j in range(4)],
+        "contours": [0.002, 0.004],
+        "lines": [{"kind": "gradient", "points": [[0, 0], [1, 1]]},
+                  {"kind": "bond_path", "points": [[-1, 0], [1, 0]]},
+                  {"kind": "interbasin", "points": [[0, -1], [0, 1]]}],
+        "points": [{"type": "(3,-3)", "x": -1, "y": 0, "label": "O1"},
+                   {"type": "(3,-1)", "x": 0, "y": 0, "label": "4"}],
+    }
+
+
+def test_draw_plane_map_draws_lines_points_and_contours():
+    import matplotlib.pyplot as plt
+    from displayPlots import PLANE_MAP_LINE_STYLES, draw_plane_map
+
+    figure = plt.figure()
+    axes = figure.gca()
+    draw_plane_map(axes, plane_map_entry())
+    assert len(axes.lines) == 3
+    assert axes.lines[1].get_linewidth() == PLANE_MAP_LINE_STYLES["bond_path"]["linewidth"]
+    assert len(axes.collections) >= 2 + 1          # two CP scatters plus the contour set
+    assert [t.get_text() for t in axes.texts] == ["O1", "4"]
+    assert axes.get_xlim() == (-2.0, 2.0) and axes.get_aspect() == 1.0
+    plt.close(figure)
+
+
+def test_draw_plane_map_without_grid():
+    import matplotlib.pyplot as plt
+    from displayPlots import draw_plane_map
+
+    entry = plane_map_entry()
+    entry["grid"] = None
+    figure = plt.figure()
+    draw_plane_map(figure.gca(), entry)
+    assert len(figure.gca().lines) == 3
+    plt.close(figure)
+
+
+def test_viewer_renders_a_plane_map():
+    import matplotlib.pyplot as plt
+    import plotViewer
+
+    plt.close("all")
+    plotViewer.build_figures([plane_map_entry()])
+    assert plt.figure(1).axes[0].get_title() == "map"
+    plt.close("all")

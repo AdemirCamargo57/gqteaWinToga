@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW, LEFT, CENTER
-from displayPlots import launch_plot_viewer, series_style_kwargs
+from displayPlots import (PLANE_MAP_LINE_STYLES, PLANE_MAP_POINT_COLOURS, launch_plot_viewer,
+                          series_style_kwargs)
 from help import HelpGqteaWin
 
 class PlotterBase:
@@ -43,7 +44,10 @@ class PlotterBase:
     #    {"series": [{"x": [...], "y": [...], "label": "..."}, ...], ...},  #
     #    {"type": "bars", "categories": [...],                              #
     #     "groups": [{"label": "...", "values": [...], "errors": [...]}],   #
-    #     "line": {"label": "...", "values": [...], "ylabel": "..."}}]      #
+    #     "line": {"label": "...", "values": [...], "ylabel": "..."}},      #
+    #    {"type": "plane_map", "extent": [x0, x1, y0, y1], "grid": [[..]],  #
+    #     "contours": [...], "lines": [{"kind", "points"}],                 #
+    #     "points": [{"type", "x", "y", "label"}]}]   (QTAIM 2D map)        #
     #                                                                      #
     # xlabel/ylabel/title/xlim/ylim are optional; so are a group's 'errors' #
     # and a bars figure's 'line'.                                           #
@@ -72,6 +76,41 @@ class PlotterBase:
                 or any(isinstance(v, bool) or not isinstance(v, (int, float))
                        for v in limits)):
             raise ValueError(f"{where}: '{key}' must be two numbers [low, high].")
+
+    @classmethod
+    def _check_plane_map(cls, figure: dict, where: str) -> None:
+        """A QTAIM plane map (qtaimAnalysis.plane_manifest); messages name the figure."""
+        extent = figure.get("extent")
+        if (not isinstance(extent, list) or len(extent) != 4
+                or cls._check_numeric_sequence(extent, f"{where}: 'extent'") != 4
+                or not (extent[0] < extent[1] and extent[2] < extent[3])):
+            raise ValueError(f"{where}: 'extent' must be four numbers [xmin, xmax, ymin, ymax] "
+                             "with xmin < xmax and ymin < ymax.")
+        grid = figure.get("grid")
+        if grid is not None:
+            if not isinstance(grid, list) or len(grid) < 2:
+                raise ValueError(f"{where}: 'grid' must be null or a list of at least two rows.")
+            widths = {cls._check_numeric_sequence(row, f"{where}: 'grid' row") for row in grid}
+            if len(widths) != 1 or widths.pop() < 2:
+                raise ValueError(f"{where}: 'grid' rows must all have the same length (at least 2).")
+        if figure.get("contours"):
+            cls._check_numeric_sequence(figure["contours"], f"{where}: 'contours'")
+        for l_index, line in enumerate(figure.get("lines", []), start=1):
+            tag = f"{where}, line {l_index}"
+            if not isinstance(line, dict) or line.get("kind") not in PLANE_MAP_LINE_STYLES:
+                raise ValueError(f"{tag}: 'kind' must be one of {', '.join(PLANE_MAP_LINE_STYLES)}.")
+            points = line.get("points")
+            if not isinstance(points, list) or not points:
+                raise ValueError(f"{tag}: 'points' must be a non-empty list of [x, y] pairs.")
+            for point in points:
+                if not isinstance(point, list) or len(point) != 2:
+                    raise ValueError(f"{tag}: 'points' must be a list of [x, y] pairs.")
+                cls._check_numeric_sequence(point, f"{tag}: 'points'")
+        for p_index, point in enumerate(figure.get("points", []), start=1):
+            tag = f"{where}, point {p_index}"
+            if not isinstance(point, dict) or point.get("type") not in PLANE_MAP_POINT_COLOURS:
+                raise ValueError(f"{tag}: 'type' must be one of {', '.join(PLANE_MAP_POINT_COLOURS)}.")
+            cls._check_numeric_sequence([point.get("x"), point.get("y")], f"{tag}: 'x'/'y'")
 
     @classmethod
     def validate_plot_manifest(cls, payload) -> List[dict]:
@@ -136,6 +175,8 @@ class PlotterBase:
                             f"{tag}: 'values' must have the same length as "
                             f"'categories' ({n_line} vs {n_categories})."
                         )
+            elif figure.get("type") == "plane_map":
+                cls._check_plane_map(figure, where)
             elif "series" in figure:
                 series = figure["series"]
                 if not isinstance(series, list) or not series:
@@ -213,6 +254,9 @@ class PlotterBase:
                 n_groups = len(figure.get("groups", []))
                 n_categories = len(figure.get("categories", []))
                 detail = f"{n_groups} groups, {n_categories} categories"
+            elif figure.get("type") == "plane_map":
+                detail = (f"{len(figure.get('points', []))} critical points, "
+                          f"{len(figure.get('lines', []))} lines")
             elif "series" in figure:
                 n_points = len(figure["series"][0].get("x", []))
                 detail = f"{len(figure['series'])} curves, {n_points} points each"
@@ -891,6 +935,9 @@ class PlotterBase:
                     # the Toga (main) process, where the import is harmless.
                     from displayPlots import draw_bar_comparison
                     draw_bar_comparison(figure_obj.gca(), figure)
+                elif figure.get("type") == "plane_map":
+                    from displayPlots import draw_plane_map
+                    draw_plane_map(figure_obj.gca(), figure)
                 else:
                     if "series" in figure:
                         for curve in figure["series"]:
