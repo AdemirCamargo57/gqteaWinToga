@@ -56,6 +56,7 @@
     - [3D Molecular Viewer](#3d-molecular-viewer)
       - [Cube tab](#cube-tab)
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
+    - [QTAIM Topology Analysis](#qtaim-topology-analysis)
     - [Analysis of Fukui Functions](#analysis-of-fukui-functions)
       - [Molecular Design](#molecular-design)
         - [Opening and using the two windows](#opening-and-using-the-two-windows)
@@ -98,6 +99,7 @@
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
 - [Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool)
 - [Formulas and Methods (Fukui Function tool)](#formulas-and-methods-fukui-function-tool)
+- [Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab)
 - [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
@@ -1496,7 +1498,7 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-**Window layout.** The controls are arranged as a fixed header, seven tabs, and a status line:
+**Window layout.** The controls are arranged as a fixed header, eight tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels.
@@ -1505,6 +1507,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **Design** tab: draw, import and pre-optimize a molecule (see [Molecular Design](#molecular-design)).
 - **Cube** tab: Gaussian cube files as isosurfaces and slices, grid arithmetic, cube and image export (see [Cube tab](#cube-tab)).
 - **ESP** tab: the electrostatic potential mapped on electron-density isosurfaces of a Gaussian `.fchk`, its extrema, and ESP/density cube export (see [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)).
+- **QTAIM** tab: Bader's topology analysis of a Gaussian `.fchk` density — critical points, their properties, bond and ring paths, a text report and a 2D plane map (see [QTAIM Topology Analysis](#qtaim-topology-analysis)).
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
@@ -2460,6 +2463,156 @@ Limitations:
   (positive/negative areas, average and variance of V, Π, ν), export of the
   coloured surface (e.g. `.pqr`/`.cube`), interpolation of extremum positions,
   a user-defined colour range, and h functions.
+
+#### QTAIM Topology Analysis
+
+Use the **QTAIM** tab of the **3D Molecular Viewer** (Tools > 3D Molecular
+Viewer) for Bader's *Quantum Theory of Atoms in Molecules* analysis of the
+electron density of a Gaussian wavefunction. It finds every critical point (CP)
+of ρ(r), computes the topological and energy-density properties at each one,
+traces the bond paths (and, in cages, the ring paths), writes a text report,
+draws the result in the viewer's 3D window and plots a Multiwfn-style 2D map of
+any plane. The algorithms and every default parameter are Multiwfn's (main
+function 2, *Topology analysis*), and the results agree with Multiwfn 2026.7.15
+to the digits it prints (see *Validation* below). No external program is
+needed at run time. The theory is summarised in
+[Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab).
+
+##### Tab layout
+
+- **Input**: the `.fchk`/`.fch` file and an optional output folder (blank = the
+  folder of the `.fchk`). The density analysed is always `Total SCF Density`.
+- **Critical point search – starting points**: one switch per Multiwfn search
+  mode, all on by default: *nuclei* (mode 2), *atom pairs* (3, the midpoint of
+  each pair), *triangles* (4) and *tetrahedra* (5, the centres of three and four
+  atoms). Modes 2 and 3 find the nuclear and bond points; 4 and 5 add the ring
+  and cage points.
+- **Advanced (blank = Multiwfn default)**: every parameter of Multiwfn's
+  *Set CP searching parameters* and *Set path generating parameters* menus; the
+  field shows the default when blank.
+
+  | Field | Default | Meaning |
+  |---|---|---|
+  | Maximum iterations | 120 | Newton iterations per starting point |
+  | Step-size scale factor | 1 | multiplies every Newton step; 0.5 helps when a BCP is missed |
+  | Gradient-norm convergence | 1e-6 | \|∇ρ\| required at a CP (waived for nuclear starts) |
+  | Displacement convergence | 1e-7 | length of the last Newton step (bohr) |
+  | Minimum distance between CPs | 0.03 bohr | a point closer to a known CP is a duplicate |
+  | Skip atoms beyond vdW sum × | 1.5 | combinations of atoms farther apart are not used as starting points |
+  | Singular Hessian if \|det\| below | 5e-22 | the iteration stops (far from the molecule) |
+  | Trust radius | none | when set, longer Newton steps are shortened to it (bohr) |
+  | Maximum points per path | 451 | a longer path is dropped |
+  | Path step | 0.03 bohr | spacing of the path points |
+  | Stop within this of a CP | 0.05 bohr | a path ends when this close to its target |
+
+- **Run / Display / Clear**, a progress bar and a status line. *Run* writes
+  `<name>_QTAIM.txt` automatically. *Display* shows the result in the 3D window
+  (opening it if needed). The molecule of the `.fchk` is loaded silently when
+  the viewer shows nothing or the same molecule; otherwise you are asked first.
+- **Results**: the counts and the Poincaré–Hopf check, then a table of every CP
+  (row, type, assignment, ρ, ∇²ρ, ellipticity). Selecting a row highlights that
+  CP in white and prints its position, ρ, ∇²ρ, G, V and H in the status line.
+  Below the table, switches show or hide each CP type, the bond paths, the ring
+  paths and the CP numbers.
+- **2D plane map**: the plane (*Three atoms*, or the *XY*, *XZ* or *YZ* plane at
+  an offset along its normal), the three plane atoms (blank = the first three
+  atoms that are not collinear), the margin around the projected atoms (2 Å),
+  the grid points per axis (200), and switches for the density contours, the
+  gradient lines and the interbasin paths. **Plot 2D map** opens the map in the
+  interactive plot viewer (zoom, pan, save) and saves its data as
+  `<name>_QTAIM_map.json`, which **Plotter** (*JSON plot type*) reopens later.
+- The report text, below everything.
+
+##### Steps
+
+1. Open the 3D Molecular Viewer and choose the **QTAIM** tab.
+2. Browse to the `.fchk` file (and an output folder if wanted).
+3. Leave the four search modes on (or turn off triangles/tetrahedra for a
+   large molecule without rings) and press **Run**.
+4. Check the Poincaré–Hopf line. If it is *NOT satisfied*, some CPs are
+   missing: lower the step-size scale, set a trust radius (e.g. 0.1 bohr) or
+   tighten the singular-Hessian threshold, and run again.
+5. Press **Display** to see the CPs and bond paths with the molecule; click a
+   table row to find a CP in the view.
+6. Choose a plane and press **Plot 2D map**.
+
+##### Output file
+
+`<name>_QTAIM.txt` follows the layout of the Fukui report: a commented header
+(file, method/basis, density, electron count, search modes, every parameter,
+engine, units), then these sections:
+
+- `CRITICAL POINT SUMMARY` — counts per type and the Poincaré–Hopf sum.
+- `CRITICAL POINTS` — row, type, x y z (Å) and assignment: the atom of a
+  (3,−3) (`O1`; `NNA` for a non-nuclear attractor), the atom pair of a (3,−1)
+  (`O1-H2`, from its bond path), `ring` or `cage`.
+- `DENSITY PROPERTIES AT CRITICAL POINTS (a.u.)` — ρ, ∇²ρ, λ₁, λ₂, λ₃,
+  ellipticity and η.
+- `ENERGY DENSITIES AT CRITICAL POINTS (a.u.)` — G, K, V, H, |V|/G and H/ρ.
+- `BOND PATHS` — for each BCP its two half-path lengths (to each atom), their
+  total, the distance between the two (3,−3) points and the ratio total /
+  distance (1 for a straight path, larger for a curved one).
+- `RING PATHS` — (3,+1) → (3,+3) paths and their lengths (cages only).
+- `NOTE:` lines (missing CPs, incomplete paths, ECP atoms, open shell) and
+  `Written:` lines.
+
+Positions and lengths are in Å; every property is in atomic units. CP rows
+are numbered as in the table and the 3D view: (3,−3) by atom, then (3,−1),
+(3,+1), (3,+3).
+
+##### The 3D window and the 2D map
+
+In 3D, the CPs are small spheres in Multiwfn's colours — magenta (3,−3),
+orange (3,−1), yellow (3,+1), green (3,+3) — with cyan CP numbers; bond paths
+are brown lines and ring paths green.
+
+The 2D map uses Multiwfn's plane-map conventions: ρ contours at 0.001, 0.002,
+0.004, 0.008, 0.01, … a.u. (Bader's 1, 2, 4, 8 × 10ⁿ series), grey gradient
+lines leaving each nucleus, deep-blue interbasin paths (the traces of the
+zero-flux surfaces) leaving each bond point, bold brown bond paths, and the
+CPs as dots — brown (3,−3), blue (3,−1), orange (3,+1), green (3,+3). CPs and
+path points more than 0.5 bohr from the plane are not drawn. Nuclear points are
+labelled with their atom, the others with their CP number.
+
+##### Validation
+
+Every fixture below gives the same CPs, types, atom pairs and paths as
+Multiwfn 2026.7.15 run with modes 2, 3, 4 and 5 and its default parameters:
+
+| Molecule (B3LYP) | CPs (3,−3)/(3,−1)/(3,+1)/(3,+3) | max position difference | max property difference (relative) | max path-length difference |
+|---|---|---|---|---|
+| water 6-31G(d) | 3 / 2 / 0 / 0 | 1×10⁻¹⁰ bohr | 2×10⁻⁹ | 2×10⁻⁶ bohr |
+| ethylene 6-31G | 6 / 5 / 0 / 0 | 6×10⁻¹⁰ bohr | 3×10⁻⁹ | 3×10⁻⁶ bohr |
+| benzene 6-31G(d) | 12 / 12 / 1 / 0 | 1×10⁻⁹ bohr | 4×10⁻⁹ | 2×10⁻⁶ bohr |
+| methyl radical UB3LYP/6-31G(d) | 4 / 3 / 0 / 0 | 1×10⁻⁹ bohr | 6×10⁻⁹ | 5×10⁻⁶ bohr |
+| water dimer 6-31G(d) | 6 / 5 / 0 / 0 | 4×10⁻¹⁰ bohr | 3×10⁻⁹ | 4×10⁻⁶ bohr |
+| bicyclo[1.1.1]pentane 6-31G(d) | 13 / 14 / 3 / 1 | 3×10⁻⁹ bohr | 2×10⁻⁸ | 1×10⁻⁴ bohr |
+
+The property differences are at the level of Multiwfn's printed digits (ten
+significant figures). With `numba` installed the run and the map are 4–46×
+faster (benzene: run 0.06 s instead of 1.7 s, map 0.9 s instead of 14 s).
+
+##### Implemented capabilities and limitations
+
+Implemented: Gaussian `.fchk`/`.fch` with s–g shells (Cartesian or spherical),
+closed and open shell; Multiwfn search modes 2–5 with all their parameters;
+classification and Poincaré–Hopf check; ρ, ∇²ρ, Hessian eigenvalues,
+ellipticity, η, G, K, V, H; bond paths and ring paths; text report; 3D view;
+2D plane map with contours, gradient lines and interbasin paths; optional
+`numba` acceleration.
+
+Limitations:
+
+- **Density**: only `Total SCF Density` (no correlated, excited-state or spin
+  densities).
+- **Effective core potentials**: the `.fchk` holds no core density (Multiwfn
+  adds one from its EDF library; this tool does not), so the (3,−3) points of
+  ECP atoms and properties close to them are unreliable. The run still
+  completes and the report says so in a `NOTE:`.
+- **Not implemented**: 3D interbasin surfaces, basin integration (AIM charges
+  and volumes), user starting points (mode 1) and random-sphere search (mode 6),
+  Shannon aromaticity and ring-normal curvature, ESP or other functions at the
+  CPs, `.wfn`/`.wfx` input, periodic systems.
 
 #### Analysis of Fukui Functions
 
@@ -4809,6 +4962,111 @@ regenerate the reference files.
 
 The full methodological discussion, with the verified Multiwfn workflow, is in
 `docs/superpowers/specs/2026-10-16-fukui-function-design.md`.
+
+## Formulas and Methods (QTAIM tab)
+
+### 1. Electron density and its derivatives
+
+From the Cartesian density matrix P of `Total SCF Density` and the
+normalised Cartesian Gaussians χ (the same basis conventions as the ESP and
+Fukui tools):
+
+$$
+\rho = \sum_{ab} P_{ab}\,\chi_a\chi_b, \qquad
+\nabla\rho = 2\sum_{ab} P_{ab}\,\chi_a\nabla\chi_b, \qquad
+\partial_i\partial_j\rho = 2\sum_{ab} P_{ab}\left(\partial_i\chi_a\,\partial_j\chi_b + \chi_a\,\partial_i\partial_j\chi_b\right)
+$$
+
+The AO derivatives are analytic. With `numba` installed, one compiled kernel
+evaluates them and sums P only over the AOs that are not screened out at each
+point; it agrees with the numpy path to 10⁻¹⁵ relative.
+
+### 2. Critical points
+
+A critical point is a point where ∇ρ = 0. Its type (rank, signature) comes from
+the eigenvalues λ₁ ≤ λ₂ ≤ λ₃ of the Hessian: three negative → (3,−3), a maximum
+(nuclear, NCP); two → (3,−1) (bond, BCP); one → (3,+1) (ring, RCP); none →
+(3,+3) (cage, CCP). A converged point with a zero eigenvalue (degenerate) is
+counted in a note and not reported. For an isolated molecule all CPs satisfy
+the Poincaré–Hopf relation
+
+$$
+n_{(3,-3)} - n_{(3,-1)} + n_{(3,+1)} - n_{(3,+3)} = 1 .
+$$
+
+It is a necessary check, not a sufficient one.
+
+### 3. Search (Multiwfn's Newton method)
+
+Starting points: the nuclei (mode 2), the midpoints of atom pairs (3), and the
+centres of three (4) and four (5) atoms. A combination is skipped if any two of
+its atoms are farther apart than 1.5 × the sum of their vdW radii (Bondi /
+Mantina, `help.py`). From each start the Newton step
+
+$$
+\Delta\mathbf{r} = -s\,\mathbf{H}^{-1}\nabla\rho
+$$
+
+(scale s = 1, optionally capped at a trust radius) is repeated until
+|Δr| < 10⁻⁷ bohr and |∇ρ| < 10⁻⁶ a.u. (the gradient test is waived for
+nuclear starts, whose peaks are too sharp), for at most 120 iterations. The
+start is abandoned when |det H| < 5×10⁻²² or ρ < 10⁻⁸ a.u. A converged point
+closer than 0.03 bohr to one found before (in mode order) is a duplicate. A
+(3,−3) more than 0.3 bohr from every nucleus is reported as a non-nuclear
+attractor (NNA). With Gaussian basis sets an H nucleus' (3,−3) usually sits
+~0.06 bohr off the nucleus, in Multiwfn too.
+
+### 4. Properties at a critical point (Multiwfn's definitions)
+
+$$
+G = \tfrac12\sum_{ab} P_{ab}\,\nabla\chi_a\cdot\nabla\chi_b, \qquad
+K = G - \tfrac14\nabla^2\rho, \qquad
+V = -G - K = \tfrac14\nabla^2\rho - 2G, \qquad
+H = G + V = -K
+$$
+
+G is the Lagrangian (positive-definite) kinetic energy density, K the
+Hamiltonian one, V the potential energy density from the local virial theorem
+and H the total energy density. Also reported: the ellipticity
+ε = λ₁/λ₂ − 1, η = |λ₁|/λ₃ (Multiwfn's *eta index*, negative at a (3,−3)),
+|V|/G and H/ρ. As a usual reading at a BCP: ∇²ρ < 0 and H < 0 indicate a shared
+(covalent) interaction; ∇²ρ > 0 with |V|/G < 1 a closed-shell one (ionic,
+hydrogen bond, van der Waals); 1 < |V|/G < 2 the intermediate region.
+
+### 5. Gradient paths
+
+Paths are followed with classical fourth-order Runge–Kutta on the unit vector
+±∇ρ/|∇ρ| with a fixed step h = 0.03 bohr, so their points are evenly spaced,
+as in Multiwfn. A path ends when it comes within 0.05 bohr of its target CP (the
+CP is then its last point) and is dropped after 451 points.
+
+- **Bond paths**: from each (3,−1), displaced by ±h along the eigenvector of
+  λ₃, uphill to a (3,−3). The two (3,−3) reached give the BCP its atom pair.
+  Each half's length is the sum of its segments.
+- **Ring paths** (only when the molecule has a (3,+3)): from each (3,+1),
+  displaced by ±h along the eigenvector of λ₁, downhill. A half that reaches a
+  (3,+3) is kept; the other leaves to infinity, which is normal.
+
+### 6. The 2D plane map
+
+The plane is that of three atoms (origin at their centroid, u along atom 1 →
+atom 2, v in the plane, orthonormal) or XY/XZ/YZ at an offset. The ρ grid
+covers the projected atoms plus a margin. Gradient lines start on a 0.1-bohr
+circle around each nucleus lying within 0.5 bohr of the plane and descend
+along the in-plane projection of −∇ρ. They end at an in-plane (3,−1)/(3,+1),
+at the map border, or after 2000 points. Interbasin paths descend the same
+way from each in-plane (3,−1), along the in-plane projection of its
+negative-curvature eigenvector (λ₁ or λ₂, whichever lies more in the plane).
+CPs and bond- or ring-path points within 0.5 bohr of the plane are projected
+onto it (Multiwfn's default display distance).
+
+### 7. References
+
+R. F. W. Bader, *Atoms in Molecules: A Quantum Theory* (Oxford, 1990);
+T. Lu, F. Chen, *J. Comput. Chem.* 33, 580 (2012) and T. Lu, *J. Chem. Phys.*
+161, 082503 (2024) (Multiwfn); Multiwfn manual §3.14 (topology analysis) and
+§3.5.5 (CPs and paths on plane maps); E. Espinosa, I. Alkorta, J. Elguero,
+E. Molins, *J. Chem. Phys.* 117, 5529 (2002) (the |V|/G regions of section 4).
 
 ## Formulas and Methods (Solvation box builders)
 
