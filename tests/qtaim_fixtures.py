@@ -43,3 +43,32 @@ def fchk(name: str) -> Path:
     """A fixture by file name: tests/data/qtaim first, then tests/data/fchk."""
     path = QTAIM / name
     return path if path.is_file() else FCHK / name
+
+
+REFERENCE_FIXTURES = ["water_631gd_6d.fchk", "eteno_b3lyp_631g.fchk", "benzene_631gd.fchk",
+                      "ch3_ub3lyp_631gd.fchk", "water_dimer_631gd.fchk", "bicyclopentane_631gd.fchk"]
+
+
+class ReferenceCP:
+    def __init__(self, index, kind, position):
+        self.index, self.kind, self.position = index, kind, np.array(position)
+        self.props = None   # rho lap G K V H l1 l2 l3 ellipticity eta
+        self.atoms = None   # frozenset of 0-based atoms (BCPs)
+
+
+def load_reference(name: str):
+    """(cps, paths) from tests/data/qtaim/<stem>_multiwfn.txt (see make_reference.py)."""
+    cps, paths = [], []
+    for line in (QTAIM / (Path(name).stem + "_multiwfn.txt")).read_text().splitlines():
+        parts = line.split()
+        if not parts or parts[0].startswith("#"):
+            continue
+        if parts[0] == "cp":
+            cps.append(ReferenceCP(int(parts[1]), parts[2], [float(x) for x in parts[3:6]]))
+        elif parts[0] == "prop":
+            cps[-1].props = np.array([float(x) for x in parts[1:]])
+        elif parts[0] == "atoms":
+            cps[-1].atoms = frozenset(int(x) - 1 for x in parts[1:3])
+        elif parts[0] == "path":
+            paths.append((int(parts[1]), int(parts[2]), float(parts[3])))
+    return cps, paths
