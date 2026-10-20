@@ -23,6 +23,8 @@ from electrostaticSurfacePotential import ESPTabController
 from espSurfaceLayer import ESPSurfaceLayer
 from help import AtomicData
 from molecularDesign import MolecularDesignController
+from qtaimLayer import QTAIMSceneLayer
+from qtaimTab import QTAIMTabController
 
 Atom = Tuple[str, Tuple[float, float, float]]
 Frame = List[Atom]
@@ -2030,6 +2032,10 @@ class MolecularViewerUI(MolecularViewer):
         self.esp_layer = ESPSurfaceLayer()
         self.esp_controller = None
 
+        # QTAIM tab: critical points and paths (render thread) and the controller.
+        self.qtaim_layer = QTAIMSceneLayer()
+        self.qtaim_controller = None
+
         self.layout_main_window()
 
     # ------------------------------------------------------------------
@@ -2107,6 +2113,7 @@ class MolecularViewerUI(MolecularViewer):
                 ("Design", self._tab_page(self._build_design_tab())),
                 ("Cube", self._tab_page(self._build_cube_tab())),
                 ("ESP", self._tab_page(self._build_esp_tab())),
+                ("QTAIM", self._tab_page(self._build_qtaim_tab())),
                 ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
             ],
             style=Pack(flex=1),
@@ -2520,7 +2527,13 @@ class MolecularViewerUI(MolecularViewer):
         self.esp_controller = ESPTabController(viewer=self)
         return self.esp_controller.build_tab()
 
-    # The hooks below draw the Cube tab's volume and the ESP tab's surface.
+    def _build_qtaim_tab(self) -> toga.Box:
+        """QTAIM topology of an fchk density (qtaimTab.QTAIMTabController)."""
+        self.qtaim_controller = QTAIMTabController(viewer=self)
+        return self.qtaim_controller.build_tab()
+
+    # The hooks below draw the Cube tab's volume, the ESP tab's surface and the
+    # QTAIM tab's critical points and paths.
     # They are overridden here, not in MolecularViewer, whose hooks must stay
     # empty for subclasses such as espViewer.ESPSurfaceViewer. getattr keeps
     # them safe on headless instances built with __new__.
@@ -2531,6 +2544,9 @@ class MolecularViewerUI(MolecularViewer):
         esp_layer = getattr(self, "esp_layer", None)
         if esp_layer is not None:
             esp_layer.draw_scene(self)
+        qtaim_layer = getattr(self, "qtaim_layer", None)
+        if qtaim_layer is not None:
+            qtaim_layer.draw_scene(self)
 
     def draw_screen_overlay(self):
         esp_layer = getattr(self, "esp_layer", None)
@@ -2545,6 +2561,9 @@ class MolecularViewerUI(MolecularViewer):
         esp_layer = getattr(self, "esp_layer", None)
         if esp_layer is not None and esp_layer.get() is not None:
             base = max(base, esp_layer.radius() + 0.3)
+        qtaim_layer = getattr(self, "qtaim_layer", None)
+        if qtaim_layer is not None and qtaim_layer.get() is not None:
+            base = max(base, qtaim_layer.radius() + 0.3)
         layer = getattr(self, "cube_layer", None)
         if layer is None or not layer.items():
             return base

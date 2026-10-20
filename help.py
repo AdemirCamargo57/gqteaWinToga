@@ -1923,6 +1923,64 @@ move during trajectory playback; very large grids (more than about 250 points
 per axis) are slow to mesh and are held in memory.
 """
 
+    help_qtaim = """QTAIM TOPOLOGY ANALYSIS
+
+Bader's Quantum Theory of Atoms in Molecules applied to the Total SCF Density
+of a Gaussian formatted checkpoint (.fchk / .fch), with Multiwfn's algorithms
+and default parameters (Multiwfn main function 2, manual 3.14).
+
+CRITICAL POINTS
+
+Points where grad rho = 0, classified by the signs of the Hessian eigenvalues
+lambda1 <= lambda2 <= lambda3:
+  (3,-3) nuclear (NCP): a maximum, at (or very near) a nucleus
+  (3,-1) bond (BCP): between two bonded atoms
+  (3,+1) ring (RCP): inside a ring
+  (3,+3) cage (CCP): inside a cage
+They are found by Newton iterations started from the nuclei, the midpoints of
+atom pairs, triangle centres and tetrahedron centres (Search switches). Atom
+combinations farther apart than the vdW cutoff factor x the sum of their vdW
+radii are skipped. A molecule must satisfy the Poincare-Hopf rule
+n(3,-3) - n(3,-1) + n(3,+1) - n(3,+3) = 1; if it does not, some points are
+missing: add search modes, lower the step-size scale or set a trust radius.
+
+PROPERTIES (a.u.)
+
+rho, its Laplacian, the Hessian eigenvalues, the ellipticity
+eps = lambda1/lambda2 - 1, eta = |lambda1|/lambda3, and the energy densities:
+  G  Lagrangian kinetic energy density (positive definite)
+  K  Hamiltonian kinetic energy density, K = G - lap/4
+  V  potential energy density, V = -G - K (local virial theorem)
+  H  total energy density, H = G + V = -K
+plus |V|/G and H/rho, the usual bond-type indicators.
+
+PATHS
+
+Bond paths climb the density gradient from each (3,-1), displaced along the
+eigenvector of lambda3, to the two (3,-3) it joins; their atoms label the BCP
+(e.g. O1-H2). With cage points, ring paths descend from each (3,+1) to a
+(3,+3). Paths are evenly spaced points (Step); a path longer than
+Max points is dropped and reported.
+
+RESULTS
+
+<name>_QTAIM.txt is written after every run (output folder, or the folder of
+the .fchk). Display draws the critical points (magenta / orange / yellow /
+green, Multiwfn's colours) and the paths (brown bond paths) in this viewer's
+3D window; selecting a row of the table highlights that point. Plot 2D map
+draws a Multiwfn-style plane map in the interactive plot viewer: rho
+contours (1, 2, 4, 8 x 10^n a.u.), gradient lines, interbasin lines, bond
+paths and the critical points within 0.5 bohr of the plane. Its data are
+saved as <name>_QTAIM_map.json, which Plotter (JSON plot type) can reopen.
+
+LIMITATIONS
+
+Total SCF Density only (no correlated or spin densities); .fchk only; no
+interbasin surfaces, basin integration (atomic charges, volumes) or random
+sphere search; no periodic systems. ECP files: the .fchk has no core density,
+so the (3,-3) points of ECP atoms and properties near them are unreliable.
+"""
+
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)
 
 Maps the molecular electrostatic potential V(r) onto an electron-density
