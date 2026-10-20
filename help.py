@@ -1876,6 +1876,16 @@ Colours are names (Blue, Red, Green, Yellow, Orange, Cyan, Magenta, Purple,
 White, Grey) or #rrggbb. Opacity below 1 makes the surface translucent;
 Visible hides one cube without removing it.
 
+ESP CUBES LOAD WITH THEIR DENSITY
+
+An ESP cube on its own can only give surfaces of constant potential
+(V = +/-isovalue) - not the ESP tab's picture, which is the electron-density
+surface coloured by V. So when you load <name>_ESP.cube and <name>_density.cube
+is beside it on the same grid (the ESP tab's Save ESP cube... writes both),
+the density cube is loaded too and shown at rho = 0.0004, coloured by the ESP;
+the ESP cube's own surfaces start unticked (tick its Show box to see them).
+Without a density cube the status line says which file to load.
+
 COLOUR BY ANOTHER CUBE
 
 Colour by colours the chosen cube's surface by another cube's values instead

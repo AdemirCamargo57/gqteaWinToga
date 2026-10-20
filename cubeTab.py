@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,7 @@ from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 import cubeFile as cf
 import volumeData as vd
 from cubeRender import slice_item, surface_item
+from electrostaticSurfacePotential import density_cube_path
 from espSurfaceLayer import esp_colours, gaussview_label, symmetric_range
 from help import HelpGqteaWin
 
@@ -202,6 +204,24 @@ class CubeList:
                 self.writes += 1
 
 
+def density_partner_path(entry: "CubeEntry") -> Optional[Path]:
+    """The density cube saved beside an ESP cube, if there is one.
+
+    The ESP tab's Save ESP cube... writes ``<name>_ESP.cube`` and, with its
+    density switch on, ``<name>_density.cube`` on the same grid
+    (``electrostaticSurfacePotential.density_cube_path`` is the one naming
+    rule). Only a potential cube read from a file has a partner.
+    """
+    if entry.path is None or entry.volume.orbital is not None or not vd.is_potential(entry.volume):
+        return None
+    candidate = density_cube_path(entry.path)
+    return candidate if candidate.is_file() else None
+
+
+def _same_file(a, b) -> bool:
+    return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
+
+
 def default_cube_filename(name: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_")
     return f"{stem or 'cube'}.cube"
@@ -342,6 +362,29 @@ class CubeTabController:
         entry = CubeEntry.from_volume(self.unique_name(name), volume, None, saved=False)
         self.entries.append(entry)
         return entry
+
+    def entry_for_path(self, path) -> Optional[CubeEntry]:
+        for e in self.entries:
+            if e.path is not None and _same_file(e.path, path):
+                return e
+        return None
+
+    def link_density(self, esp: CubeEntry, density: CubeEntry) -> str:
+        """Show ``esp`` on ``density``'s surface (the ESP tab's picture); a note for the status line."""
+        reason = vd.grid_mismatch(esp.volume, density.volume)
+        if reason:
+            return f"{density.name} is not on the same grid as {esp.name}, so they were not paired. {reason}"
+        density.colour_by = esp.name
+        density.visible = True
+        esp.visible = False
+        # Status-line notes: Toga labels do not wrap, so keep them to one line.
+        return f"{esp.name} shown on the {density.name} surface; tick its Show box for its own isosurfaces."
+
+    @staticmethod
+    def unpaired_potential_note(esp: CubeEntry) -> str:
+        partner = density_cube_path(esp.path).name if esp.path else "<name>_density.cube"
+        return (f"{esp.name}: surfaces of constant potential. For the ESP on the molecular surface, "
+                f"also load {partner}.")
 
     def remove(self, name: str):
         entry = self.entry(name)
@@ -732,7 +775,7 @@ class CubeTabController:
         if not selected:
             return
         paths = list(selected) if isinstance(selected, (list, tuple)) else [selected]
-        last, notes = None, []
+        last, notes, added = None, [], []
         for path in paths:
             self.set_status(f"Reading {Path(str(path)).name}...")
             try:
@@ -743,17 +786,52 @@ class CubeTabController:
             if not await self._settle_structure(entries[0]):
                 continue
             notes += self.add_entries(entries)
+            added += entries
             last = entries[-1].name
         if last is None:
             self.set_status("No cube was loaded.")
             return
-        self.sync_widgets(selected=last)
+        paired = await self._pair_potentials_with_densities(added, notes)
+        self.sync_widgets(selected=paired or last)
         await self.refresh_scene()
         if notes:
             self.set_status(" ".join(notes))
         ready, error = await self.viewer.ensure_viewer_window()
         if not ready:
             await self._show_error("The 3D viewer could not be opened", error)
+
+    async def _pair_potentials_with_densities(self, added: List[CubeEntry], notes: List[str]) -> Optional[str]:
+        """Show each newly loaded ESP cube on its density cube's surface (loading that cube if needed).
+
+        An ESP cube alone can only give surfaces of constant V - not the ESP
+        tab's picture - so the density saved beside it is brought in and
+        coloured by it. Returns the density entry to select, or None.
+        """
+        selected = None
+        for esp in [e for e in added if vd.is_potential(e.volume) and e.volume.orbital is None]:
+            partner = density_partner_path(esp)
+            if partner is None:
+                notes.append(self.unpaired_potential_note(esp))
+                continue
+            density = self.entry_for_path(partner)
+            if density is None:
+                self.set_status(f"Reading {partner.name}...")
+                try:
+                    loaded = await asyncio.to_thread(self.read_entries, str(partner))
+                except (ValueError, MemoryError) as exc:
+                    notes.append(f"{partner.name} could not be read, so {esp.name} is shown alone: {exc}")
+                    continue
+                reason = vd.grid_mismatch(esp.volume, loaded[0].volume)
+                if reason:  # not asked for and not pairable: leave it out
+                    notes.append(f"{partner.name} is not on the same grid as {esp.name}, so it was not "
+                                 f"loaded with it. {reason}")
+                    continue
+                notes += self.add_entries(loaded)
+                density = loaded[0]
+            notes.append(self.link_density(esp, density))
+            if density.colour_by == esp.name:
+                selected = density.name
+        return selected
 
     async def _settle_structure(self, entry: CubeEntry) -> bool:
         """The first cube decides the displayed structure (asking before replacing one)."""

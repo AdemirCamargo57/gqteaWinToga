@@ -1596,7 +1596,14 @@ Two switches control what is drawn:
 - **Visible** hides one cube without removing it (the same setting as its **Show** box in the list).
 - If an isovalue cuts nothing, the status line says so and gives the cube's value range.
 
-**Colour by another cube.** **Colour by** colours the chosen cube's surface with another loaded cube's values instead of the solid colours: the usual way to look at an ESP is the ESP cube coloured on the density surface. For example, with the `_ESP.cube` and `_density.cube` written by the ESP tab:
+**ESP cubes load with their density cube.** Loading an ESP cube on its own and looking at its isosurfaces shows **surfaces of constant potential** (V = ±isovalue). That is a different picture from the ESP tab's, which is the **electron-density surface** coloured by V. So, when you load `<name>_ESP.cube`:
+
+- if `<name>_density.cube` is beside it on the same grid, it is loaded too. The ESP tab's **Save ESP cube...** writes both when **Also save the electron density cube** is on. The density surface (ρ = 0.0004) is shown coloured by the ESP, which is the ESP tab's picture. The ESP cube's own surfaces start unticked; tick its **Show** box to add them. The status line says *`<name>_ESP` shown on the `<name>_density` surface; tick its Show box for its own isosurfaces.*
+- if there is no density cube, the ESP cube's own surfaces are shown, and the status line names the file to load for the ESP on the molecular surface.
+- a density cube on a different grid is not loaded; the status line says why.
+- choosing both files yourself loads each once and pairs them the same way.
+
+**Colour by another cube.** **Colour by** colours the chosen cube's surface with another loaded cube's values instead of the solid colours: the usual way to look at an ESP is the ESP cube coloured on the density surface. Loading an ESP cube sets this up by itself (above). To set it up by hand, for example with the `_ESP.cube` and `_density.cube` written by the ESP tab:
 
 1. Load both cubes, and untick the ESP cube's **Show** box (its own isosurfaces are not wanted).
 2. Under **Isosurface**, choose the density cube in **Cube** and the ESP cube in **Colour by**.

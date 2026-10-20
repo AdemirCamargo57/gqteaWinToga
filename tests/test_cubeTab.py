@@ -1,5 +1,6 @@
 """Tests for the 3D viewer's Cube tab controller, headless (stub viewer and widgets)."""
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -759,3 +760,89 @@ class TestPotentialAndClipping:
         c = mapped(tmp_path)
         c.entry("rho").isovalue = 0.5
         assert c.compute_scene_items()[1] == []
+
+
+
+# ----------------------------------------------------------------------
+# Loading an ESP cube brings its density cube: the ESP shown on the surface
+# ----------------------------------------------------------------------
+def write_pair(folder, stem="mol", density=True, density_shape=(25, 25, 25)):
+    folder.mkdir(parents=True, exist_ok=True)
+    esp_path = write(folder, f"{stem}_ESP.cube", potential_volume())
+    if density:
+        write(folder, f"{stem}_density.cube", blob_density(density_shape)[0])
+    return Path(esp_path)
+
+
+def loading_controller(paths):
+    """A controller whose Load button 'chooses' ``paths``; the tab's widgets are recorders."""
+    c = recorded_widgets(controller())
+
+    async def dialog(d):
+        return list(paths)
+
+    async def ensure(timeout=5.0):
+        return True, None
+    c.viewer.main_window = SimpleNamespace(dialog=dialog)
+    c.viewer.ensure_viewer_window = ensure
+    c.errors = []
+
+    async def show_error(title, message):
+        c.errors.append((title, message))
+    c._show_error = show_error
+    return c
+
+
+class TestDensityPartner:
+    def test_the_partner_is_named_as_the_esp_tab_writes_it(self, tmp_path):
+        esp_path = write_pair(tmp_path)
+        (entry,) = ct.CubeTabController.read_entries(esp_path)
+        assert ct.density_partner_path(entry) == tmp_path / "mol_density.cube"
+
+    def test_no_partner_when_the_file_is_missing_or_the_cube_is_no_potential(self, tmp_path):
+        esp_path = write_pair(tmp_path, density=False)
+        (entry,) = ct.CubeTabController.read_entries(esp_path)
+        assert ct.density_partner_path(entry) is None
+        (rho,) = ct.CubeTabController.read_entries(write(tmp_path, "x_ESP.cube", blob_density()[0]))
+        assert ct.density_partner_path(rho) is None  # not a potential cube
+
+    def test_loading_the_esp_cube_shows_the_esp_on_the_density_surface(self, tmp_path):
+        c = loading_controller([write_pair(tmp_path)])
+        asyncio.run(c.on_load(None))
+        assert c.errors == [] and c.names() == ["mol_ESP", "mol_density"]
+        esp, rho = c.entry("mol_ESP"), c.entry("mol_density")
+        assert rho.colour_by == "mol_ESP" and rho.visible and not esp.visible
+        assert rho.isovalue == 0.0004 and c.iso_cube_selection.value == "mol_density"
+        assert c.viewer.cube_layer.colour_bar() is not None  # the mapped surface is drawn
+        assert "mol_density" in c.status_label.text and "Show" in c.status_label.text
+
+    def test_choosing_both_files_loads_each_once(self, tmp_path):
+        esp_path = write_pair(tmp_path)
+        c = loading_controller([esp_path, tmp_path / "mol_density.cube"])
+        asyncio.run(c.on_load(None))
+        assert c.names() == ["mol_ESP", "mol_density"] and c.entry("mol_density").colour_by == "mol_ESP"
+
+    def test_density_chosen_first_is_paired_too(self, tmp_path):
+        esp_path = write_pair(tmp_path)
+        c = loading_controller([tmp_path / "mol_density.cube", esp_path])
+        asyncio.run(c.on_load(None))
+        assert c.names() == ["mol_density", "mol_ESP"] and c.entry("mol_density").colour_by == "mol_ESP"
+        assert not c.entry("mol_ESP").visible
+
+    def test_a_partner_on_another_grid_is_not_paired(self, tmp_path):
+        c = loading_controller([write_pair(tmp_path, density_shape=(25, 25, 23))])
+        asyncio.run(c.on_load(None))
+        assert c.names() == ["mol_ESP"] and c.entry("mol_ESP").visible
+        assert "not on the same grid" in c.status_label.text
+
+    def test_an_esp_cube_alone_explains_what_its_surfaces_are(self, tmp_path):
+        c = loading_controller([write_pair(tmp_path, density=False)])
+        asyncio.run(c.on_load(None))
+        assert c.names() == ["mol_ESP"] and c.entry("mol_ESP").visible
+        text = c.status_label.text
+        assert "constant potential" in text and "mol_density.cube" in text
+
+    def test_ordinary_cubes_load_as_before(self, tmp_path):
+        c = loading_controller([write(tmp_path, "orb.cube", p_orbital_volume())])
+        asyncio.run(c.on_load(None))
+        assert c.names() == ["orb"] and c.entry("orb").colour_by is None and c.entry("orb").visible
