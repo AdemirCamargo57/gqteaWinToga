@@ -436,3 +436,122 @@ def matrix_densities(wfn: FchkWavefunction, matrices: Sequence[np.ndarray], poin
         for values, matrix in zip(out, matrices):
             values[a:a + chunk] = np.einsum("ij,ij->i", ao @ matrix, ao)
     return out
+
+
+# ----------------------------------------------------------------------
+# Derivatives (QTAIM): AO gradients/Hessians, and rho, grad rho, Hessian, G
+# ----------------------------------------------------------------------
+# Derivative index of evaluate_cartesian_ao_derivatives, as powers of
+# (d/dx, d/dy, d/dz): value, x, y, z, then xx, yy, zz, xy, xz, yz.
+DERIVATIVE_ORDER = ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                    (2, 0, 0), (0, 2, 0), (0, 0, 2), (1, 1, 0), (1, 0, 1), (0, 1, 1))
+SECOND_PAIRS = ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))  # axes of entries 4..9
+
+
+def _check_order(order: int) -> int:
+    if order not in (1, 2):
+        raise ValueError(f"Derivative order must be 1 or 2, not {order}.")
+    return 4 if order == 1 else 10
+
+
+def _axis_factors(t: np.ndarray, n: int, alpha: np.ndarray, order: int) -> List[np.ndarray]:
+    """d^m/dt^m [t^n exp(-a t^2)] / exp(-a t^2) for m = 0..order; shape (points, primitives).
+
+    f0 = t^n, f1 = n t^(n-1) - 2a t^(n+1),
+    f2 = n(n-1) t^(n-2) - 2a(2n+1) t^n + 4a^2 t^(n+2).
+    """
+    t = t[:, None]
+
+    def power(p):
+        return t ** p if p > 0 else (np.ones_like(t) if p == 0 else np.zeros_like(t))
+
+    f = [np.broadcast_to(power(n), (t.shape[0], alpha.size)),
+         n * power(n - 1) - 2.0 * alpha * power(n + 1)]
+    if order >= 2:
+        f.append(n * (n - 1) * power(n - 2) - 2.0 * alpha * (2 * n + 1) * power(n)
+                 + 4.0 * alpha * alpha * power(n + 2))
+    return f
+
+
+def evaluate_cartesian_ao_derivatives(wfn: FchkWavefunction, points: np.ndarray, order: int = 2,
+                                      use_numba: Optional[bool] = None) -> np.ndarray:
+    """(n_points, 4 or 10, n_cartesian): AO values and derivatives, indexed by DERIVATIVE_ORDER."""
+    n_deriv = _check_order(order)
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    if _resolve_numba(use_numba):
+        return densityNumba.cartesian_ao_derivatives(points, pack_shells(wfn), order)
+    out = np.empty((points.shape[0], n_deriv, sum(s.n_cart for s in wfn.shells)))
+    wanted = DERIVATIVE_ORDER[:n_deriv]
+    col = 0
+    for s in wfn.shells:
+        d = points - s.center
+        r2 = np.einsum("ij,ij->i", d, d)
+        weights = np.exp(-np.outer(r2, s.exponents)) * (s.coefficients * primitive_norm(s.exponents, s.l))
+        for comp in cartesian_components(s.l):
+            factors = [_axis_factors(d[:, axis], comp[axis], s.exponents, order) for axis in range(3)]
+            norm = component_angular_norm(comp)
+            for k, (p, q, r) in enumerate(wanted):
+                out[:, k, col] = norm * np.einsum(
+                    "ij,ij->i", weights, factors[0][p] * factors[1][q] * factors[2][r])
+            col += 1
+    return out
+
+
+@dataclass
+class DensityDerivatives:
+    """rho(r), its gradient and Hessian (order 2), and G(r) = 1/2 sum P grad(chi_a).grad(chi_b)."""
+    rho: np.ndarray                  # (n,)
+    gradient: np.ndarray             # (n, 3)
+    hessian: Optional[np.ndarray]    # (n, 3, 3), None for order 1
+    kinetic_g: np.ndarray            # (n,) Lagrangian kinetic energy density
+
+    @property
+    def laplacian(self) -> np.ndarray:
+        if self.hessian is None:
+            raise ValueError("The Laplacian needs the Hessian: evaluate with order=2.")
+        return np.trace(self.hessian, axis1=1, axis2=2)
+
+
+def _contract_derivatives(ao: np.ndarray, matrix: np.ndarray, order: int):
+    """rho, grad, Hessian (or None), G from AO derivatives and a Cartesian density matrix."""
+    values = ao[:, 0]
+    vp = values @ matrix
+    dp = [ao[:, 1 + k] @ matrix for k in range(3)]
+    rho = np.einsum("pi,pi->p", vp, values)
+    grad = 2.0 * np.stack([np.einsum("pi,pi->p", vp, ao[:, 1 + k]) for k in range(3)], axis=1)
+    g = 0.5 * (np.einsum("pi,pi->p", dp[0], ao[:, 1]) + np.einsum("pi,pi->p", dp[1], ao[:, 2])
+               + np.einsum("pi,pi->p", dp[2], ao[:, 3]))
+    hess = None
+    if order >= 2:
+        hess = np.empty((len(values), 3, 3))
+        for k, (a, b) in enumerate(SECOND_PAIRS):
+            v = 2.0 * (np.einsum("pi,pi->p", dp[a], ao[:, 1 + b]) + np.einsum("pi,pi->p", vp, ao[:, 4 + k]))
+            hess[:, a, b] = v
+            hess[:, b, a] = v
+    return rho, grad, hess, g
+
+
+def density_derivatives(wfn: FchkWavefunction, points: np.ndarray, order: int = 2, chunk: int = 5000,
+                        use_numba: Optional[bool] = None) -> DensityDerivatives:
+    """rho, grad rho, the Hessian of rho (order 2) and G at every point (a.u., bohr).
+
+    grad rho = 2 sum P_ab chi_a grad chi_b; d_i d_j rho = 2 sum P_ab (d_i chi_a d_j chi_b
+    + chi_a d_i d_j chi_b); G = 1/2 sum P_ab grad chi_a . grad chi_b (exact from P).
+    ``use_numba`` None = the compiled, AO-screened densityNumba kernel when installed.
+    """
+    _check_order(order)
+    use_numba = _resolve_numba(use_numba)
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    n = points.shape[0]
+    if use_numba:
+        rho, grad, hess, g = densityNumba.density_derivatives(points, pack_shells(wfn), wfn.cart_density, order)
+        return DensityDerivatives(rho, grad, hess, g)
+    rho, grad, g = np.empty(n), np.empty((n, 3)), np.empty(n)
+    hess = np.empty((n, 3, 3)) if order >= 2 else None
+    for a in range(0, n, chunk):
+        ao = evaluate_cartesian_ao_derivatives(wfn, points[a:a + chunk], order, use_numba=False)
+        r, gr, h, kg = _contract_derivatives(ao, wfn.cart_density, order)
+        rho[a:a + chunk], grad[a:a + chunk], g[a:a + chunk] = r, gr, kg
+        if hess is not None:
+            hess[a:a + chunk] = h
+    return DensityDerivatives(rho, grad, hess, g)
