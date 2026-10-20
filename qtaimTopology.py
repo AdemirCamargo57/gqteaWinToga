@@ -354,3 +354,194 @@ def find_critical_points(wfn: gw.FchkWavefunction, modes: Sequence[int], params:
 
 def cp_counts(cps: Sequence[CriticalPoint]) -> Dict[str, int]:
     return {t: sum(1 for c in cps if c.kind == t) for t in CP_TYPES}
+
+
+# ----------------------------------------------------------------------
+# Gradient paths
+# ----------------------------------------------------------------------
+MIN_PATH_GRADIENT = 1e-12   # |grad rho| below it: the path has stalled (no direction to follow)
+
+
+@dataclass
+class TopologyPath:
+    kind: str              # "bond" (3,-1) -> (3,-3) or "ring" (3,+1) -> (3,+3)
+    start_cp: int          # 1-based CP index
+    end_cp: int            # 1-based CP index
+    points: np.ndarray     # (m, 3) bohr, from the start CP's position to the end CP's position
+
+    @property
+    def length(self) -> float:
+        return float(np.sum(np.linalg.norm(np.diff(self.points, axis=0), axis=1)))
+
+
+@dataclass(frozen=True)
+class Plane:
+    """A plane through ``origin`` spanned by the orthonormal ``u`` and ``v`` (bohr)."""
+    origin: np.ndarray
+    u: np.ndarray
+    v: np.ndarray
+
+    @property
+    def normal(self) -> np.ndarray:
+        return np.cross(self.u, self.v)
+
+    def to_plane(self, points: np.ndarray) -> np.ndarray:
+        """(m, 2) in-plane coordinates of 3D points (bohr)."""
+        d = np.asarray(points, dtype=float).reshape(-1, 3) - self.origin
+        return np.stack([d @ self.u, d @ self.v], axis=1)
+
+    def distance(self, points: np.ndarray) -> np.ndarray:
+        """Signed distance of 3D points from the plane (bohr)."""
+        return (np.asarray(points, dtype=float).reshape(-1, 3) - self.origin) @ self.normal
+
+    def to_space(self, st: np.ndarray) -> np.ndarray:
+        st = np.asarray(st, dtype=float).reshape(-1, 2)
+        return self.origin + st[:, :1] * self.u + st[:, 1:] * self.v
+
+
+def trace_paths(wfn: gw.FchkWavefunction, starts: np.ndarray, direction: float, targets: np.ndarray,
+                params: PathParameters, plane: Optional[Plane] = None, max_points: Optional[int] = None,
+                bounds: Optional[Tuple[float, float, float, float]] = None, keep_unfinished: bool = False,
+                use_numba: Optional[bool] = None) -> List[Optional[Tuple[np.ndarray, int]]]:
+    """Follow +grad rho (direction +1) or -grad rho (-1) from each start, all paths in one batch.
+
+    Classical RK4 on the unit gradient with the fixed step ``params.step``, so
+    points are evenly spaced, as in Multiwfn. A path ends when it comes within
+    ``stop_distance`` of a target (the target's position is appended): the
+    result is ``(points (m, 3), target index)``, points starting at the start.
+    Reaching ``max_points`` (default params.max_points), stalling (|grad| <
+    MIN_PATH_GRADIENT) or leaving ``bounds`` (plane coordinates, bohr) gives
+    None, or ``(points, -1)`` with ``keep_unfinished``. With ``plane`` the
+    gradient is projected onto it, so a start in the plane stays in it.
+    """
+    starts = np.asarray(starts, dtype=float).reshape(-1, 3)
+    targets = np.asarray(targets, dtype=float).reshape(-1, 3)
+    limit = int(max_points or params.max_points)
+    tree = cKDTree(targets) if len(targets) else None
+    h = float(params.step)
+    paths: List[List[np.ndarray]] = [[s.copy()] for s in starts]
+    results: List[Optional[Tuple[np.ndarray, int]]] = [None] * len(starts)
+    pos = starts.copy()
+    active = np.arange(len(starts))
+
+    def unit(x):
+        g = gw.density_derivatives(wfn, x, order=1, use_numba=use_numba).gradient
+        if plane is not None:
+            g = np.outer(g @ plane.u, plane.u) + np.outer(g @ plane.v, plane.v)
+        norm = np.linalg.norm(g, axis=1)
+        safe = np.where(norm > MIN_PATH_GRADIENT, norm, 1.0)
+        return direction * g / safe[:, None], norm
+
+    def finish(i, target):
+        pts = np.array(paths[i])
+        if target >= 0:
+            results[i] = (np.vstack([pts, targets[target]]), int(target))
+        elif keep_unfinished:
+            results[i] = (pts, -1)
+
+    def arrived(points):
+        if tree is None:
+            return np.full(len(points), -1)
+        d, k = tree.query(points)
+        return np.where(d < params.stop_distance, k, -1)
+
+    hit = arrived(pos)
+    for i in np.flatnonzero(hit >= 0):
+        finish(i, hit[i])
+    active = active[hit < 0]
+    while active.size:
+        p = pos[active]
+        k1, n1 = unit(p)
+        k2, _ = unit(p + 0.5 * h * k1)
+        k3, _ = unit(p + 0.5 * h * k2)
+        k4, _ = unit(p + h * k3)
+        new = p + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        stalled = n1 <= MIN_PATH_GRADIENT
+        pos[active] = new
+        hit = arrived(new)
+        outside = np.zeros(len(active), dtype=bool)
+        if bounds is not None and plane is not None:
+            st = plane.to_plane(new)
+            outside = (st[:, 0] < bounds[0]) | (st[:, 0] > bounds[1]) | (st[:, 1] < bounds[2]) | (st[:, 1] > bounds[3])
+        still = np.ones(len(active), dtype=bool)
+        for n, i in enumerate(active):
+            if stalled[n]:
+                finish(i, -1)
+                still[n] = False
+                continue
+            paths[i].append(new[n].copy())
+            if hit[n] >= 0:
+                finish(i, hit[n])
+                still[n] = False
+            elif outside[n] or len(paths[i]) >= limit:
+                finish(i, -1)
+                still[n] = False
+        active = active[still]
+    return results
+
+
+def bond_paths(wfn: gw.FchkWavefunction, cps: Sequence[CriticalPoint], params: PathParameters,
+               use_numba: Optional[bool] = None) -> Tuple[List[TopologyPath], List[str]]:
+    """Both halves of every bond path; each complete BCP gets its ("pair", i, j) assignment.
+
+    Each (3,-1) is displaced by +-step along the eigenvector of lambda3 and the
+    gradient is climbed to a (3,-3). Atoms are 0-based, -1 for a non-nuclear
+    attractor, sorted with NNAs last.
+    """
+    params.validate()
+    bcps = [c for c in cps if c.kind == BCP]
+    ncps = [c for c in cps if c.kind == NCP]
+    if not bcps or not ncps:
+        return [], []
+    starts = []
+    for c in bcps:
+        e3 = c.properties.eigenvectors[:, 2]
+        starts += [c.position + params.step * e3, c.position - params.step * e3]
+    traced = trace_paths(wfn, np.array(starts), +1.0, np.array([c.position for c in ncps]), params,
+                         use_numba=use_numba)
+    paths: List[TopologyPath] = []
+    incomplete = 0
+    for n, bcp in enumerate(bcps):
+        halves = traced[2 * n:2 * n + 2]
+        if any(h is None for h in halves) or halves[0][1] == halves[1][1]:
+            incomplete += 1
+            continue
+        ends = []
+        for pts, target in halves:
+            ncp = ncps[target]
+            paths.append(TopologyPath("bond", bcp.index, ncp.index, np.vstack([bcp.position, pts])))
+            a = ncp.assignment
+            ends.append(a[1] if a and a[0] == "atom" else -1)
+        bcp.assignment = ("pair", *sorted(ends, key=lambda x: (x < 0, x)))
+    notes = []
+    if incomplete:
+        notes.append(f"{incomplete} bond critical point(s) have no complete bond path within "
+                     f"{params.max_points} points of {params.step:g} bohr; they have no atom pair.")
+    return paths, notes
+
+
+def ring_paths(wfn: gw.FchkWavefunction, cps: Sequence[CriticalPoint], params: PathParameters,
+               use_numba: Optional[bool] = None) -> List[TopologyPath]:
+    """(3,+1) -> (3,+3) paths, descending along the eigenvector of lambda1.
+
+    Only traced when the molecule has cage points; a half that does not reach
+    one runs off to infinity, which is normal, and is dropped silently.
+    """
+    params.validate()
+    rcps = [c for c in cps if c.kind == RCP]
+    ccps = [c for c in cps if c.kind == CCP]
+    if not rcps or not ccps:
+        return []
+    starts = []
+    for c in rcps:
+        e1 = c.properties.eigenvectors[:, 0]
+        starts += [c.position + params.step * e1, c.position - params.step * e1]
+    traced = trace_paths(wfn, np.array(starts), -1.0, np.array([c.position for c in ccps]), params,
+                         use_numba=use_numba)
+    paths = []
+    for n, result in enumerate(traced):
+        if result is not None:
+            rcp = rcps[n // 2]
+            paths.append(TopologyPath("ring", rcp.index, ccps[result[1]].index,
+                                      np.vstack([rcp.position, result[0]])))
+    return paths

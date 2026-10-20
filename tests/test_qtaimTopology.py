@@ -173,3 +173,70 @@ class TestPieces:
         code = "import sys, qtaimTopology; print('toga' in sys.modules)"
         out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)
         assert out.stdout.strip() == "False"
+
+
+class TestPaths:
+    def test_h2_bond_path_is_the_axis_and_assigns_the_pair(self, h2):
+        wfn, cps, _ = h2
+        paths, notes = qt.bond_paths(wfn, cps, qt.PathParameters())
+        assert len(paths) == 2 and not notes
+        bcp = cps[2]
+        assert bcp.assignment == ("pair", 0, 1)
+        assert sorted(p.end_cp for p in paths) == [1, 2] and {p.start_cp for p in paths} == {3}
+        for p in paths:
+            assert np.allclose(p.points[:, :2], 0.0, atol=1e-8)
+            assert np.allclose(p.points[0], bcp.position)
+            end = cps[p.end_cp - 1].position
+            assert np.allclose(p.points[-1], end)
+            assert p.length == pytest.approx(np.linalg.norm(end - bcp.position), abs=1e-9)
+            steps = np.linalg.norm(np.diff(p.points[:-1], axis=0), axis=1)
+            assert np.allclose(steps, 0.03, rtol=1e-6)   # evenly spaced, as in Multiwfn
+
+    def test_water_bond_path_lengths_match_multiwfn(self, water):
+        # Multiwfn 2026.7.15 water 6-31G(d): BCP -> H 0.29034 bohr, BCP -> O 1.45472 bohr (each bond)
+        wfn, cps, _ = water
+        paths, notes = qt.bond_paths(wfn, cps, qt.PathParameters())
+        assert not notes
+        assert sorted(round(p.length, 5) for p in paths) == pytest.approx([0.29034, 0.29034, 1.45472, 1.45472],
+                                                                           abs=2e-5)
+        assert sorted(c.assignment for c in cps if c.kind == qt.BCP) == [("pair", 0, 1), ("pair", 0, 2)]
+
+    def test_trace_gives_none_when_max_points_reached(self, h2):
+        wfn, cps, _ = h2
+        bcp = cps[2]
+        start = bcp.position + 0.03 * np.array([0, 0, 1.0])
+        out = qt.trace_paths(wfn, start[None], +1.0, np.array([cps[1].position]), qt.PathParameters(max_points=3))
+        assert out == [None]
+        kept = qt.trace_paths(wfn, start[None], +1.0, np.array([cps[1].position]), qt.PathParameters(max_points=3),
+                              keep_unfinished=True)
+        assert kept[0][1] == -1 and len(kept[0][0]) == 3
+
+    def test_plane_restricted_trace_stays_in_the_plane(self, water):
+        wfn, _, _ = water
+        u = np.array([1.0, 1.0, 0.0]) / np.sqrt(2)
+        plane = qt.Plane(np.zeros(3), u, np.array([0.0, 0.0, 1.0]))
+        start = plane.to_space(np.array([[0.4, 0.3]]))
+        out = qt.trace_paths(wfn, start, -1.0, np.empty((0, 3)), qt.PathParameters(), plane=plane,
+                             max_points=200, keep_unfinished=True)
+        pts = out[0][0]
+        assert len(pts) == 200
+        assert np.max(np.abs(plane.distance(pts))) < 1e-12
+
+    def test_trace_stops_on_leaving_bounds(self, water):
+        wfn, _, _ = water
+        plane = qt.Plane(np.zeros(3), np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0]))
+        out = qt.trace_paths(wfn, plane.to_space(np.array([[0.0, 1.0]])), -1.0, np.empty((0, 3)),
+                             qt.PathParameters(), plane=plane, max_points=5000, keep_unfinished=True,
+                             bounds=(-3.0, 3.0, -3.0, 3.0))
+        st = plane.to_plane(out[0][0])
+        assert len(st) < 5000 and np.max(np.abs(st[:-1])) <= 3.0
+
+    def test_plane_coordinates_round_trip(self):
+        plane = qt.Plane(np.array([1.0, 2.0, 3.0]), np.array([1.0, 0, 0]), np.array([0, 1.0, 0]))
+        st = np.array([[0.5, -1.0], [2.0, 3.0]])
+        assert np.allclose(plane.to_plane(plane.to_space(st)), st)
+        assert np.allclose(plane.normal, [0, 0, 1])
+
+    def test_ring_paths_need_a_cage(self, water):
+        wfn, cps, _ = water
+        assert qt.ring_paths(wfn, cps, qt.PathParameters()) == []
