@@ -133,7 +133,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.9.0 Molecular Analysis Toolkit
+gQTEA-0.9.5 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -5789,8 +5789,18 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.9.0 Molecular Analysis Toolkit
+gQTEA-0.9.5 Molecular Analysis Toolkit
 ```
+
+Version 0.9.5 (October 2026) adds the [QTAIM Topology Analysis](#qtaim-topology-analysis) tab to the 3D Molecular Viewer:
+
+- Bader's topology of the electron density of a Gaussian `.fchk`: all critical points (nuclear, bond, ring and cage) with ρ, ∇²ρ, the Hessian eigenvalues, ellipticity, η and the energy densities G, K, V and H; bond and ring paths; the Poincaré–Hopf check; and the `<name>_QTAIM.txt` report;
+- Multiwfn's algorithms and default parameters, every one adjustable, validated against Multiwfn 2026.7.15 on six molecules;
+- the critical points and paths drawn in the 3D window, with a canvas background, a new **Design style** (the Molecular Design Canvas look, also on the Display tab) and independent element-symbol and atom-number labels;
+- a Multiwfn-style 2D plane map (density contours, gradient lines, interbasin and bond paths) in the interactive plot viewer;
+- image export of the 3D view and of the 2D map;
+- `numba` kernels for the density derivatives (4–46× faster analyses);
+- a step-by-step procedure, [Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer) and a [theoretical background](#theoretical-background-the-quantum-theory-of-atoms-in-molecules) in this manual.
 
 Version 0.9.0 (October 2026) turns the [Molecular Design](#molecular-design) canvas into a structure editor:
 
