@@ -104,7 +104,7 @@ The public wrapper `cartesian_ao_derivatives(points, packed, order)` reuses the 
 
 ### 2.4 `qtaimAnalysis.py` (new, Toga-free)
 
-- `QTAIMAnalyser.run(fchk_path, modes, search, paths, progress)` → `QTAIMResults`. The results hold the wfn, CPs (ordered (3,−3), (3,−1), (3,+1), (3,+3), each in discovery order), bond paths, ring paths, notes and parameters.
+- `QTAIMAnalyser.run(fchk_path, modes, search, paths, progress)` → `QTAIMResults`. The results hold the wfn, CPs (ordered (3,−3) by assigned atom with NNAs last, then (3,−1), (3,+1), (3,+3) each in discovery order), bond paths, ring paths, notes and parameters.
 - Every problem is a `ValueError` with a specific message.
 - `progress(fraction, message)` may raise; the exception is swallowed, as elsewhere.
 - `report_text(results, written)` and `write_outputs(results, output_dir)` write `<stem>_QTAIM.txt`. The UI writes it automatically after every run.
