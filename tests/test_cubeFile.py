@@ -55,6 +55,73 @@ class TestCube:
         assert out.stdout.strip() == "False"
 
 
+def adversarial_values():
+    """Values that stress %13.5E: ties in the 6th digit, carries, 3-digit exponents, specials."""
+    rng = np.random.default_rng(11)
+    signs = rng.choice([-1.0, 1.0], 4000)
+    spread = signs * 10.0 ** rng.uniform(-320, 307, 4000)
+    digits = rng.integers(100000, 1000000, 3000).astype(float)
+    exponents = rng.integers(-40, 40, 3000).astype(float)
+    ties = (digits + 0.5) * 10.0 ** (exponents - 5)
+    near_ties = np.concatenate([np.nextafter(ties, np.inf), np.nextafter(ties, -np.inf)])
+    # Just outside the kernel's tie window: it must round these itself, in the right direction.
+    offsets = rng.choice([-1.0, 1.0], 3000) * rng.uniform(3e-7, 1e-5, 3000)
+    beside_ties = (digits + 0.5 + offsets) * 10.0 ** (exponents - 5)
+    powers = 10.0 ** np.arange(-307, 308, dtype=float)
+    special = np.array([0.0, -0.0, np.nan, np.inf, -np.inf, 5e-324, 2.2250738585072014e-308,
+                        1.7976931348623157e308, 9.999995e-3, 9.9999949e5, 0.99999950000001,
+                        -9.999996, 1e-5, -1e100, 1e-100, 123456.5, 0.1, 1.0 / 3.0])
+    values = np.concatenate([spread, ties, near_ties, beside_ties, powers, -powers, special,
+                             rng.normal(0, 0.01, 2000)])
+    pad = (-values.size) % 7
+    return np.concatenate([values, np.zeros(pad)]).reshape(-1, 1, 7)
+
+
+@pytest.mark.skipif(not cf.numba_available(), reason="numba not installed")
+class TestCompiledFormatting:
+    def test_numba_text_is_byte_identical_to_python(self):
+        values = adversarial_values()
+        python = "".join(cf.value_blocks(values, use_numba=False))
+        compiled = "".join(cf.value_blocks(values, use_numba=True))
+        assert compiled == python
+
+    def test_python_fallback_is_rare_on_ordinary_data(self):
+        import volumeNumba as vn
+        columns = np.random.default_rng(3).normal(0.0, 0.01, (20000, 10))
+        flags = np.zeros(columns.shape, dtype=bool)
+        out = np.empty(columns.shape[0] * vn.column_bytes(10), dtype=np.uint8)
+        vn._format_columns(columns, vn.column_bytes(10), out, flags)
+        assert flags.sum() < 10  # ~2e-7 of values sit inside the tie window
+
+    def test_whole_cube_is_identical_and_round_trips(self, tmp_path):
+        cube = sample_cube((5, 4, 13))
+        assert cf.format_cube(cube, use_numba=True) == cf.format_cube(cube, use_numba=False)
+        back = cf.read_cube(cf.write_cube(tmp_path / "a.cub", cube, use_numba=True))
+        assert np.allclose(back.values, cube.values, rtol=1e-5, atol=1e-12)
+
+
+class TestBlockWriting:
+    def test_blocks_of_any_size_give_the_same_text(self):
+        values = sample_cube((4, 5, 13)).values
+        whole = "".join(cf.value_blocks(values, use_numba=False, block_values=10 ** 6))
+        for block in (1, 13, 40):
+            assert "".join(cf.value_blocks(values, use_numba=False, block_values=block)) == whole
+
+    def test_written_file_is_the_formatted_text(self, tmp_path):
+        cube = sample_cube((3, 4, 7))
+        path = cf.write_cube(tmp_path / "a.cub", cube)
+        assert open(path, encoding="ascii").read() == cf.format_cube(cube)
+        volume = cf.read_cube_volumes(path)[0]
+        again = cf.write_cube_volume(tmp_path / "b.cub", volume)
+        assert open(again, encoding="ascii").read() == cf.format_cube_volume(volume)
+
+    def test_forcing_numba_without_it_is_a_value_error(self, monkeypatch):
+        monkeypatch.setattr(cf, "volumeNumba", None)
+        assert not cf.numba_available()
+        with pytest.raises(ValueError, match="numba"):
+            cf.format_cube(sample_cube(), use_numba=True)
+
+
 # ----------------------------------------------------------------------
 # General reader/writer (CubeVolume): orbital cubes, Angstrom headers,
 # skewed and unequal-spacing grids. read_cube above stays strict.

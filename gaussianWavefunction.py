@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import comb, pi, sqrt
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -417,10 +417,22 @@ def electron_density(wfn: FchkWavefunction, points: np.ndarray, chunk: int = 200
     ``use_numba`` None means "if installed": the AO values then come from the
     compiled densityNumba kernel (same numbers to ~1e-15 relative).
     """
+    return matrix_densities(wfn, [wfn.cart_density], points, chunk, use_numba)[0]
+
+
+def matrix_densities(wfn: FchkWavefunction, matrices: Sequence[np.ndarray], points: np.ndarray,
+                     chunk: int = 20000, use_numba: Optional[bool] = None) -> List[np.ndarray]:
+    """chi(r)^T M chi(r) at every point for each Cartesian matrix M in ``wfn``'s basis.
+
+    The AO values are evaluated once per chunk and shared by all matrices, so
+    several densities in one basis (or a density difference, which is linear
+    in the density matrix) cost one AO evaluation and one product each.
+    """
     use_numba = _resolve_numba(use_numba)
     points = np.asarray(points, dtype=float).reshape(-1, 3)
-    rho = np.empty(points.shape[0])
+    out = [np.empty(points.shape[0]) for _ in matrices]
     for a in range(0, points.shape[0], chunk):
         ao = evaluate_cartesian_aos(wfn, points[a:a + chunk], use_numba)
-        rho[a:a + chunk] = np.einsum("ij,ij->i", ao @ wfn.cart_density, ao)
-    return rho
+        for values, matrix in zip(out, matrices):
+            values[a:a + chunk] = np.einsum("ij,ij->i", ao @ matrix, ao)
+    return out

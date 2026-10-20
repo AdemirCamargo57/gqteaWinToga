@@ -9,11 +9,20 @@ faster and much lighter on memory for large cubes. Triangles come out in
 cell order rather than tetrahedron order; ``mesh_from_cut_edges`` sorts the
 edge ids, so the vertex arrays of both paths are identical.
 
+``format_e13`` writes cube-file values as text, the ``%13.5E`` layout of
+``cubeFile`` (6 per line, a new line for every (x, y) column), in parallel.
+It produces the bytes Python's own formatting produces: the few values it
+cannot settle exactly (a sixth significant digit within 1e-7 of a rounding
+tie, non-finite values, exponents beyond +/-300) are flagged and formatted
+by Python instead.
+
 Importing this module raises ImportError when numba is not installed; the
-caller (volumeData) then keeps the numpy path.
+callers (volumeData, cubeFile) then keep their Python/numpy paths.
 """
 
 from __future__ import annotations
+
+import math
 
 import numba
 import numpy as np
@@ -128,3 +137,114 @@ def tetra_cut_edges(values: np.ndarray, isovalue: float):
     if total:
         _fill(values, float(isovalue), _OFFSETS, _TETS, _LUT, starts, edges, dirs)
     return edges, dirs.astype(float)
+
+
+# ----------------------------------------------------------------------
+# Cube values as text: %13.5E, 6 per line, a new line for every column
+# ----------------------------------------------------------------------
+E13_WIDTH = 13
+VALUES_PER_LINE = 6
+# A sixth significant digit this close to a rounding tie goes to Python: the
+# scaled value carries ~1e-9 absolute error, the tie test needs it exact.
+TIE_TOLERANCE = 1e-7
+MAX_DECIMAL_EXPONENT = 300  # beyond it 10**(5 - e) leaves the normal range
+
+
+@numba.njit(cache=True)
+def _scaled_mantissa(a, e):
+    """a / 10**(e - 5): six significant digits before the decimal point."""
+    k = 5 - e
+    if k >= 0:
+        return a * 10.0 ** k
+    return a / 10.0 ** (-k)
+
+
+@numba.njit(cache=True)
+def _write_e13(out, pos, v):
+    """Write v as Python's f"{v:13.5E}" into out[pos:pos + 13]; False when Python must do it."""
+    if not math.isfinite(v):
+        return False
+    negative = math.copysign(1.0, v) < 0.0
+    a = abs(v)
+    digits = 0
+    e = 0
+    if a != 0.0:
+        e = int(math.floor(math.log10(a)))
+        if e > MAX_DECIMAL_EXPONENT or e < -MAX_DECIMAL_EXPONENT:
+            return False
+        m = _scaled_mantissa(a, e)
+        if m < 100000.0:
+            e -= 1
+            m = _scaled_mantissa(a, e)
+        elif m >= 1000000.0:
+            e += 1
+            m = _scaled_mantissa(a, e)
+        if m < 100000.0 or m >= 1000000.0:
+            return False
+        whole = math.floor(m)
+        fraction = m - whole
+        if abs(fraction - 0.5) < TIE_TOLERANCE:
+            return False
+        digits = int(whole) + (1 if fraction > 0.5 else 0)
+        if digits == 1000000:  # 9.999996 -> 1.00000E+01
+            digits = 100000
+            e += 1
+    j = pos + E13_WIDTH
+    exponent = abs(e)
+    n_exp = 3 if exponent >= 100 else 2
+    for _ in range(n_exp):
+        j -= 1
+        out[j] = 48 + exponent % 10
+        exponent //= 10
+    j -= 1
+    out[j] = 45 if e < 0 else 43   # - or +
+    j -= 1
+    out[j] = 69                    # E
+    for _ in range(5):
+        j -= 1
+        out[j] = 48 + digits % 10
+        digits //= 10
+    j -= 1
+    out[j] = 46                    # .
+    j -= 1
+    out[j] = 48 + digits
+    if negative:
+        j -= 1
+        out[j] = 45
+    for k in range(pos, j):
+        out[k] = 32
+    return True
+
+
+def column_bytes(nz: int) -> int:
+    """Bytes of one (x, y) column: nz values plus one newline per line of up to six."""
+    return nz * E13_WIDTH + (nz + VALUES_PER_LINE - 1) // VALUES_PER_LINE
+
+
+@numba.njit(parallel=True, cache=True)
+def _format_columns(columns, per_column, out, python_needed):
+    n_columns, nz = columns.shape
+    for c in numba.prange(n_columns):
+        pos = c * per_column
+        for k in range(nz):
+            if not _write_e13(out, pos, columns[c, k]):
+                python_needed[c, k] = True
+            pos += E13_WIDTH
+            if k % VALUES_PER_LINE == VALUES_PER_LINE - 1 or k == nz - 1:
+                out[pos] = 10
+                pos += 1
+
+
+def format_e13(columns: np.ndarray) -> str:
+    """(n_columns, nz) values as cube text, byte for byte what the Python loop writes."""
+    columns = np.ascontiguousarray(columns, dtype=np.float64)
+    n_columns, nz = columns.shape
+    per_column = column_bytes(nz)
+    out = np.empty(n_columns * per_column, dtype=np.uint8)
+    python_needed = np.zeros(columns.shape, dtype=np.bool_)
+    if columns.size:
+        _format_columns(columns, per_column, out, python_needed)
+    for c, k in np.argwhere(python_needed):
+        start = c * per_column + k * E13_WIDTH + k // VALUES_PER_LINE
+        out[start:start + E13_WIDTH] = np.frombuffer(f"{columns[c, k]:13.5E}".encode("ascii"), np.uint8)
+    return out.tobytes().decode("ascii")

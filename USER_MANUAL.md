@@ -2485,6 +2485,7 @@ Steps 1–3 can be prepared by [Inputs > Gaussian Fukui Input Builder](#gaussian
 - Grid spacing: blank = 0.25 bohr.
 - Atom-condensed indices: on by default. They are computed inside the tool from Hirshfeld charges of the three states (built-in free-atom densities, elements H–Ar); no external program is needed. Switch them off to save a few seconds. For other elements, or files that use effective core potentials, the run still finishes and a NOTE explains why.
 - Write cube files: on by default.
+- Cube grid spacing: blank = 0.1 bohr. The cubes are computed exactly at every point of their own grid, which covers the same box as the 0.25 bohr analysis grid but has about 15 times as many points, so GaussView and the 3D viewer's Cube tab draw smooth isosurfaces. Enter 0.25 to write the analysis grid itself (files about 15 times smaller). Acetone with 6-31++G(d,p) at 0.1 bohr: 161 × 156 × 154 points, about 52 MB per cube, 6 s for all four with `numba` installed.
 
 **Run** checks the three files (same atoms, geometry, basis set and method; N+1 has one electron more, N−1 one fewer), then computes everything. The Results tab shows the report, which is also saved as `<name>_Fukui.txt`. It contains:
 - the global indices (IP, EA, electronegativity, hardness = I − A, softness, electrophilicity, nucleophilicity);
@@ -2494,10 +2495,11 @@ Steps 1–3 can be prepared by [Inputs > Gaussian Fukui Input Builder](#gaussian
 - the surface extrema of each function on ρ(N) = 0.01 a.u., with the nearest atom;
 - NOTES, e.g. degenerate frontier orbitals, diffuse basis functions, negative condensed values, unusual multiplicities.
 
-Cubes: `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub`, `_dual.cub` (a.u. on a bohr grid; open them in VMD or Multiwfn).
+Cubes: `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub`, `_dual.cub` (a.u. on a bohr grid; open them in GaussView, VMD, Multiwfn or the 3D viewer's Cube tab). The report header records the cube grid (`# cube_spacing_bohr`).
 
 **Show 3D.** Pick a function and a display:
-- *Isosurfaces* at ±isovalue: blue positive, red negative.
+- *Isosurfaces (+/- isovalue)*: blue positive, red negative.
+- *Positive isosurface only* (+isovalue, blue) or *Negative isosurface only* (−isovalue, red): one sign on its own, e.g. the nucleophilic (Δf > 0) or electrophilic (Δf < 0) regions of the dual descriptor. If the function never reaches that value, the view is cleared and the status line says so. Exported images get `_positive`/`_negative` in their suggested name.
 - *Mapped on ρ(N) surface*: colour = value, with extrema markers (cyan minimum, orange maximum).
 
 **Atoms** (Results tab): *Line*, *Ball and stick (CPK)* or *Space-filling (vdW)*, and *Show atom numbers* (1-based, the numbering used in the report). Both apply at once, with or without results. Space-filling spheres are larger than the Fukui lobes and hide them: use that style to judge how exposed a site is, then switch back.
@@ -4646,7 +4648,8 @@ surface $s f(\mathbf{r}) = f_\text{iso}$ is built by the ESP tool's algorithm:
 - vertex merging (closer than $0.5h$) and elimination;
 - triangles oriented along $-\nabla(s f)$.
 
-The positive and negative surfaces are drawn as one mesh.
+The positive and negative surfaces are built as separate meshes and drawn
+together, or one at a time with *Positive/Negative isosurface only*.
 
 **Mapped surface and extrema.** The four functions are also evaluated exactly
 at the vertices of the isosurface $\rho_N = \rho_\text{s}$. The default
@@ -4658,9 +4661,29 @@ second-ring neighbours, and the global extremum is always reported. Each
 extremum is labelled with its nearest atom.
 
 **Cube files.** `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub` and
-`_dual.cub` contain the four grids in the standard Gaussian cube layout:
+`_dual.cub` contain the four functions in the standard Gaussian cube layout:
 bohr, the atoms' numbers and positions, values `%13.5E`, six per line, z
 fastest. VMD, Multiwfn and GaussView read them.
+
+The cubes have their own grid, spacing $h_\text{cube}$ (default 0.1 bohr). It
+starts at the analysis grid's origin and covers at least its box, and every
+value is computed exactly at its grid point, never interpolated from the
+analysis grid. Because $\rho = \chi^\mathsf{T} P\, \chi$ is linear in the
+density matrix,
+
+$$
+f^+(\mathbf{r}) = \chi(\mathbf{r})^\mathsf{T}\,\frac{P_{N+p} - P_N}{p}\,\chi(\mathbf{r}),
+\qquad
+f^-(\mathbf{r}) = \chi(\mathbf{r})^\mathsf{T}\,\frac{P_N - P_{N-q}}{q}\,\chi(\mathbf{r}),
+$$
+
+so the basis functions are evaluated once per point and contracted with two
+difference matrices instead of three densities. It is also more accurate:
+near a nucleus the three densities are of order 10²–10³ a.u. while $f$ is
+of order 10⁻², and subtracting them loses digits. For acetone the two routes
+differ by at most $9\times10^{-14}$ a.u. A cube grid at the analysis spacing
+writes the analysis grid itself. Grids beyond 25 million points (about
+330 MB per file) are refused with the smallest spacing that fits.
 
 ### 11. Compiled kernels (Numba)
 
@@ -4677,6 +4700,7 @@ multi-threaded loop over points.
 - **Screening.** A shell is set to zero at a point when even its most diffuse primitive satisfies $\alpha_\text{min} r_c^2 > 50$, i.e. it is below $e^{-50} \approx 2\times10^{-22}$ of its coefficient.
 - **Contraction.** The step $\rho = \sum_{\mu\nu}P_{\mu\nu}\chi_\mu\chi_\nu$ stays a matrix product (BLAS) on blocks of 20 000 points.
 - **Becke weights.** The same module computes the Becke weights of subsection 9.
+- **Cube text.** Writing the values as `%13.5E` text in Python takes about 0.6 µs per value. [volumeNumba.py](volumeNumba.py) writes them in a compiled, parallel loop and produces the same bytes. A value whose sixth significant digit lies within $10^{-7}$ of a rounding tie, a non-finite value or an exponent beyond ±300 is left to Python, about 2 in 10⁷ values in practice. Measured: 3.75 M values, 2.3 s in Python vs 0.11 s compiled.
 
 Without `numba`, the numpy path runs and gives the same numbers:
 
@@ -4693,6 +4717,11 @@ differences in rounding order; those points carry negligible weight.
 **Timing** (phenol, 0.25 bohr grid, 222 300 points):
 - density: 0.83 s with numpy, 0.20 s compiled;
 - whole run, including the condensed indices: about 8 s.
+
+**Timing of the cube export** (acetone, 6-31++G(d,p), 0.1 bohr, 3.87 M points):
+- f⁺ and f⁻ on the cube grid: 8.4 s as three densities, 3.9 s from the difference matrices;
+- four cube files: 9.2 s of Python formatting, under 1 s compiled;
+- whole export: about 6 s, against about 18 s by the old route.
 
 The first run after installing `numba` spends a few seconds compiling; later
 runs load the cache.

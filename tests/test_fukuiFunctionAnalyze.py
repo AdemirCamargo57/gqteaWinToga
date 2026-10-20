@@ -210,6 +210,80 @@ class TestPhenol:
         assert np.allclose(cube.values, r.grids["f-"], rtol=1e-5, atol=1e-10)
 
 
+class TestCubeGrid:
+    """Exported cubes on their own, finer grid, computed from density-matrix differences."""
+
+    def test_same_spacing_reuses_the_analysis_grids(self, phenol):
+        r, _ = phenol
+        analyser = fk.FukuiAnalyser()
+        assert analyser.cube_grids(r, None) is r.grids
+        assert analyser.cube_grids(r, r.spacing) is r.grids
+
+    def test_density_matrix_differences_reproduce_the_density_differences(self, phenol):
+        r, _ = phenol
+        f_plus, f_minus = fk.FukuiAnalyser().cube_pair(r, r.spacing)
+        assert f_plus.shape == r.grids["f+"].shape
+        assert np.max(np.abs(f_plus - r.grids["f+"])) < 1e-10
+        assert np.max(np.abs(f_minus - r.grids["f-"])) < 1e-10
+
+    def test_finer_cube_is_exact_at_its_points_and_covers_the_box(self, phenol, tmp_path):
+        import cubeFile as cf
+        r, _ = phenol
+        seen = []
+        fk.FukuiAnalyser().write_outputs(r, str(tmp_path), cube_spacing=0.25,
+                                         progress=lambda f, m: seen.append(f))
+        assert seen[-1] == 1.0 and all(b >= a - 1e-12 for a, b in zip(seen, seen[1:]))
+        cube = cf.read_cube(tmp_path / "phenol_N_dual.cub")
+        assert cube.spacing == 0.25 and np.allclose(cube.origin, r.origin, atol=1e-6)
+        assert cube.values.shape == r.cube_shape == fk.FukuiAnalyser.cube_shape(r, 0.25)
+        extent = (np.array(r.grids["f+"].shape) - 1) * r.spacing
+        assert np.all((np.array(cube.values.shape) - 1) * 0.25 >= extent - 1e-9)
+        # Spot-check against the densities of the three states at those grid points.
+        rng = np.random.default_rng(5)
+        index = np.column_stack([rng.integers(0, n, 40) for n in cube.values.shape])
+        points = r.origin + 0.25 * index
+        direct = fk.fukui_from_densities(*[gw.electron_density(w, points) for w in r.states])["DD"]
+        assert np.allclose(cube.values[tuple(index.T)], direct, rtol=2e-5, atol=1e-11)
+        text = (tmp_path / "phenol_N_Fukui.txt").read_text()
+        nx, ny, nz = r.cube_shape
+        assert f"# cube_spacing_bohr      0.25  ({nx} x {ny} x {nz} points" in text
+
+    def test_no_cubes_means_no_cube_line(self, phenol, tmp_path):
+        r, _ = phenol
+        fk.FukuiAnalyser().write_outputs(r, str(tmp_path), write_cubes=False, cube_spacing=0.25)
+        assert r.cube_spacing is None and not list(tmp_path.glob("*.cub"))
+        assert "cube_spacing_bohr" not in (tmp_path / "phenol_N_Fukui.txt").read_text()
+
+    def test_too_many_points_asks_for_a_larger_spacing(self, phenol, tmp_path, monkeypatch):
+        r, _ = phenol
+        monkeypatch.setattr(fk, "MAX_CUBE_POINTS", 1000)
+        with pytest.raises(ValueError, match="cube grid spacing of at least"):
+            fk.FukuiAnalyser().write_outputs(r, str(tmp_path), cube_spacing=0.25)
+        assert not list(tmp_path.glob("*"))  # refused before anything was written
+
+
+class TestLobeParts:
+    def test_positive_and_negative_parts_split_the_mesh(self, phenol):
+        r, _ = phenol
+        lobe = r.lobes["DD"]
+        plus, minus = fk.lobe_part(lobe, 1.0), fk.lobe_part(lobe, -1.0)
+        assert set(plus.values) == {r.fukui_isovalue} and set(minus.values) == {-r.fukui_isovalue}
+        assert len(plus.vertices) + len(minus.vertices) == len(lobe.vertices)
+        assert len(plus.triangles) + len(minus.triangles) == len(lobe.triangles)
+        for part in (plus, minus):
+            assert 0 <= part.triangles.min() and part.triangles.max() < len(part.vertices)
+            assert len(part.normals) == len(part.vertices)
+        # The kept triangles are the original ones (+ first, then -), renumbered.
+        n_plus = len(plus.triangles)
+        assert np.array_equal(plus.vertices[plus.triangles], lobe.vertices[lobe.triangles[:n_plus]])
+        assert np.array_equal(minus.vertices[minus.triangles], lobe.vertices[lobe.triangles[n_plus:]])
+
+    def test_both_or_missing(self):
+        lobe = fk.LobeSurface(np.zeros((3, 3)), np.array([[0, 1, 2]]), np.zeros((3, 3)), np.full(3, 0.005))
+        assert fk.lobe_part(lobe, None) is lobe
+        assert fk.lobe_part(lobe, -1.0) is None and fk.lobe_part(None, 1.0) is None
+
+
 class TestCondensedOptions:
     def test_condensed_indices_can_be_skipped(self):
         r = fk.FukuiAnalyser().run(str(N), str(PLUS), str(MINUS), spacing=0.4, condensed=False)
@@ -233,7 +307,7 @@ def make_ui():
     ui.viewer = None
     ui._syncing = False
     for name in ("n_input", "plus_input", "minus_input", "output_dir_input", "fukui_iso_input",
-                 "surface_iso_input", "spacing_input"):
+                 "surface_iso_input", "spacing_input", "cube_spacing_input"):
         setattr(ui, name, SimpleNamespace(value=""))
     ui.condensed_switch = SimpleNamespace(value=False)
     ui.atom_style_selection = SimpleNamespace(value=fk.DEFAULT_ATOM_STYLE)
@@ -319,6 +393,41 @@ class TestUI:
         wanted = set(inspect.signature(fk.FukuiAnalyser.run).parameters) - {"self", "progress"}
         assert wanted == set(ui._collect_inputs())
 
+    def test_every_output_option_is_supplied_by_the_ui(self):
+        ui = make_ui()
+        wanted = set(inspect.signature(fk.FukuiAnalyser.write_outputs).parameters) - {
+            "self", "results", "output_dir", "progress"}
+        assert wanted == set(ui._collect_output_options())
+
+    def test_cube_spacing_blank_is_the_fine_default_and_is_validated(self):
+        ui = make_ui()
+        assert ui._collect_output_options()["cube_spacing"] == fk.DEFAULT_CUBE_SPACING_BOHR == 0.1
+        ui.cube_spacing_input.value = "0.9"
+        with pytest.raises(ValueError, match="Cube grid spacing"):
+            ui._collect_output_options()
+
+    def test_workflow_writes_cubes_on_the_chosen_grid(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        ui.cubes_switch.value = True
+        ui.cube_spacing_input.value = "0.35"
+        asyncio.run(ui.workflow(None))
+        assert not ui.errors and len(list(tmp_path.glob("*.cub"))) == 4
+        assert ui.results.cube_spacing == 0.35 and "cube_spacing_bohr      0.35" in ui.summary_output.value
+        assert ui.progress_bar.value == 100
+
+    def test_a_write_failure_keeps_the_analysis(self, tmp_path, monkeypatch):
+        ui = make_ui()
+        fill(ui, tmp_path)
+
+        def refuse(*args, **kwargs):
+            raise ValueError("Could not write the report")
+        monkeypatch.setattr(ui.analyser, "write_outputs", refuse)
+        asyncio.run(ui.workflow(None))
+        assert ui.errors == [("Fukui Output Error", "Could not write the report")]
+        assert ui.results is not None and "GLOBAL INDICES" in ui.summary_output.value
+        assert ui.run_button.enabled
+
     def test_workflow_writes_the_report_and_switches_tab(self, tmp_path):
         ui = make_ui()
         fill(ui, tmp_path)
@@ -349,6 +458,37 @@ class TestUI:
         assert kwargs["caption"].startswith("f- (a.u.)") and args[5]  # extrema markers
         assert ui.default_image_name() == "phenol_N_fminus.png"
         assert ui.viewer.atom_view == ("Line style", False)  # the default view is pushed too
+
+    def test_display_offers_each_sign_on_its_own(self):
+        assert fk.DISPLAY_MODES == (fk.DISPLAY_LOBES, fk.DISPLAY_POSITIVE, fk.DISPLAY_NEGATIVE, fk.DISPLAY_MAPPED)
+
+    def test_positive_or_negative_isosurface_only(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        ui.viewer = StubViewer()
+        ui.function_selection.value = "DD"
+        ui.display_selection.value = fk.DISPLAY_POSITIVE
+        ui._push_to_viewer()
+        args, kwargs = ui.viewer.surfaces[-1]
+        assert set(args[3]) == {0.005} and kwargs["caption"] == "DD positive isosurface at +0.005 a.u. (blue)"
+        assert ui.default_image_name() == "phenol_N_dual_positive.png"
+        ui.display_selection.value = fk.DISPLAY_NEGATIVE
+        ui._push_to_viewer()
+        args, kwargs = ui.viewer.surfaces[-1]
+        assert set(args[3]) == {-0.005} and kwargs["caption"] == "DD negative isosurface at -0.005 a.u. (red)"
+        assert ui.default_image_name() == "phenol_N_dual_negative.png"
+
+    def test_a_missing_sign_clears_the_surface_and_says_so(self, tmp_path):
+        ui = make_ui()
+        fill(ui, tmp_path)
+        asyncio.run(ui.workflow(None))
+        ui.results.lobes["f-"] = fk.lobe_part(ui.results.lobes["f-"], 1.0)  # no negative part
+        ui.viewer = StubViewer()
+        ui.display_selection.value = fk.DISPLAY_NEGATIVE
+        ui._push_to_viewer()
+        assert ui.viewer.surfaces[-1] is None
+        assert ui.status_label.text == "f- has no negative isosurface at -0.005 a.u."
 
     def test_atom_style_and_numbers_reach_the_viewer(self, tmp_path):
         ui = make_ui()

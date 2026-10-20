@@ -139,6 +139,15 @@ class TestNumbaDensity:
         slow = gw.evaluate_cartesian_aos(w, points, use_numba=False)
         assert np.allclose(fast, slow, rtol=1e-12, atol=1e-20)
 
+    def test_matrix_densities_share_the_aos(self):
+        """One AO evaluation for several matrices: the density itself bit for bit, and linear combinations."""
+        w = gw.read_fchk(fchk_path("water_631gd_6d"))
+        points = np.random.default_rng(2).normal(scale=2.0, size=(700, 3))
+        half = 0.5 * w.cart_density
+        rho, rho_half = gw.matrix_densities(w, [w.cart_density, half], points, chunk=128)
+        assert np.array_equal(rho, gw.electron_density(w, points, chunk=128))
+        assert np.allclose(rho_half, 0.5 * rho, rtol=1e-13, atol=0.0)
+
     def test_forcing_numba_without_it_is_an_error(self, monkeypatch):
         monkeypatch.setattr(gw, "densityNumba", None)
         w = gw.read_fchk(fchk_path("water_631gd_6d"))

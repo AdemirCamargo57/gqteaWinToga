@@ -2041,8 +2041,12 @@ OUTPUTS (next to the N file unless another folder is chosen)
   <name>_Fukui.txt  global indices, condensed table, site ranking, surface
                     extrema of f+, f-, f0, DD on rho(N) = 0.01 a.u., notes
   <name>_fplus.cub, _fminus.cub, _fzero.cub, _dual.cub  (a.u., bohr grid)
-  Show 3D: isosurfaces (blue +, red -) or the function mapped on the
-  rho(N) surface with its extrema (cyan minimum, orange maximum).
+                    computed exactly on their own grid: Cube grid spacing,
+                    blank = 0.1 bohr (smooth isosurfaces in GaussView or the
+                    Cube tab); 0.25 writes the analysis grid, ~15x smaller.
+  Show 3D: isosurfaces (blue +, red -), the positive or the negative
+  isosurface only, or the function mapped on the rho(N) surface with its
+  extrema (cyan minimum, orange maximum).
   Atoms (Results tab): Line, Ball and stick (CPK) or Space-filling (vdW),
   and Show atom numbers (1-based, as in the report); applied at once.
 

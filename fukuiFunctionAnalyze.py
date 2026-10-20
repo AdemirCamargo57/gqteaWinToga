@@ -52,6 +52,12 @@ DEGENERACY_EV = 0.01              # Multiwfn's automatic FMO degeneracy threshol
 DEFAULT_FUKUI_ISOVALUE = 0.005    # a.u.; the manual's examples use 0.005-0.01
 DEFAULT_SURFACE_ISOVALUE = 0.01   # rho isosurface for mapping f (manual 4.12.4)
 DEFAULT_SPACING_BOHR = 0.25
+# Exported cubes are computed on their own, finer grid (the analysis grid's box):
+# 0.1 bohr = 10 points/bohr, between GaussView's medium and fine cube grids.
+DEFAULT_CUBE_SPACING_BOHR = 0.1
+CUBE_SLAB_POINTS = 200_000       # grid points evaluated per batch while computing a cube grid
+MAX_CUBE_POINTS = 25_000_000     # ~330 MB per cube file; beyond it ask for a larger spacing
+SAME_SPACING_TOLERANCE = 1e-9    # bohr: a cube at the analysis spacing reuses the analysis grid
 COORDINATE_TOLERANCE_BOHR = 1e-5
 
 FUNCTIONS = ("f+", "f-", "f0", "DD")
@@ -174,7 +180,20 @@ def has_diffuse_functions(basis_set: str) -> bool:
 def fukui_from_densities(rho_n, rho_plus, rho_minus, p: int = 1, q: int = 1) -> Dict[str, np.ndarray]:
     f_plus = (np.asarray(rho_plus) - rho_n) / p
     f_minus = (np.asarray(rho_n) - rho_minus) / q
-    return {"f+": f_plus, "f-": f_minus, "f0": 0.5 * (f_plus + f_minus), "DD": f_plus - f_minus}
+    return {key: fukui_combination(f_plus, f_minus, key) for key in FUNCTIONS}
+
+
+def fukui_combination(f_plus: np.ndarray, f_minus: np.ndarray, key: str) -> np.ndarray:
+    """f+, f-, f0 = (f+ + f-)/2 or DD = f+ - f- from f+ and f-."""
+    if key == "f+":
+        return f_plus
+    if key == "f-":
+        return f_minus
+    if key == "f0":
+        return 0.5 * (f_plus + f_minus)
+    if key == "DD":
+        return f_plus - f_minus
+    raise KeyError(key)
 
 
 @dataclass
@@ -284,6 +303,8 @@ class FukuiResults:
     condensed_source: str
     notes: List[str] = field(default_factory=list)
     elapsed: float = 0.0
+    cube_spacing: Optional[float] = None               # set when cube files are written
+    cube_shape: Optional[Tuple[int, int, int]] = None
 
     @property
     def n_state(self) -> gw.FchkWavefunction:
@@ -408,6 +429,62 @@ class FukuiAnalyser:
             return None
         return LobeSurface(np.vstack(verts), np.vstack(tris), np.vstack(norms), np.concatenate(vals))
 
+    # --- cube grids ------------------------------------------------------
+    @staticmethod
+    def uses_analysis_grid(results: FukuiResults, spacing: Optional[float]) -> bool:
+        return spacing is None or abs(spacing - results.spacing) < SAME_SPACING_TOLERANCE
+
+    @staticmethod
+    def cube_shape(results: FukuiResults, spacing: float) -> Tuple[int, int, int]:
+        """Points per axis of a grid with ``spacing`` covering the analysis grid's box."""
+        extent = (np.array(results.grids["f+"].shape) - 1) * results.spacing
+        return tuple(int(np.ceil(e / spacing - 1e-9)) + 1 for e in extent)
+
+    def check_cube_size(self, results: FukuiResults, spacing: float) -> Tuple[int, int, int]:
+        shape = self.cube_shape(results, spacing)
+        points = int(np.prod(shape))
+        if points > MAX_CUBE_POINTS:
+            smallest = np.ceil(100.0 * spacing * (points / MAX_CUBE_POINTS) ** (1.0 / 3.0)) / 100.0
+            raise ValueError(
+                f"A cube grid at {spacing:g} bohr would have {points / 1e6:.1f} million points "
+                f"(about {points * 13.2 / 1e6:.0f} MB per cube file). Use a cube grid spacing of "
+                f"at least {smallest:g} bohr.")
+        return shape
+
+    def cube_pair(self, results: FukuiResults, spacing: float,
+                  progress: Optional[Callable[[float], None]] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """f+ and f- computed exactly at every point of a ``spacing`` grid over the analysis box.
+
+        f+ = chi^T [(P(N+p) - P(N))/p] chi and f- likewise: the density
+        difference is linear in the density matrix, so one AO evaluation and
+        two matrix products per point give both, and the large, nearly equal
+        densities near the nuclei are never subtracted.
+        """
+        n, plus, minus = results.states
+        d_plus = (plus.cart_density - n.cart_density) / results.p
+        d_minus = (n.cart_density - minus.cart_density) / results.q
+        shape = self.check_cube_size(results, spacing)
+        nx, ny, nz = shape
+        f_plus, f_minus = np.empty(shape), np.empty(shape)
+        planes = max(1, CUBE_SLAB_POINTS // (ny * nz))
+        for x0 in range(0, nx, planes):
+            x1 = min(nx, x0 + planes)
+            origin = results.origin + np.array([x0 * spacing, 0.0, 0.0])
+            points = ms.grid_points(origin, spacing, (x1 - x0, ny, nz))
+            a, b = gw.matrix_densities(n, [d_plus, d_minus], points)
+            f_plus[x0:x1] = a.reshape(x1 - x0, ny, nz)
+            f_minus[x0:x1] = b.reshape(x1 - x0, ny, nz)
+            if progress is not None:
+                progress(x1 / nx)
+        return f_plus, f_minus
+
+    def cube_grids(self, results: FukuiResults, spacing: Optional[float]) -> Dict[str, np.ndarray]:
+        """All four functions on the cube grid (the analysis grids when the spacing is the same)."""
+        if self.uses_analysis_grid(results, spacing):
+            return results.grids
+        f_plus, f_minus = self.cube_pair(results, spacing)
+        return {key: fukui_combination(f_plus, f_minus, key) for key in FUNCTIONS}
+
     @staticmethod
     def _condensed(states, p, q, notes) -> Tuple[List[CondensedRow], str]:
         """Hirshfeld charges of N, N+p, N-q on one shared grid; a note (never an abort) on failure."""
@@ -469,6 +546,12 @@ class FukuiAnalyser:
             f"# definitions            f+ = [rho(N+{p}) - rho(N)]/{p}; f- = [rho(N) - rho(N-{q})]/{q}; "
             "f0 = (f+ + f-)/2; DD = f+ - f-",
             f"# grid_spacing_bohr      {results.spacing:g}",
+        ]
+        if results.cube_spacing is not None:
+            nx, ny, nz = results.cube_shape
+            lines.append(f"# cube_spacing_bohr      {results.cube_spacing:g}  ({nx} x {ny} x {nz} points, "
+                         "values computed at every point)")
+        lines += [
             f"# fukui_isovalue_au      {results.fukui_isovalue:g}",
             f"# surface                rho(N) = {results.surface_isovalue:g} a.u., "
             f"{len(results.surface.vertices)} vertices",
@@ -525,23 +608,48 @@ class FukuiAnalyser:
             lines.append(f"Written: {path}")
         return "\n".join(lines) + "\n"
 
-    def write_outputs(self, results: FukuiResults, output_dir: str, write_cubes: bool = True) -> List[str]:
+    def write_outputs(self, results: FukuiResults, output_dir: str, write_cubes: bool = True,
+                      cube_spacing: Optional[float] = None,
+                      progress: Optional[ProgressCallback] = None) -> List[str]:
+        """The report and (optionally) the four cubes; ``cube_spacing`` None = the analysis grid."""
+        def report_progress(fraction: float, message: str):
+            if progress is not None:
+                try:
+                    progress(fraction, message)
+                except Exception:
+                    pass  # reporting must never abort writing
+
         stem = Path(results.paths[0]).stem
         out = Path(output_dir)
         written: List[str] = []
         n = results.n_state
+        results.cube_spacing = results.cube_shape = None
         if write_cubes:
-            for key in FUNCTIONS:
+            reuse = self.uses_analysis_grid(results, cube_spacing)
+            spacing = results.spacing if reuse else float(cube_spacing)
+            shape = results.grids["f+"].shape if reuse else self.check_cube_size(results, spacing)
+            pair = None
+            if not reuse:
+                label = f"{shape[0]} x {shape[1]} x {shape[2]}"
+                report_progress(0.0, f"Fukui functions on the {spacing:g} bohr cube grid ({label} points)...")
+                pair = self.cube_pair(results, spacing, lambda f: report_progress(
+                    0.7 * f, f"Fukui functions on the {spacing:g} bohr cube grid ({label} points)..."))
+            for k, key in enumerate(FUNCTIONS):
+                path = out / (stem + CUBE_SUFFIXES[key])
+                report_progress(0.7 + 0.075 * k, f"Writing {path.name}...")
+                values = results.grids[key] if pair is None else fukui_combination(*pair, key)
                 cube = cf.CubeData(f"{stem} {FUNCTION_TITLES[key]}", "gQTEA Fukui Function Analysis, a.u.",
                                    n.atomic_numbers, n.nuclear_charges, n.coordinates,
-                                   results.origin, results.spacing, results.grids[key])
-                written.append(cf.write_cube(out / (stem + CUBE_SUFFIXES[key]), cube))
+                                   results.origin, spacing, values)
+                written.append(cf.write_cube(path, cube))
+            results.cube_spacing, results.cube_shape = spacing, tuple(int(s) for s in shape)
         report = out / (stem + REPORT_SUFFIX)
         try:
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(self.report_text(results, written), encoding="utf-8")
         except OSError as exc:
             raise ValueError(f"Could not write {report}: {exc}") from exc
+        report_progress(1.0, "Done.")
         return [str(report)] + written
 
 
@@ -549,8 +657,27 @@ class FukuiAnalyser:
 # Toga UI
 # ----------------------------------------------------------------------
 DISPLAY_LOBES = "Isosurfaces (+/- isovalue)"
+DISPLAY_POSITIVE = "Positive isosurface only"
+DISPLAY_NEGATIVE = "Negative isosurface only"
 DISPLAY_MAPPED = "Mapped on rho(N) surface"
-DISPLAY_MODES = (DISPLAY_LOBES, DISPLAY_MAPPED)
+DISPLAY_MODES = (DISPLAY_LOBES, DISPLAY_POSITIVE, DISPLAY_NEGATIVE, DISPLAY_MAPPED)
+# Which isosurfaces each lobe display shows: None = both, +1 = +isovalue only, -1 = -isovalue only.
+LOBE_SIGNS = {DISPLAY_LOBES: None, DISPLAY_POSITIVE: 1.0, DISPLAY_NEGATIVE: -1.0}
+
+
+def lobe_part(lobe: Optional[LobeSurface], sign: Optional[float]) -> Optional[LobeSurface]:
+    """Only the +isovalue (sign > 0) or -isovalue (sign < 0) surface of a lobe mesh; None = both.
+
+    The two surfaces are separate meshes (lobe_surface), so no triangle joins them.
+    """
+    if lobe is None or sign is None:
+        return lobe
+    keep = lobe.values * sign > 0
+    if not keep.any():
+        return None
+    triangles = lobe.triangles[keep[lobe.triangles].all(axis=1)]
+    new_index = np.cumsum(keep) - 1
+    return LobeSurface(lobe.vertices[keep], new_index[triangles], lobe.normals[keep], lobe.values[keep])
 # Atom drawing styles of the 3D view: label -> molecularViewer.atom_display_style.
 # "CPK" is ball-and-stick here, as in the 3D Molecular Viewer; space-filling is "vdW".
 ATOM_STYLES = {"Line": "Line style", "Ball and stick (CPK)": "CPK style", "Space-filling (vdW)": "vdW style"}
@@ -613,6 +740,8 @@ class FukuiFunctionAnalyzeUI:
         self.spacing_input = toga.TextInput(placeholder=f"{DEFAULT_SPACING_BOHR:g}", style=Pack(width=160))
         self.condensed_switch = toga.Switch("Compute atom-condensed indices (Hirshfeld charges)", value=True)
         self.cubes_switch = toga.Switch("Write cube files (f+, f-, f0, dual descriptor)", value=True)
+        self.cube_spacing_input = toga.TextInput(placeholder=f"{DEFAULT_CUBE_SPACING_BOHR:g}",
+                                                 style=Pack(width=160))
         setup = toga.Box(children=[
             self._heading("Real-space functions"),
             self._row(self._label("Fukui isovalue (a.u.):"), self.fukui_iso_input),
@@ -625,7 +754,12 @@ class FukuiFunctionAnalyzeUI:
             self.condensed_switch,
             self._hint(f"Built-in Hirshfeld partition, free atoms {hc.pad.LEVEL} (elements H-Ar). "
                        "Other elements: the run continues without them, with a note."),
+            self._heading("Cube files"),
             self.cubes_switch,
+            self._row(self._label("Cube grid spacing (bohr):"), self.cube_spacing_input),
+            self._hint(f"Blank = {DEFAULT_CUBE_SPACING_BOHR:g} bohr: computed exactly at every point of its own "
+                       "grid (same box), for smooth isosurfaces in GaussView or the Cube tab."),
+            self._hint(f"{DEFAULT_SPACING_BOHR:g} = the analysis grid (about 15x smaller files)."),
         ], style=Pack(direction=COLUMN, margin=10))
 
         self.function_selection = toga.Selection(items=list(FUNCTIONS), on_change=self.on_display_change,
@@ -729,6 +863,14 @@ class FukuiFunctionAnalyzeUI:
             "condensed": bool(self.condensed_switch.value),
         }
 
+    def _collect_output_options(self) -> Dict[str, object]:
+        """The write_outputs options (cube files and their grid)."""
+        return {
+            "write_cubes": bool(self.cubes_switch.value),
+            "cube_spacing": parse_positive_float(self.cube_spacing_input.value, DEFAULT_CUBE_SPACING_BOHR,
+                                                 "Cube grid spacing", 0.6),
+        }
+
     def _apply_progress(self, fraction: float, message: str):
         self.progress_bar.value = max(0.0, min(100.0, 100.0 * fraction))
         self.status_label.text = message
@@ -740,6 +882,7 @@ class FukuiFunctionAnalyzeUI:
     async def workflow(self, widget):
         try:
             params = self._collect_inputs()
+            options = self._collect_output_options()
             output_dir = resolve_output_dir(params["n_path"], self.output_dir_input.value)
         except ValueError as exc:
             await self._show_error("Input Error", str(exc))
@@ -747,26 +890,41 @@ class FukuiFunctionAnalyzeUI:
         self._set_buttons(False)
         self.progress_bar.value = 0
         loop = asyncio.get_running_loop()
+        started = time.perf_counter()
+        # A finer cube grid is a second computation: the analysis fills the first half of the bar.
+        share = 0.5 if options["write_cubes"] else 0.9
 
         def on_progress(fraction, message):
-            loop.call_soon_threadsafe(self._apply_progress, fraction, message)
+            loop.call_soon_threadsafe(self._apply_progress, share * fraction, message)
 
+        def on_write_progress(fraction, message):
+            loop.call_soon_threadsafe(self._apply_progress, share + (1.0 - share) * fraction, message)
+
+        results = None
         try:
             results = await asyncio.to_thread(self.analyser.run, progress=on_progress, **params)
-            self.written = self.analyser.write_outputs(results, output_dir, bool(self.cubes_switch.value))
+            # Kept before writing: a write failure must not discard the analysis.
             self.results = results
+            self.written = await asyncio.to_thread(self.analyser.write_outputs, results, output_dir,
+                                                   progress=on_write_progress, **options)
             self.summary_output.value = self.analyser.report_text(results, self.written)
             self.tabs.current_tab = 1
             # File name only: a long path would widen the window, and Toga never shrinks it.
-            self.status_label.text = (f"Done in {results.elapsed:.1f} s. Report: {Path(self.written[0]).name} "
-                                      "(full paths at the end of the report)")
+            self.status_label.text = (f"Done in {time.perf_counter() - started:.1f} s. Report: "
+                                      f"{Path(self.written[0]).name} (full paths at the end of the report)")
             self.progress_bar.value = 100
             if self.viewer is not None and self.viewer.viewer_window_is_open():
                 self._push_to_viewer()
         except Exception as exc:
-            self.status_label.text = "Calculation failed."
             self.progress_bar.value = 0
-            await self._show_error("Fukui Calculation Error", str(exc))
+            if results is not None:
+                self.summary_output.value = self.analyser.report_text(results)
+                self.tabs.current_tab = 1
+                self.status_label.text = "Analysis done; the output files were not written."
+                await self._show_error("Fukui Output Error", str(exc))
+            else:
+                self.status_label.text = "Calculation failed."
+                await self._show_error("Fukui Calculation Error", str(exc))
         finally:
             self._set_buttons(True)
 
@@ -793,15 +951,24 @@ class FukuiFunctionAnalyzeUI:
                 self.results.surface_values[key], self.results.surface_isovalue, self.surface_markers(key),
                 caption=f"{key} (a.u.)   mapped on rho(N) = {self.results.surface_isovalue:g} a.u.")
             return
-        lobe = self.results.lobes[key]
+        sign = LOBE_SIGNS.get(self.display_selection.value)
+        lobe = lobe_part(self.results.lobes[key], sign)
+        iso = self.results.fukui_isovalue
+        if sign is None:
+            surface, caption = (f"isosurface at +/-{iso:g} a.u.",
+                                f"{key} isosurfaces at +/-{iso:g} a.u.: blue positive, red negative")
+        elif sign > 0:
+            surface, caption = (f"positive isosurface at +{iso:g} a.u.",
+                                f"{key} positive isosurface at +{iso:g} a.u. (blue)")
+        else:
+            surface, caption = (f"negative isosurface at -{iso:g} a.u.",
+                                f"{key} negative isosurface at -{iso:g} a.u. (red)")
         if lobe is None:
             self.viewer.clear_surface()
-            self.status_label.text = f"{key} has no isosurface at +/-{self.results.fukui_isovalue:g} a.u."
+            self.status_label.text = f"{key} has no {surface}"
             return
-        iso = self.results.fukui_isovalue
         self.viewer.set_surface(lobe.vertices * BOHR_RADIUS_ANGSTROM, lobe.triangles, lobe.normals,
-                                lobe.values, iso, (), half_range=iso,
-                                caption=f"{key} isosurfaces at +/-{iso:g} a.u.: blue positive, red negative")
+                                lobe.values, iso, (), half_range=iso, caption=caption)
 
     def selected_atom_style(self) -> str:
         return ATOM_STYLES.get(self.atom_style_selection.value, ATOM_STYLES[DEFAULT_ATOM_STYLE])
@@ -844,6 +1011,9 @@ class FukuiFunctionAnalyzeUI:
         if self.results is None:
             return "Fukui.png"
         tag = {"f+": "fplus", "f-": "fminus", "f0": "fzero", "DD": "dual"}[self.selected_function()]
+        sign = LOBE_SIGNS.get(self.display_selection.value)
+        if sign is not None:
+            tag += "_positive" if sign > 0 else "_negative"
         return f"{Path(self.results.paths[0]).stem}_{tag}.png"
 
     async def _ask_image_path(self, suggested: str):
