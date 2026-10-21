@@ -851,8 +851,9 @@ quickly its members exchange with the bulk.
 STEPS TO FOLLOW TO CALCULATE MRT
 
 1. Press 'Browse' and select the TRAJEC.xyz file from a CPMD run.
-   The number of frames is counted on loading. All output files are
-   written to the folder that contains the trajectory.
+   The number of frames is counted on loading (the spinner turns
+   while it does). All output files are written to the folder that
+   contains the trajectory.
 
 2. Fill in every field (only the tolerance may be left blank):
     2.1 Cutoff radius (Å): radius of the shell. An atom is inside
@@ -892,10 +893,13 @@ STEPS TO FOLLOW TO CALCULATE MRT
         end of the trajectory are not. The tolerance actually applied
         is shown in frames and fs when the run starts.
 
-3. Press 'MRT calculation'. The progress bar follows the two passes
-   over the trajectory, and the parameters and the per-atom results
-   are shown in this box when it finishes. Press 'Close' to close
-   the window.
+3. Press 'MRT calculation'. The trajectory is read once, in the
+   background: the spinner turns and the line beside it shows what
+   is being done (reading frame n of N, applying the tolerance,
+   writing files). The parameters and the per-atom results are shown
+   in this box when it finishes. Every frame must list the atoms in
+   the same order as the first one. Press 'Close' to close the
+   window.
 
 OUTPUT FILES (times in ps)
 

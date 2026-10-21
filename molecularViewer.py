@@ -1,8 +1,12 @@
 import asyncio
 import concurrent.futures
+import contextlib
+import gc
+import itertools
 import os
 import threading
 import time
+from operator import itemgetter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -92,6 +96,126 @@ def stepped_atom_scale(scale: float, steps: int) -> float:
     """
     low, high = ATOM_SCALE_LIMITS
     return round(min(max(float(scale) * ATOM_SCALE_STEP ** steps, low), high), 4)
+
+
+# Lines read from an .xyz file at a time; one block's bulk string work keeps the
+# GIL for a few ms, so the window stays responsive while a worker thread reads
+# (measured on a 351 MB file: event-loop lag p95 18 ms at 20 000, 36 ms at 100 000,
+# same load time).
+XYZ_READ_CHUNK_LINES = 20_000
+_FIELD = [itemgetter(k) for k in range(4)]
+
+
+@contextlib.contextmanager
+def _cyclic_gc_paused(freeze: bool = False):
+    """Pause the cyclic garbage collector, restoring its previous state afterwards.
+
+    Loading creates millions of tuples and floats; the collector would scan
+    the growing heap again and again (measured: 3.7 of 8.8 s for a 351 MB
+    trajectory). None of them forms a reference cycle, so nothing is lost.
+
+    Every (element, (x, y, z)) tuple stays tracked until a full collection
+    (Python 3.13), so the first collection after loading would visit them
+    all: 0.5 s holding the GIL, a visible freeze of the window. ``freeze``
+    calls ``gc.freeze()`` before re-enabling the collector, which moves every
+    object it tracks into its permanent generation; they are never traversed
+    again (still freed by reference counting), at the price that objects
+    alive now are exempt from cycle collection until ``gc.unfreeze()``.
+    """
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if freeze:
+            gc.freeze()
+        if was_enabled:
+            gc.enable()
+
+
+def read_xyz_frames(path: str, progress=None, freeze: bool = False) -> Tuple[List[Frame], List[int]]:
+    """Every frame of an .xyz trajectory, and the byte offset at which each one starts.
+
+    The frames are the viewer's lists of ``(element, (x, y, z))`` tuples, with
+    the same values the line-by-line reader this replaced produced, read by
+    the same rules: a blank line or a line that is not an atom count where a
+    frame should start is skipped; a frame with no atoms is left out; atom
+    lines may carry extra columns after x y z; and a frame cut short by the
+    end of the file, a line with fewer than four fields or a coordinate that
+    is not a number ends the reading, keeping the frames before it.
+
+    Lines are read in blocks of ``XYZ_READ_CHUNK_LINES``. A frame whose atoms
+    have the same elements as the previous frame (the usual case) is split
+    and converted in bulk: one ``join``/``split`` of its lines, then
+    ``float`` over every x, y and z column. That needs every line to have
+    exactly four fields, which a total of 4 x atoms fields plus the
+    previous frame's element column in the element positions confirms; any
+    other frame is read line by line. Lines split on ``\\n`` (``\\r\\n`` too),
+    not on a lone ``\\r``. ``progress(frames_read, fraction_of_bytes)`` is called
+    after each block. ``freeze``: see :func:`_cyclic_gc_paused`; the caller
+    then owns the ``gc.unfreeze()``.
+    """
+    size = max(os.path.getsize(path), 1)
+    frames: List[Frame] = []
+    offsets: List[int] = []
+    elements: Optional[List[str]] = None       # the previous frame's element column
+    with open(path, "rb") as f, _cyclic_gc_paused(freeze):
+        lines: List[bytes] = []
+        pos = 0             # first unread line in `lines`
+        offset = 0          # byte offset of lines[pos] in the file
+        at_end = False
+
+        def available(count: int) -> bool:
+            """Make at least `count` unread lines available, if the file has them."""
+            nonlocal lines, pos, at_end
+            while len(lines) - pos < count and not at_end:
+                more = list(itertools.islice(f, XYZ_READ_CHUNK_LINES))
+                at_end = not more
+                lines = lines[pos:] + more
+                pos = 0
+                if progress is not None and more:
+                    progress(len(frames), offset / size)
+            return len(lines) - pos >= count
+
+        while available(1):
+            header = lines[pos].decode("utf-8").strip()
+            try:
+                num_atoms = int(header) if header else None
+            except ValueError:
+                num_atoms = None
+            if num_atoms is None:                   # not where a frame starts: skip the line
+                offset += len(lines[pos])
+                pos += 1
+                continue
+            if not available(2):                    # no comment line
+                break
+            if num_atoms <= 0:
+                offset += len(lines[pos]) + len(lines[pos + 1])
+                pos += 2
+                continue
+            if not available(2 + num_atoms):        # cut short by the end of the file
+                break
+            block = lines[pos + 2:pos + 2 + num_atoms]
+            fields = b" ".join(block).decode("utf-8").split()
+            if len(fields) == 4 * num_atoms and fields[0::4] == elements:
+                x, y, z = fields[1::4], fields[2::4], fields[3::4]
+            else:
+                rows = [line.decode("utf-8").split() for line in block]
+                if min(map(len, rows)) < 4:
+                    break
+                elements = list(map(_FIELD[0], rows))
+                x, y, z = map(_FIELD[1], rows), map(_FIELD[2], rows), map(_FIELD[3], rows)
+            try:
+                frame = list(zip(elements, zip(map(float, x), map(float, y), map(float, z))))
+            except ValueError:
+                break
+            frames.append(frame)
+            offsets.append(offset)
+            offset += sum(map(len, lines[pos:pos + 2 + num_atoms]))
+            pos += 2 + num_atoms
+    if progress is not None:
+        progress(len(frames), 1.0)
+    return frames, offsets
 
 # Lossless formats only: an exported canvas must be the displayed pixels.
 CANVAS_IMAGE_FORMATS = {".png": "PNG", ".tif": "TIFF", ".tiff": "TIFF", ".bmp": "BMP"}
@@ -2029,8 +2153,22 @@ class MolecularViewer:
     # ------------------------------------------------------------------
     # XYZ reader
     # ------------------------------------------------------------------
+    # Seconds between two "Loading trajectory..." status updates.
+    LOADING_STATUS_INTERVAL = 0.25
+
+    def _loading_started(self):
+        """Hook: a trajectory starts loading (no-op here; the window starts its spinner)."""
+
+    def _loading_finished(self):
+        """Hook: loading ended, successfully or not (no-op here; the window stops its spinner)."""
+
     async def load_xyz_trajectory(self, file_path: str):
-        """Load all frames from an XYZ trajectory file using streaming parsing."""
+        """Load all frames of an XYZ trajectory.
+
+        The file is read by :func:`read_xyz_frames` in a worker thread, so the
+        window stays responsive; the status line reports the frames read so
+        far and the frames are installed in one step when reading is done.
+        """
         with self._state_lock:
             self.frames = []
             self.frame_offsets = []
@@ -2042,86 +2180,39 @@ class MolecularViewer:
             self.active_measurement_indices = []
         self.invalidate_bond_cache()
         self.invalidate_scene_cache()
-
-        count_frames = 0
-        valid_atoms_first_frame: Optional[List[str]] = None
+        # The previous trajectory (now released) was frozen out of cycle
+        # collection by its load; this load freezes the heap again at its end.
+        gc.unfreeze()
 
         if self.loop is None:
             self.loop = asyncio.get_event_loop()
 
         self.set_status_message("Loading trajectory...")
+        last_report = [0.0]
 
+        def report(frames_read: int, fraction: float):
+            now = time.monotonic()
+            if now - last_report[0] >= self.LOADING_STATUS_INTERVAL:
+                last_report[0] = now
+                self.set_status_message(f"Loading trajectory... {frames_read} frames ({fraction:.0%})")
+
+        self._loading_started()
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                while True:
-                    frame_offset = f.tell()
-                    header = f.readline()
-                    if not header:
-                        break
-
-                    header = header.strip()
-                    if not header:
-                        continue
-
-                    try:
-                        num_atoms = int(header)
-                    except ValueError:
-                        continue
-
-                    comment = f.readline()
-                    if comment == "":
-                        break
-
-                    frame_data: Frame = []
-                    malformed_frame = False
-                    for _ in range(num_atoms):
-                        atom_line = f.readline()
-                        if atom_line == "":
-                            malformed_frame = True
-                            break
-
-                        parts = atom_line.split()
-                        if len(parts) < 4:
-                            malformed_frame = True
-                            break
-
-                        element = parts[0]
-                        try:
-                            x, y, z = map(float, parts[1:4])
-                        except ValueError:
-                            malformed_frame = True
-                            break
-
-                        frame_data.append((element, (x, y, z)))
-
-                    if malformed_frame:
-                        break
-
-                    if frame_data:
-                        with self._state_lock:
-                            self.frames.append(frame_data)
-                            self.frame_offsets.append(frame_offset)
-                        if valid_atoms_first_frame is None:
-                            valid_atoms_first_frame = [element for element, _ in frame_data]
-                        count_frames += 1
-
-                    # Yield periodically so the UI stays responsive and the
-                    # "Loading trajectory..." message can paint. The per-frame
-                    # count is intentionally NOT written to the label here: that
-                    # widget update on every batch slows down large loads.
-                    if count_frames % 500 == 0:
-                        await asyncio.sleep(0)
+            frames, offsets = await asyncio.to_thread(read_xyz_frames, file_path, report, True)
         except OSError as exc:
             self.set_status_message(f"I/O error while reading file: {exc}")
             raise
+        finally:
+            self._loading_finished()
 
         with self._state_lock:
-            if self.frames:
-                self.current_frame = 0
-                self.molecule_data = self.frames[0]
-                self.frame_elements = valid_atoms_first_frame or []
+            self.frames = frames
+            self.frame_offsets = offsets
+            self.current_frame = 0
+            if frames:
+                self.molecule_data = frames[0]
+                self.frame_elements = [element for element, _ in frames[0]]
             else:
-                self.current_frame = 0
                 self.molecule_data = []
                 self.frame_elements = []
                 self.bonds = []
@@ -2129,7 +2220,7 @@ class MolecularViewer:
         if self.frames:
             self.calculate_bonds(0)
             self.update_frame_label()
-            self.set_status_message(f"{count_frames} frames loaded.")
+            self.set_status_message(f"{len(frames)} frames loaded.")
         else:
             self.set_status_message("No valid frames found in XYZ file.")
 
@@ -2254,8 +2345,11 @@ class MolecularViewerUI(MolecularViewer):
         # report to.
         self.loading_label = toga.Label(
             " ",
-            style=Pack(margin=(6, 2, 2, 2), text_align=LEFT),
+            style=Pack(margin=(6, 2, 2, 2), text_align=LEFT, flex=1),
         )
+        # Turns while a trajectory loads (the Classical MRT tool's indicator).
+        # start/stop only show/hide it, so the window is not re-laid out.
+        self.loading_indicator = toga.ActivityIndicator(style=Pack(margin=(6, 6, 2, 2)))
 
         main_box = toga.Box(style=Pack(direction=COLUMN, margin=12, flex=1))
         main_box.add(self._build_header())
@@ -2277,7 +2371,10 @@ class MolecularViewerUI(MolecularViewer):
         main_box.add(tabs)
 
         main_box.add(toga.Divider(style=Pack(margin=(8, 0, 0, 0))))
-        main_box.add(self.loading_label)
+        status_row = toga.Box(style=Pack(direction=ROW, align_items=CENTER))
+        status_row.add(self.loading_indicator)
+        status_row.add(self.loading_label)
+        main_box.add(status_row)
 
         self.main_window.content = main_box
         self.main_window.show()
@@ -2290,13 +2387,13 @@ class MolecularViewerUI(MolecularViewer):
             placeholder="Click Browse to select an XYZ file",
             style=Pack(flex=1, margin=(0, 8, 0, 0)),
         )
-        browse_button = toga.Button(
+        self.browse_button = toga.Button(
             "Browse",
             on_press=self.browse_file,
             style=Pack(width=80),
         )
         header_box.add(
-            self._form_row(self._form_label("XYZ file:", width=70), self.textInput_file, browse_button)
+            self._form_row(self._form_label("XYZ file:", width=70), self.textInput_file, self.browse_button)
         )
 
         self.display_button = toga.Button(
@@ -2731,6 +2828,9 @@ class MolecularViewerUI(MolecularViewer):
         """Design windows must not outlive the viewer that owns them."""
         if getattr(self, "design_controller", None) is not None:
             self.design_controller.close_windows()
+        # A loaded trajectory froze the collector's heap (read_xyz_frames):
+        # give everything back to cycle collection along with this window.
+        gc.unfreeze()
         return True
 
     def _build_box_performance_tab(self) -> toga.Box:
@@ -2792,6 +2892,19 @@ class MolecularViewerUI(MolecularViewer):
 
     async def _show_error(self, title: str, message: str):
         await self.main_window.dialog(toga.ErrorDialog(title, message))
+
+    def _loading_started(self):
+        """Spinner on, and no second Browse while this trajectory loads."""
+        if getattr(self, "loading_indicator", None) is not None:
+            self.loading_indicator.start()
+        if getattr(self, "browse_button", None) is not None:
+            self.browse_button.enabled = False
+
+    def _loading_finished(self):
+        if getattr(self, "loading_indicator", None) is not None:
+            self.loading_indicator.stop()
+        if getattr(self, "browse_button", None) is not None:
+            self.browse_button.enabled = True
 
     async def browse_file(self, widget):
         try:

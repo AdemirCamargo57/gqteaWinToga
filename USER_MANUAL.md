@@ -1239,6 +1239,18 @@ when the atom was never seen to leave). Up to version 0.9.5 this file counted
 entries into the shell (`exchange`) instead; the two differ by at most one per
 atom.
 
+**Speed and progress.** *Browse* counts the frames from the file's line count,
+and *MRT calculation* reads the trajectory once, parsing only the shell center
+and the atoms of the chosen symbol (2–3 s for a 351 MB, 15 000-frame
+trajectory of 430 atoms; the earlier two-pass reader took about 20 s, with
+identical output files). Both run in the background: a spinner and a status line beside it show
+what is being done (counting frames, reading frame *n* of *N*, applying the
+tolerance, writing files) and the window stays responsive. Frame 1 is checked
+line by line; in later frames the atom-count line of every frame and the lines
+of the atoms that are analysed are checked, and every frame must list the atoms
+in the same order, with the same elements, as frame 1. Lines of atoms that are
+not analysed are not read.
+
 Typical outputs:
 
 - `mrt.dat`
@@ -1553,6 +1565,8 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **QTAIM** tab: Bader's topology analysis of a Gaussian `.fchk` density — critical points, their properties, bond and ring paths, a text report and a 2D plane map (see [QTAIM Topology Analysis](#qtaim-topology-analysis)).
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
+
+**Loading a trajectory.** After **Browse**, the file is read in the background: a spinner turns beside the status line, which shows the frames read so far and the fraction of the file, and the window stays responsive. **Browse** is unavailable until loading ends. A 351 MB, 15 000-frame trajectory of 430 atoms loads in about 3 s (about 7 s with the earlier line-by-line reader, which read identical frames). Reading follows the same rules as before: blank or non-numeric lines where a frame should start are skipped, atom lines may have extra columns after x, y and z, and a frame cut short by the end of the file, with a line of fewer than four fields or with a coordinate that is not a number ends the reading, keeping the frames before it. Line endings may be `\n` or `\r\n`.
 
 A typical session is: **Browse** for the file, adjust anything you need on the **Display** tab, then click **Display Molecule/Trajectory**. The 3D window opens alongside the control window, so you can keep changing settings while it is open.
 

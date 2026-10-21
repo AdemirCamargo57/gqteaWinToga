@@ -1,4 +1,10 @@
+import asyncio
+import itertools
 import math
+import os
+import time
+from dataclasses import dataclass
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import toga
 import numpy as np
@@ -65,36 +71,235 @@ def tolerance_in_frames(value: float, unit: str, interval_fs: float) -> int:
     raise ValueError(f"Unknown tolerance unit '{unit}'; use {' or '.join(TOLERANCE_UNITS)}.")
 
 
+# The trajectory is read in blocks of this many frames: it bounds the memory
+# held at once and how long one block's bulk string operations keep the GIL
+# from the window's thread while the analysis runs in a worker.
+READ_CHUNK_FRAMES = 100
+COUNT_BLOCK_BYTES = 1 << 24    # bytes read at a time when counting frames
+STATUS_INTERVAL = 0.25         # s between two status-line updates during a job
+
+# progress(message, force): the status line; force bypasses the throttling.
+ProgressCallback = Callable[[str, bool], None]
+
+
+def _notify(progress: Optional[ProgressCallback], message: str, force: bool = False) -> None:
+    """Report to the status line; a failing callback never stops the analysis."""
+    if progress is None:
+        return
+    try:
+        progress(message, force)
+    except Exception:
+        pass
+
+
+def count_frames(path: str, progress: Optional[Callable[[float], None]] = None) -> Tuple[int, int]:
+    """(atoms per frame, number of frames) of an .xyz trajectory, from its line count.
+
+    Newline bytes are counted instead of parsing the lines (0.4 s instead of
+    2.5 s for a 351 MB file); blank lines at the end of the file are ignored.
+    The lines themselves are checked when the trajectory is read for the
+    analysis (:func:`scan_trajectory`). ``progress(fraction)`` follows the
+    bytes read.
+    """
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        fields = f.readline().split()
+        if not fields:
+            raise ValueError("The trajectory file is empty.")
+        try:
+            num_atoms = int(fields[0])
+        except ValueError:
+            raise ValueError("The first line of the trajectory must hold the number of atoms.") from None
+        if num_atoms <= 0:
+            raise ValueError("The number of atoms on the first line must be greater than zero.")
+        f.seek(0)
+        newlines = trailing = done = 0
+        while block := f.read(COUNT_BLOCK_BYTES):
+            newlines += block.count(b"\n")
+            content_end = len(block.rstrip())
+            # Newlines after the last non-blank character of the file so far
+            trailing = block.count(b"\n", content_end) if content_end else trailing + block.count(b"\n")
+            done += len(block)
+            if progress is not None:
+                progress(done / size)
+    lines = newlines - trailing + 1
+    stride = num_atoms + 2
+    if lines % stride:
+        raise ValueError(
+            f"The trajectory has {lines} lines, which is not a whole number of {stride}-line frames "
+            f"({num_atoms} atoms plus 2 header lines): the last frame is incomplete or the number "
+            "of atoms changes."
+        )
+    return num_atoms, lines // stride
+
+
+@dataclass
+class ShellScan:
+    """What :func:`scan_trajectory` found."""
+    shell_atom_list: List[int]   # 1-based labels of the atoms that entered the shell, in order of first entry
+    occupancy: np.ndarray        # int8 (atoms, frames): 1 = inside the shell, before any tolerance
+    centre_symbol: str
+
+
+def scan_trajectory(path: str, centre_label: int, symbol: str, exclude_labels: Sequence[int],
+                    outer_radius: float, inner_radius: float = 0.0, n_frames: Optional[int] = None,
+                    progress: Optional[Callable[[int], None]] = None,
+                    chunk_frames: int = READ_CHUNK_FRAMES) -> ShellScan:
+    """Which atoms of ``symbol`` are inside the shell round atom ``centre_label``, frame by frame.
+
+    One pass over the trajectory. Frame 1 is checked line by line and fixes
+    the candidates (every atom of ``symbol`` except the centre and the
+    excluded labels). In later frames every atom-count line is checked, but
+    only the centre's and the candidates' lines are split and converted, in
+    bulk per block of frames; the other lines are never parsed, so a
+    malformed coordinate on an atom the analysis does not use goes
+    unnoticed (the bond tool makes the same trade-off). A parsed line must
+    have four fields and the element it has in frame 1.
+
+    The distance is ``np.linalg.norm`` of the centre -> atom vector, the same
+    float64 value the per-pair loop this replaced computed, and an atom is
+    inside when ``inner_radius <= d <= outer_radius``. The shell list is in
+    order of first entry (atom order within a frame), which is the column
+    order of mrt.dat.
+
+    ``n_frames`` is the count from :func:`count_frames` (counted here when
+    None): a file that ends early or holds more than that raises
+    ``ValueError``. ``progress(frames_read)`` is called after each block.
+    """
+    if n_frames is None:
+        n_frames = count_frames(path)[1]
+    exclude = set(exclude_labels)
+    with open(path, "r") as f:
+        fields = f.readline().split()
+        if not fields:
+            raise ValueError("The trajectory file is empty.")
+        num_atoms = int(fields[0])
+        if not 1 <= centre_label <= num_atoms:
+            raise ValueError(f"The shell center atom label must be between 1 and {num_atoms}.")
+        f.seek(0)
+        stride = num_atoms + 2
+        centre = centre_label - 1
+
+        symbols = None
+        frames_read = 0
+        inside_blocks = []
+        while frames_read < n_frames:
+            n_block = min(chunk_frames, n_frames - frames_read)
+            lines = list(itertools.islice(f, n_block * stride))
+            if len(lines) < n_block * stride:
+                raise ValueError(f"Invalid atom record found in frame {frames_read + len(lines) // stride + 1}.")
+            for j in range(n_block):
+                header = lines[j * stride].split()
+                frame = frames_read + j + 1
+                if not header or header[0] != fields[0]:
+                    found = f"'{header[0]}'" if header else "a blank line"
+                    raise ValueError(f"Frame {frame} should start with the atom count {num_atoms}, "
+                                     f"but {found} was found.")
+
+            if symbols is None:
+                symbols = []
+                for line in lines[2:stride]:
+                    if len(line.split()) != 4:
+                        raise ValueError("Invalid atom record found in frame 1.")
+                    symbols.append(line.split()[0])
+                candidates = [i for i, s in enumerate(symbols)
+                              if i != centre and s == symbol and (i + 1) not in exclude]
+                needed = [centre] + candidates
+                expected = np.array([symbols[i] for i in needed], dtype=object)
+
+            picked = []
+            for i in needed:
+                picked.extend(lines[2 + i::stride])
+            tokens = " ".join(picked).split()
+            if len(tokens) != 4 * len(picked):
+                for k, line in enumerate(picked):
+                    if len(line.split()) != 4:
+                        raise ValueError(f"Invalid atom record found in frame {frames_read + k % n_block + 1}.")
+            table = np.array(tokens, dtype=object).reshape(len(needed), n_block, 4)
+            moved = np.argwhere(table[:, :, 0] != expected[:, None])
+            if moved.size:
+                a, j = moved[0]
+                raise ValueError(
+                    f"In frame {frames_read + j + 1} atom {needed[a] + 1} is {table[a, j, 0]}, but it is "
+                    f"{expected[a]} in frame 1: the atom order must be the same in every frame."
+                )
+            xyz = table[:, :, 1:].astype(np.float64)    # float() of each field, as the old loop did
+            distance = np.linalg.norm(xyz[1:] - xyz[0], axis=-1)
+            inside_blocks.append((distance >= inner_radius) & (distance <= outer_radius))
+            frames_read += n_block
+            if progress is not None:
+                progress(frames_read)
+
+        if any(line.strip() for line in f):
+            raise ValueError("The trajectory holds more frames than were counted when it was loaded; "
+                             "load it again with Browse.")
+
+    if symbols is None:   # no frame at all
+        return ShellScan([], np.zeros((0, 0), np.int8), "")
+    inside = np.concatenate(inside_blocks, axis=1)
+    entered = np.flatnonzero(inside.any(axis=1))
+    first_entry = inside.argmax(axis=1)
+    entered = entered[np.lexsort((entered, first_entry[entered]))]
+    return ShellScan(
+        shell_atom_list=[candidates[k] + 1 for k in entered],
+        occupancy=inside[entered].astype(np.int8),
+        centre_symbol=symbols[centre],
+    )
+
+
+def _excursions(occupancy: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Every stay outside the shell that begins with an inside -> outside step.
+
+    Returns (row, start, end) arrays: frames start .. end-1 of that row are
+    outside, frame start-1 is inside, and end is the frame the atom is back
+    inside, or n_frames if it never comes back. Leading outside frames are
+    not an excursion.
+    """
+    n_frames = occupancy.shape[1]
+    step = np.diff((occupancy == 1).astype(np.int8), axis=1)
+    out_rows, out_at = np.nonzero(step == -1)     # inside at t, outside at t+1
+    in_rows, in_at = np.nonzero(step == 1)        # outside at t, inside at t+1
+    starts = out_at + 1
+    # np.nonzero is row-major, so these keys are sorted: the first return at
+    # or after each start in the same row is that excursion's end.
+    return_keys = in_rows * (n_frames + 1) + in_at + 1
+    k = np.searchsorted(return_keys, out_rows * (n_frames + 1) + starts)
+    found = k < return_keys.size
+    found[found] = in_rows[k[found]] == out_rows[found]
+    ends = np.full(starts.shape, n_frames)
+    ends[found] = in_at[k[found]] + 1
+    return out_rows, starts, ends
+
+
+def exits_per_atom(occupancy: np.ndarray, tolerance_frames: int) -> np.ndarray:
+    """Number of exits of every row of a tolerance-corrected occupancy (see MRTAnalyzer.count_exits)."""
+    occupancy = np.asarray(occupancy)
+    if occupancy.shape[1] < 2:
+        return np.zeros(occupancy.shape[0], dtype=np.int64)
+    rows, starts, ends = _excursions(occupancy)
+    counted = (ends < occupancy.shape[1]) | (ends - starts > tolerance_frames)
+    return np.bincount(rows[counted], minlength=occupancy.shape[0])
+
+
 class MRTAnalyzer(FramesCounter,DisplayPlots):
 
     @staticmethod
     def apply_tolerance_to_occupancy(occupancy: np.ndarray, tolerance_frames: int) -> np.ndarray:
-        if tolerance_frames <= 0:
-            return occupancy.copy()
+        """Fill in every gap of at most ``tolerance_frames`` frames between two in-shell frames.
 
+        Gaps at the start or the end of a row are left as they are.
+        """
         corrected = occupancy.copy()
-        n_objects, n_frames = corrected.shape
-
-        for obj in range(n_objects):
-            arr = corrected[obj]
-            i = 0
-            while i < n_frames:
-                if arr[i] == 1:
-                    i += 1
-                    continue
-
-                start_zero = i
-                while i < n_frames and arr[i] == 0:
-                    i += 1
-                end_zero = i - 1
-                zero_len = end_zero - start_zero + 1
-
-                left_is_one = start_zero - 1 >= 0 and arr[start_zero - 1] == 1
-                right_is_one = i < n_frames and arr[i] == 1
-
-                if left_is_one and right_is_one and zero_len <= tolerance_frames:
-                    arr[start_zero:end_zero + 1] = 1
-
+        if tolerance_frames <= 0 or corrected.shape[1] < 2:
+            return corrected
+        n_frames = corrected.shape[1]
+        rows, starts, ends = _excursions(corrected)
+        bridged = (ends < n_frames) & (ends - starts <= tolerance_frames)
+        # +1 where a bridged gap starts, -1 where it ends: the running sum marks the gap
+        marks = np.zeros((corrected.shape[0], n_frames + 1), dtype=np.int32)
+        marks[rows[bridged], starts[bridged]] = 1
+        marks[rows[bridged], ends[bridged]] = -1
+        corrected[np.cumsum(marks, axis=1)[:, :n_frames] > 0] = 1
         return corrected
 
     @staticmethod
@@ -109,21 +314,8 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
         only if it already lasts more than the tolerance. With a tolerance of
         0 every inside -> outside step is an exit.
         """
-        row = [int(value) for value in occupancy_row]
-        n_frames = len(row)
-        exits = 0
-        i = 0
-        while i < n_frames - 1:
-            if row[i] == 1 and row[i + 1] == 0:
-                j = i + 1
-                while j < n_frames and row[j] == 0:
-                    j += 1
-                if j < n_frames or (j - i - 1) > tolerance_frames:
-                    exits += 1
-                i = j
-            else:
-                i += 1
-        return exits
+        row = np.asarray([int(value) for value in occupancy_row], dtype=np.int64).reshape(1, -1)
+        return int(exits_per_atom(row, tolerance_frames)[0])
 
     async def warning_function(self, msg):
         await self.main_window.dialog(toga.InfoDialog("Error", f"{msg}"))
@@ -269,26 +461,6 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
             f"Atom labels list to exclude --> {self.exclude_atom_list}\n"
         )
 
-    #Get atom symbol at the center of the shell
-    def shell_center_symbol(self):
-        with open(self.trajec, "r") as f:
-            first_line = f.readline().split()
-            if not first_line:
-                raise ValueError("The trajectory file is empty.")
-            num_atoms = int(first_line[0])
-            f.readline()
-            shell_center_symb = None
-            for atom in range(num_atoms):
-                line = f.readline().split()
-                if len(line) < 4:
-                    raise ValueError("Invalid coordinate line while reading the shell center atom.")
-                if (atom + 1) == self.center_label:
-                    shell_center_symb = line[0]
-                    break
-        if shell_center_symb is None:
-            raise ValueError("The selected shell center atom label was not found in the trajectory.")
-        return shell_center_symb
-
     def _validate_analysis_state(self):
         required_attributes = [
             "trajec",
@@ -313,203 +485,75 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
                 f"Missing required analysis data: {missing_attrs}. Please reload the inputs and trajectory."
             )
 
-    def calc_mrt(self):
+    def run_analysis(self, progress: Optional[ProgressCallback] = None):
+        """The whole calculation after read_params: mrt.dat, mrt_summary.dat, mrt_total.dat and the figure.
+
+        Reads the trajectory once and touches no widget, so the window runs
+        it in a worker thread; ``progress(message, force)`` feeds the status line.
         """
-        Calculate the mean residence time (MRT) for atoms within a specified shell.
+        self.calc_mrt(progress)
+        _notify(progress, "Writing mrt_summary.dat and mrt_total.dat...", True)
+        self.write_summary()
+        self.write_mrt_total()
+        _notify(progress, "Preparing the figure...", True)
+        self.record_plot()
 
-        This function reads trajectory data to identify and store the labels of atoms
-        that reside within the defined shell at least once during the simulation.
+    def calc_mrt(self, progress: Optional[ProgressCallback] = None):
+        """Read the trajectory, apply the tolerance and write mrt.dat.
 
-        Returns:
-            None: The results are stored as class attributes, including a list of atom labels
-            that enter the shell and the number of frames processed.
+        Sets ``shell_atom_list`` (1-based labels of the atoms of the chosen
+        symbol that entered the shell at least once, in order of first
+        entry), ``occupancy`` (int8, one row per such atom, one column per
+        frame, 1 = inside, tolerance-corrected), ``center_atom_symbol`` and
+        ``sim_time`` (ps between sampled frames).
         """
         self._validate_analysis_state()
-        inner_r = self.inner_radius
-        outer_r = self.outer_radius
-        acs = self.center_label  # Atom index at the center of the shell
-        symbol = self.atom_symbol  # Element symbol for MRT calculation
         # Time between two sampled frames, in ps (time step in a.u. or fs x sampling interval)
-        sim_time = frame_interval_fs(self.time_step, self.time_step_unit, self.sampling) / 1000.0
-        self.sim_time = sim_time  # To be used in other functions
-        shell_atom_list = []  # Labels of atoms that enter the shell at least once
+        self.sim_time = frame_interval_fs(self.time_step, self.time_step_unit, self.sampling) / 1000.0
+        total = self.total_frame_number
+        _notify(progress, "Reading the trajectory...", True)
+        scan = scan_trajectory(
+            self.trajec, self.center_label, self.atom_symbol, self.exclude_atom_list,
+            self.outer_radius, self.inner_radius, n_frames=total,
+            progress=lambda frames: _notify(progress, f"Reading the trajectory... frame {frames} of {total}"),
+        )
+        self.shell_atom_list = scan.shell_atom_list
+        self.center_atom_symbol = scan.centre_symbol
+        _notify(progress, "Applying the tolerance...", True)
+        self.occupancy = self.apply_tolerance_to_occupancy(scan.occupancy, self.tolerance_frames)
+        _notify(progress, "Writing mrt.dat...", True)
+        self.write_mrt_dat()
 
-        num_frames = 0  # Counter for the number of frames processed
-        with open(self.trajec, "r") as f:
-            self.progress_bar.start()
+    def write_mrt_dat(self):
+        header = [f"{self.atom_symbol}{s}" for s in self.shell_atom_list]
+        lines = [f"Frame  Time(ps)  {'    '.join(header)}\n"]
+        for frame_index, row in enumerate(self.occupancy.T.tolist(), start=1):
+            Time = self.sim_time * frame_index
+            lines.append(f"{frame_index:<6d} {Time:>8.4f}   {'      '.join(str(s) for s in row)}\n")
+        with open(f"{self.output_dir}/mrt.dat", "w") as mrt:
+            mrt.writelines(lines)
 
-            while True:
-                tmp_frame = []  # Temporary list to store atoms of the current frame
+    def frame_times(self) -> List[float]:
+        """The time of every frame, in ps, as written in mrt.dat (4 decimals)."""
+        return [float(f"{self.sim_time * i:.4f}") for i in range(1, self.occupancy.shape[1] + 1)]
 
-                num_atoms = f.readline().split()
-                if not num_atoms:
-                    break
-                num_atoms = int(num_atoms[0])  # Read the number of atoms per frame
-
-                line = f.readline()  # Read the comment line
-                if not line:
-                    break
-
-                for _ in range(num_atoms):
-                    line = f.readline().split()
-                    if len(line) != 4:
-                        raise ValueError(
-                            f"Invalid atom record found in frame {num_frames + 1}."
-                        )
-                    tmp_frame.append(
-                        [line[0], float(line[1]), float(line[2]), float(line[3])]
-                    )
-
-                coords1 = np.array(
-                    [tmp_frame[acs - 1][1], tmp_frame[acs - 1][2], tmp_frame[acs - 1][3]]
-                )
-
-                for n in range(num_atoms):
-                    if (
-                        n != (acs - 1)
-                        and tmp_frame[n][0] == symbol
-                        and (n + 1) not in self.exclude_atom_list
-                    ):
-                        coords2 = np.array([tmp_frame[n][1], tmp_frame[n][2], tmp_frame[n][3]])
-                        vec = coords2 - coords1
-                        vec_norm = np.linalg.norm(vec)
-                        if inner_r <= vec_norm <= outer_r:
-                            if (n + 1) not in shell_atom_list:
-                                shell_atom_list.append(n + 1)
-
-                num_frames += 1
-
-                if num_frames % 300 == 0:
-                    self.progress_bar.value = min(
-                        100, (num_frames / self.total_frame_number) * 100
-                    )
-
-        self.progress_bar.value = 100
-        self.progress_bar.stop()
-
-        self.shell_atom_list = shell_atom_list
-
-
-        with open(self.trajec, "r") as f:
-            with open(f"{self.output_dir}/mrt.dat", "w") as mrt:
-                header = [f"{self.atom_symbol}{s}" for s in shell_atom_list]
-                mrt.write(f"Frame  Time(ps)  {'    '.join(header)}\n")
-
-                self.progress_bar.start()
-
-                num_frames = 0
-                occupancy_rows = []
-                while True:
-                    num_atoms_line = f.readline().split()
-                    if not num_atoms_line:
-                        break
-                    num_atoms = int(num_atoms_line[0])
-
-                    tmp_frame = []
-                    tmp_list = [0 for i in shell_atom_list]
-                    line = f.readline()  # Read the comment line
-                    if not line:
-                        break
-
-                    for n in range(num_atoms):
-                        line = f.readline().split()
-                        if len(line) != 4:
-                            raise ValueError(
-                                f"Invalid atom record found in frame {num_frames + 1}."
-                            )
-                        tmp_frame.append(
-                            [line[0], float(line[1]), float(line[2]), float(line[3])]
-                        )
-
-                    coords1 = np.array(
-                        [tmp_frame[acs - 1][1], tmp_frame[acs - 1][2], tmp_frame[acs - 1][3]]
-                    )
-
-                    for index, n in enumerate(shell_atom_list):
-                        coords2 = np.array(
-                            [tmp_frame[n - 1][1], tmp_frame[n - 1][2], tmp_frame[n - 1][3]]
-                        )
-                        vec = coords2 - coords1
-                        vec_norm = np.linalg.norm(vec)
-                        if vec_norm >= inner_r and vec_norm <= outer_r:
-                            tmp_list[index] = 1
-
-                    num_frames += 1
-                    occupancy_rows.append(tmp_list)
-
-                    if num_frames % 300 == 0:
-                        self.progress_bar.value = min(
-                            100, (num_frames / self.total_frame_number) * 100
-                        )
-
-                if shell_atom_list and occupancy_rows:
-                    occupancy_matrix = np.array(occupancy_rows, dtype=int).T
-                    corrected_occupancy = self.apply_tolerance_to_occupancy(
-                        occupancy_matrix,
-                        self.tolerance_frames,
-                    )
-                    corrected_rows = corrected_occupancy.T.tolist()
-                else:
-                    corrected_rows = occupancy_rows
-
-                for frame_index, tmp_list in enumerate(corrected_rows, start=1):
-                    Time = sim_time * frame_index
-                    tmp_str_list = [str(s) for s in tmp_list]
-                    mrt.write(f"{frame_index:<6d} {Time:>8.4f}   {'      '.join(tmp_str_list)}\n")
-
-                self.progress_bar.value = 100
-                self.progress_bar.stop()
-
-    async def write_mrt_total(self):
+    def write_mrt_total(self):
+        """mrt_total.dat: time and the number of atoms inside the shell in every frame."""
         with open(f"{self.output_dir}/mrt_total.dat", "w") as f:
-            with open(f"{self.output_dir}/mrt.dat", "r") as mrt:
-                # Read and discard the first line (header)
-                mrt.readline()
-                
-                # Now iterate through the remaining lines and write them
-                f.write("Time(ps)  Total coordination number\n")
-                for line in mrt: # Iterating directly over the file object is memory efficient
-                    line = line.split()
-                    try:
-                        # Check if the line has enough columns to avoid IndexError
-                        if len(line) > 2:  # Ensure there are enough columns
-                            time = float(line[1])
-                            total_coordination_number = sum(int(s) for s in line[2:])
-                            f.write(f"{time:>8.4f}  {total_coordination_number:>10d}\n")
-                    except ValueError as e:
-                        # Handle any conversion errors (e.g., if the line is not formatted as expected)
-                        # If the line doesn't have enough columns, just write it as is
-                        await self.main_window.dialog(
-                            toga.ErrorDialog(
-                                "Error",
-                                f"Error processing line: {line} - {e}",
-                            )
-                            )
+            f.write("Time(ps)  Total coordination number\n")
+            if self.shell_atom_list:
+                totals = self.occupancy.sum(axis=0).tolist()
+                for time_ps, total in zip(self.frame_times(), totals):
+                    f.write(f"{time_ps:>8.4f}  {total:>10d}\n")
 
-    def mrt_summary(self):
+    def write_summary(self):
+        """mrt_summary.dat, and ``mrt_results``: (label, total rt, mrt, exits) per atom, times in ps."""
         symbol = self.atom_symbol # Atom symbol for mrt
-        mrt_dat = []
-        with open(f"{self.output_dir}/mrt.dat", "r") as f:
-            lines = f.readlines()
-            for line in lines[1:]:
-                line = line.split()
-                line = line[2:]
-                line = [int(s) for s in line]
-                mrt_dat.append(line)
+        rt = self.occupancy.sum(axis=1).tolist()   # frames inside the shell, per atom
+        # self.occupancy is already tolerance-corrected
+        exits = exits_per_atom(self.occupancy, self.tolerance_frames).tolist()
 
         with open(f"{self.output_dir}/mrt_summary.dat", "w") as f:
-            rt = [0 for i in range(len(self.shell_atom_list))]  # Residence time for each atom
-            # mrt.dat already holds the tolerance-corrected occupancy
-            exits = [
-                self.count_exits([row[k] for row in mrt_dat], self.tolerance_frames)
-                for k in range(len(self.shell_atom_list))
-            ]
-
-            for n in range(len(mrt_dat)):
-                for k in range(len(self.shell_atom_list)):
-                    if mrt_dat[n][k] == 1:
-                        rt[k] += 1
-
             total_time_sim = self.sim_time * self.total_frame_number  # Total time simulation
             f.write(f"Total simulation time.........{total_time_sim:>10.4f}\n")
             f.write(f"Time between frames (fs)......{self.sim_time * 1000.0:>10.4f}\n")
@@ -534,8 +578,10 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
                     f"{symbol}{self.shell_atom_list[n]} exits....................{exits[n]:>10d}\n\n"
                 )
 
-        center_atom_symbol = self.shell_center_symbol()
-        self.multi_line_text.value = self.results_text(center_atom_symbol)
+    def mrt_summary(self):
+        """write_summary, then the results in the text box (the synchronous path)."""
+        self.write_summary()
+        self.multi_line_text.value = self.results_text(self.center_atom_symbol)
 
     def results_text(self, center_atom_symbol: str) -> str:
         """The closing message: parameters, per-atom results (times in ps) and the output files."""
@@ -553,23 +599,10 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
         return "\n".join(lines) + "\n"
 
 
-    async def mrt_plot(self,widget):
-        x_axis = []
-        y_axis = []
-        with open(f"{self.output_dir}/mrt.dat", "r") as f:
-            lines = f.readlines()[1:]  # Skip header line
-
-            for line in lines:
-                line = line.split()  # Ensure line is split into columns
-
-                try:
-                    x_axis.append(float(line[1]))  # Convert time to float
-                    data = [int(s) for s in line[2:]]  # Convert data points to int
-                    y_axis.append(sum(data))  # Sum data for y-axis value
-                except (ValueError, IndexError) as e:
-                    await self.main_window.dialog(
-                        toga.ErrorDialog("Error", f"Error processing line: {line} - {e}")
-                    )
+    def record_plot(self):
+        """Record the coordination-number figure (time, atoms inside) for display_plots."""
+        x_axis = self.frame_times()
+        y_axis = self.occupancy.sum(axis=0).tolist()
 
         # Plot labels and title
         plot_xlabel = "Time (ps)"
@@ -605,32 +638,8 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
         # Main container
         main_box = toga.Box(style=Pack(direction=COLUMN, margin=20))
 
-        box_title = toga.Box(
-            style=Pack(
-                direction=ROW,
-                align_items=CENTER,
-                margin=(0, 0, 10, 0),
-            )
-        )
-
-        sub_box_title = toga.Box(style=Pack(width=410))
-        sub_box_empty = toga.Box(style=Pack(width=140))
-        sub_box_progress = toga.Box(style=Pack(width=100))
-
-        box_title.add(sub_box_title)
-        box_title.add(sub_box_empty)
-        box_title.add(sub_box_progress)
-
         # Title
-        title_label = toga.Label("Mean Residence Time (MRT)", style=heading_style)
-        empty_label = toga.Label(" ", style=heading_style)
-        self.progress_label = toga.Label(" ", style=heading_style)
-
-        sub_box_title.add(title_label)
-        sub_box_empty.add(empty_label)
-        sub_box_progress.add(self.progress_label)
-
-        main_box.add(box_title)
+        main_box.add(toga.Label("Mean Residence Time (MRT)", style=heading_style))
 
         # Input fields with labels
         input_fields = [
@@ -712,17 +721,23 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
             placeholder="Click Browse to select TRAJEC.xyz file",
             style=input_style,
         )
-        browse_button = toga.Button(
+        self.browse_button = toga.Button(
             "Browse", on_press=self.frames_counter, style=button_style
         )
         file_box.add(file_label)
         file_box.add(self.textInput_file)
-        file_box.add(browse_button)
-
-        # Progress bar
-        self.progress_bar = toga.ProgressBar(max=100)
+        file_box.add(self.browse_button)
         main_box.add(file_box)
-        main_box.add(self.progress_bar)
+
+        # Activity: a spinner while a job runs, and what it is doing. Starting
+        # or stopping the spinner only shows/hides it, so the window is not
+        # re-laid out.
+        activity_box = toga.Box(style=box_style)
+        self.activity_indicator = toga.ActivityIndicator(style=Pack(margin=(0, 8, 0, 5)))
+        self.status_label = toga.Label("Choose a TRAJEC.xyz file with Browse.", style=Pack(flex=1))
+        activity_box.add(self.activity_indicator)
+        activity_box.add(self.status_label)
+        main_box.add(activity_box)
 
         # Multi-line text input for output
         self.multi_line_text = toga.MultilineTextInput(
@@ -747,6 +762,7 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
 
         # Set the content of the main window
         self.main_window.content = main_box
+        self.main_window.on_close = self._on_close
         self.main_window.show()
 
     TOLERANCE_LABELS = {
@@ -764,21 +780,114 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
         self.tolerance_label.text = label
         self.textInput_tolerance.placeholder = placeholder
 
+    # ------------------------------------------------------------------
+    # Activity: spinner, status line, buttons
+    # ------------------------------------------------------------------
+    def _show_status(self, message: str):
+        """Write the status line (only when it changes: every Label write re-lays out the window)."""
+        if getattr(self, "_closed", False):
+            return
+        if self.status_label.text != message:
+            self.status_label.text = message
+
+    def _set_busy(self, busy: bool, message: str):
+        """Start or stop the spinner, and keep Browse and Run from starting a second job."""
+        self._busy = busy
+        if getattr(self, "_closed", False):
+            return
+        if busy:
+            self.activity_indicator.start()
+        else:
+            self.activity_indicator.stop()
+        self.browse_button.enabled = not busy
+        self.btn_execute.enabled = not busy
+        self._show_status(message)
+
+    def _progress_reporter(self, loop) -> ProgressCallback:
+        """A progress(message, force) callback for the worker thread.
+
+        Messages are thinned to one per STATUS_INTERVAL (unless forced) and
+        handed to the window's event loop, which alone touches widgets.
+        """
+        last = [0.0]
+
+        def report(message: str, force: bool = False):
+            now = time.monotonic()
+            if not force and now - last[0] < STATUS_INTERVAL:
+                return
+            last[0] = now
+            try:
+                loop.call_soon_threadsafe(self._show_status, message)
+            except RuntimeError:    # the event loop has closed (application exit)
+                pass
+
+        return report
+
+    async def frames_counter(self, widget):
+        """Browse: choose the trajectory and count its frames in a worker thread.
+
+        Replaces FramesCounter.frames_counter for this tool only: the frames
+        are counted from the newlines (count_frames), with the spinner running.
+        """
+        await self.open_file_dialog(widget)
+        if not getattr(self, "trajec", None):
+            return
+        self.total_frame_number = 0     # a failed count must not leave the previous file's
+        loop = asyncio.get_running_loop()
+        report = self._progress_reporter(loop)
+        self._set_busy(True, "Counting frames...")
+        try:
+            self.num_atoms, frames = await asyncio.to_thread(
+                count_frames, self.trajec,
+                lambda fraction: report(f"Counting frames... {fraction:.0%}"),
+            )
+        except (OSError, ValueError) as e:
+            self._set_busy(False, "The trajectory could not be read.")
+            await self.warning_function(f"Error reading TRAJEC.xyz file: {e}")
+            return
+        self._set_busy(False, f"{frames} frames of {self.num_atoms} atoms. Fill in the fields and "
+                              "press 'MRT calculation'.")
+        self.total_frame_number = frames
+
+        with open(self.trajec, "r") as f:
+            frame_lines = [f.readline() for _ in range(self.num_atoms + 2)]
+        self.multi_line_text.value = (
+            f"Number of atoms  -->  {self.num_atoms}\n"
+            f"Number of lines  -->  {frames * (self.num_atoms + 2)}\n"
+            f"Number of frames -->  {frames}\n"
+            f"  TRAJEC.xyz FIRST FRAME\n"
+            + "".join(frame_lines)
+        )
+
     async def workflow(self, widget):
         params_are_valid = await self.read_params(widget)
         if not params_are_valid:
             return
 
+        loop = asyncio.get_running_loop()
+        started = time.monotonic()
+        self._set_busy(True, "Reading the trajectory...")
         try:
-            self.calc_mrt()
-            self.mrt_summary()
-            await self.mrt_plot(widget)
-            self.display_plots()
-            await self.write_mrt_total()
-            # mrt_summary has left the results in the text box
+            await asyncio.to_thread(self.run_analysis, self._progress_reporter(loop))
         except Exception as e:
-            self.progress_bar.stop()
-            await self.warning_function(str(e))
+            self._set_busy(False, "The MRT calculation stopped with an error.")
+            if not getattr(self, "_closed", False):
+                await self.warning_function(str(e))
+            return
+        self._set_busy(False, f"Finished in {time.monotonic() - started:.1f} s: "
+                              f"{len(self.shell_atom_list)} {self.atom_symbol} atoms entered the shell.")
+        if getattr(self, "_closed", False):
+            return
+        self.multi_line_text.value = self.results_text(self.center_atom_symbol)
+        try:
+            self.display_plots()
+        except Exception as e:
+            await self.warning_function(f"The figure could not be shown: {e}")
+
+    def _on_close(self, window, **kwargs):
+        self._closed = True   # a job still running finishes without touching the window
+        return True
 
     def closeTopLevel(self, widget):
+        self._closed = True
         self.main_window.close()
