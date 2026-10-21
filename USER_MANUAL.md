@@ -2536,9 +2536,14 @@ needed at run time. The theory is summarised in
   Canvas's choices. *Background* offers the canvas presets (Off-white, White,
   Light grey, Pale blue, Cream, Dark grey, Black); *Custom background* takes any
   `#rrggbb` (press Enter). *Molecule style* is Line, CPK, vdW or **Design style**
-  (the canvas look). *Atom labels* has independent *Element symbols* and *Atom
-  numbers* switches. Style and labels are the viewer's own settings, so the
-  Display tab follows them and vice versa. In Design style the (3,−1), (3,+1)
+  (the canvas look). While the style is CPK or Design, the same menu also lists
+  **Increase atom size** and **Decrease atom size**: each choice makes the atoms
+  1.2× larger or smaller (between 0.2× and 5× the normal size) and the menu
+  returns to the style. Smaller atoms uncover critical points and paths near
+  the nuclei; larger ones make the atom labels easier to read. *Atom labels* has
+  independent *Element symbols* and *Atom numbers* switches. Style, atom size
+  and labels are the viewer's own settings, so the Display tab (its *Atom
+  scale* field) follows them and vice versa. In Design style the (3,−1), (3,+1)
   and (3,+3) points and their numbers are painted over the atom discs (a bond
   point of an X–H bond lies inside the H disc), a (3,−3) is covered by its own
   atom and its number is left out (it equals the atom number), and CP numbers
@@ -2623,7 +2628,10 @@ needed at run time. The theory is summarised in
     paths, the ring paths and the CP numbers.
 16. In **Canvas (3D window)** choose the **Background**, a **Molecule style**
     (*Design style* draws the molecule as the Molecular Design Canvas does) and
-    the **Atom labels** (element symbols, atom numbers, both or neither).
+    the **Atom labels** (element symbols, atom numbers, both or neither). In CPK
+    and Design style, choose **Increase atom size** / **Decrease atom size** in
+    the same menu, as often as needed, until the atoms neither hide the
+    critical points nor look too small.
 17. Rotate and zoom with the mouse, then click **Export 3D image...** to save
     the window as shown (PNG, TIFF or BMP).
 

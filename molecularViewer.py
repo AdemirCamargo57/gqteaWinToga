@@ -38,6 +38,8 @@ Frame = List[Atom]
 DESIGN_STYLE = "Design style"
 ATOM_STYLES = ("Line style", "CPK style", "vdW style", DESIGN_STYLE)
 DESIGN_ATOM_RADIUS = 0.28      # Angstrom: the canvas's 11 px disc at 40 px per Angstrom
+ATOM_SCALE_STEP = 1.2          # one Increase/Decrease atom size step multiplies/divides atom_scale_factor by this
+ATOM_SCALE_LIMITS = (0.2, 5.0)
 DESIGN_OUTLINE_SCALE = 1.12    # the outline is a back-face sphere this much larger
 DESIGN_SYMBOL_FONT = ogl_glut.GLUT_BITMAP_HELVETICA_12
 DESIGN_NUMBER_FONT = ogl_glut.GLUT_BITMAP_HELVETICA_10
@@ -79,6 +81,16 @@ def screen_axes(modelview) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         n = np.linalg.norm(v)
         axes.append(v / n if n > 0 else np.eye(3)[k])
     return axes[0], axes[1], axes[2]
+
+
+def stepped_atom_scale(scale: float, steps: int) -> float:
+    """atom_scale_factor after ``steps`` Increase (+) or Decrease (-) atom size steps.
+
+    Multiplicative, so one step looks the same at any size; clamped to
+    ATOM_SCALE_LIMITS and rounded to 4 decimals so a step up then down is 1.0 again.
+    """
+    low, high = ATOM_SCALE_LIMITS
+    return round(min(max(float(scale) * ATOM_SCALE_STEP ** steps, low), high), 4)
 
 # Lossless formats only: an exported canvas must be the displayed pixels.
 CANVAS_IMAGE_FORMATS = {".png": "PNG", ".tif": "TIFF", ".tiff": "TIFF", ".bmp": "BMP"}
@@ -2894,8 +2906,8 @@ class MolecularViewerUI(MolecularViewer):
             )
 
     def apply_view_settings(self, style: Optional[str] = None, symbols: Optional[bool] = None,
-                            numbers: Optional[bool] = None):
-        """Atom style and label switches, shared by the Display and QTAIM tabs.
+                            numbers: Optional[bool] = None, atom_scale: Optional[float] = None):
+        """Atom style, label switches and atom size, shared by the Display and QTAIM tabs.
 
         None leaves a setting unchanged. Both tabs' widgets are brought in line
         afterwards; they are written only when they differ, so the on_change
@@ -2913,7 +2925,24 @@ class MolecularViewerUI(MolecularViewer):
             self.show_atom_symbols = bool(symbols)
         if numbers is not None:
             self.show_atom_numbers = bool(numbers)
+        if atom_scale is not None:
+            if not (np.isfinite(atom_scale) and atom_scale > 0):
+                raise ValueError(f"The atom size scale must be a positive number, not {atom_scale}.")
+            self.atom_scale_factor = float(atom_scale)
+            self.invalidate_scene_cache()
+            self._sync_atom_scale_input()
         self._sync_view_widgets()
+
+    def _sync_atom_scale_input(self):
+        """Show atom_scale_factor in the Display tab's Atom scale field, unless it already does."""
+        if getattr(self, "atom_scale_input", None) is None:
+            return
+        try:
+            shown = float(self.atom_scale_input.value)
+        except (TypeError, ValueError):
+            shown = None
+        if shown is None or not np.isclose(shown, self.atom_scale_factor, rtol=1e-9, atol=1e-9):
+            self.atom_scale_input.value = f"{self.atom_scale_factor:g}"
 
     def _sync_view_widgets(self):
         if getattr(self, "atom_display_style_selection", None) is not None:

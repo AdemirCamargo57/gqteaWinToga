@@ -153,6 +153,34 @@ class TestViewSettingsSync:
         assert ui.atom_symbols_switch.value is True and ui.atom_numbers_switch.value is True
         assert ui.qtaim_controller.synced == 1
 
+    def test_atom_scale_updates_the_viewer_and_the_display_field(self):
+        ui = self._ui()
+        ui.atom_scale_input = SimpleNamespace(value="1.0")
+        ui.apply_view_settings(style=mv.DESIGN_STYLE)
+        assert ui.atom_scale_input.value == "1.0"   # untouched unless the scale changes
+        ui.apply_view_settings(atom_scale=1.44)
+        assert ui.atom_scale_factor == 1.44 and ui.atom_scale_input.value == "1.44"
+        assert ui.atom_display_style == mv.DESIGN_STYLE
+
+    @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+    def test_bad_atom_scale_is_rejected(self, bad):
+        ui = self._ui()
+        with pytest.raises(ValueError, match="atom size"):
+            ui.apply_view_settings(atom_scale=bad)
+        assert ui.atom_scale_factor == 1.0
+
+    @pytest.mark.parametrize("style", ["CPK style", mv.DESIGN_STYLE])
+    def test_atom_scale_resizes_the_drawn_atoms(self, gl, style):
+        v = _viewer(style)
+        spheres, _ = _record(v)
+        v.draw_bond_line = v.create_cylinder = lambda *a, **k: None
+        v.render_frame(WATER, BONDS)
+        normal = list(spheres)
+        spheres.clear()
+        v.atom_scale_factor = 1.5
+        v.render_frame(WATER, BONDS)
+        assert normal and spheres == pytest.approx([r * 1.5 for r in normal], abs=2e-6)
+
     def test_unknown_style_is_rejected(self):
         with pytest.raises(ValueError, match="atom style"):
             self._ui().apply_view_settings(style="Comic style")

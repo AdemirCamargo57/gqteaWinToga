@@ -1971,7 +1971,9 @@ green, Multiwfn's colours) and the paths (brown bond paths) in this viewer's
 the 3D window's background (the Molecular Design Canvas presets or any
 #rrggbb), the molecule style (Line, CPK, vdW or Design style - the canvas look)
 and independent element-symbol and atom-number labels, shared with the
-Display tab; Export 3D image saves the window as shown. Plot 2D map
+Display tab. In CPK and Design style the style menu also offers Increase
+atom size and Decrease atom size (x1.2 per step, 0.2-5; the Display tab's
+Atom scale follows). Export 3D image saves the window as shown. Plot 2D map
 draws a Multiwfn-style plane map in the interactive plot viewer: rho
 contours (1, 2, 4, 8 x 10^n a.u.), gradient lines, interbasin lines, bond
 paths and the critical points within 0.5 bohr of the plane. Its data are

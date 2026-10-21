@@ -58,6 +58,13 @@ TABLE_COLUMN_FRACTIONS = (0.08, 0.12, 0.20, 0.20, 0.20, 0.18)
 MIN_COLUMN_WIDTH = 40
 IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]          # the 3D canvas: lossless only
 MAP_IMAGE_FILE_TYPES = ["png", "svg", "pdf", "tif", "tiff"]
+# Molecule style menu entries that act rather than choose a style: each steps the
+# viewer's atom size (molecularViewer.stepped_atom_scale) and the menu returns to
+# the current style. Offered only for the styles whose atoms they resize.
+INCREASE_ATOM_SIZE = "Increase atom size"
+DECREASE_ATOM_SIZE = "Decrease atom size"
+ATOM_SIZE_ACTIONS = {INCREASE_ATOM_SIZE: 1, DECREASE_ATOM_SIZE: -1}
+SIZABLE_STYLES = ("CPK style", "Design style")
 
 
 def background_presets() -> Dict[str, str]:
@@ -69,6 +76,15 @@ def background_label(rgb) -> Optional[str]:
     """The preset whose colour is ``rgb`` (r, g, b in [0, 1]), or None."""
     current = "#" + "".join(f"{int(round(float(c) * 255)):02x}" for c in rgb)
     return next((label for label, colour in CANVAS_BACKGROUNDS.items() if colour == current), None)
+
+
+def style_menu_items(styles, current: str) -> list:
+    """The Molecule style menu: the viewer's styles, plus the atom-size actions
+    while ``current`` is a style whose atoms they resize."""
+    items = list(styles)
+    if current in SIZABLE_STYLES:
+        items += list(ATOM_SIZE_ACTIONS)
+    return items
 
 
 def fit_table_columns(table, fractions=TABLE_COLUMN_FRACTIONS) -> None:
@@ -148,6 +164,7 @@ class QTAIMTabController:
         self._structure_settled_for: Optional[qa.QTAIMResults] = None
         self._tasks = set()
         self.last_map_entry: Optional[dict] = None   # the plotted 2D map, for Export 2D image
+        self._style_menu: Optional[list] = None      # the Molecule style items last shown
 
     # --- layout -----------------------------------------------------------
     def _label(self, text):
@@ -222,7 +239,8 @@ class QTAIMTabController:
                 self.background_selection.value = label
             self.background_input = toga.TextInput(placeholder="#rrggbb, Enter", on_confirm=self.on_custom_background,
                                                    style=Pack(width=200))
-            self.style_selection = toga.Selection(items=list(ATOM_STYLES), on_change=self.on_style_change,
+            self._style_menu = style_menu_items(ATOM_STYLES, self.viewer.atom_display_style)
+            self.style_selection = toga.Selection(items=self._style_menu, on_change=self.on_style_change,
                                                   style=Pack(width=200))
             self.style_selection.value = self.viewer.atom_display_style
             self.symbols_switch = toga.Switch("Element symbols", value=bool(self.viewer.show_atom_symbols),
@@ -265,7 +283,8 @@ class QTAIMTabController:
             self._row(self._label("Background:"), self.background_selection),
             self._row(self._label("Custom background:"), self.background_input),
             self._row(self._label("Molecule style:"), self.style_selection),
-            self._hint("Design style draws the molecule as the Molecular Design Canvas does."),
+            self._hint("Design style draws the molecule as the Molecular Design Canvas does. In CPK and Design "
+                       "styles the menu also offers Increase / Decrease atom size."),
             self._row(self._label("Atom labels:"), self.symbols_switch, self.numbers_switch),
             self._row(self.export_3d_button),
             self._heading("2D plane map"),
@@ -594,7 +613,28 @@ class QTAIMTabController:
     def on_style_change(self, widget, **kwargs):
         if self._syncing or not self.style_selection.value:
             return
-        self.viewer.apply_view_settings(style=self.style_selection.value)
+        steps = ATOM_SIZE_ACTIONS.get(self.style_selection.value)
+        if steps is None:
+            self.viewer.apply_view_settings(style=self.style_selection.value)
+        else:
+            self.step_atom_size(steps)
+
+    def step_atom_size(self, steps: int):
+        """Increase (+) / Decrease (-) atom size: the viewer's shared atom scale,
+        so the Display tab's Atom scale field follows. The menu goes back to the style."""
+        from molecularViewer import ATOM_SCALE_LIMITS, stepped_atom_scale  # molecularViewer imports this module
+
+        if self.viewer.atom_display_style in SIZABLE_STYLES:
+            old = self.viewer.atom_scale_factor
+            new = stepped_atom_scale(old, steps)
+            if new != old:
+                self.viewer.apply_view_settings(atom_scale=new)
+                message = f"Atom size scale: {new:g}."
+            else:
+                limit = ATOM_SCALE_LIMITS[1] if steps > 0 else ATOM_SCALE_LIMITS[0]
+                message = f"Atom size is already at its {'largest' if steps > 0 else 'smallest'} ({limit:g})."
+            _assign(self.status_label, "text", message)
+        self.sync_canvas_widgets()
 
     def on_label_change(self, widget, **kwargs):
         if self._syncing:
@@ -606,8 +646,16 @@ class QTAIMTabController:
         """Show the viewer's style and label settings (changed here or on the Display tab)."""
         if getattr(self, "style_selection", None) is None:
             return  # the tab is not built yet
+        from molecularViewer import ATOM_STYLES  # molecularViewer imports this module
+
         previous, self._syncing = self._syncing, True
         try:
+            # The size actions come and go with the style; items are reset only
+            # when they change (each reset re-lays out the window).
+            menu = style_menu_items(ATOM_STYLES, self.viewer.atom_display_style)
+            if menu != self._style_menu:
+                self.style_selection.items = menu
+                self._style_menu = menu
             _assign(self.style_selection, "value", self.viewer.atom_display_style)
             _assign(self.symbols_switch, "value", bool(self.viewer.show_atom_symbols))
             _assign(self.numbers_switch, "value", bool(self.viewer.show_atom_numbers))

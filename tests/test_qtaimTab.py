@@ -134,18 +134,21 @@ class StubViewer:
         self.main_window = StubWindow()
         self.background_color = (0.0, 0.0, 0.0)
         self.atom_display_style, self.show_atom_symbols, self.show_atom_numbers = "Line style", False, False
+        self.atom_scale_factor = 1.0
         self.window_open, self.frame = True, np.zeros((4, 6, 3), dtype=np.uint8)
 
     def set_background_color(self, rgb):
         self.background_color = tuple(rgb)
 
-    def apply_view_settings(self, style=None, symbols=None, numbers=None):
+    def apply_view_settings(self, style=None, symbols=None, numbers=None, atom_scale=None):
         if style is not None:
             self.atom_display_style = style
         if symbols is not None:
             self.show_atom_symbols = symbols
         if numbers is not None:
             self.show_atom_numbers = numbers
+        if atom_scale is not None:
+            self.atom_scale_factor = atom_scale
 
     def viewer_window_is_open(self):
         return self.window_open
@@ -434,6 +437,76 @@ class TestCanvas:
 
     def test_sync_before_the_tab_is_built_is_harmless(self):
         QTAIMTabController(viewer=StubViewer()).sync_canvas_widgets()
+
+
+class TestAtomSize:
+    def test_size_actions_only_for_cpk_and_design(self):
+        import molecularViewer as mv
+        assert set(qtaimTab.SIZABLE_STYLES) <= set(mv.ATOM_STYLES) and mv.DESIGN_STYLE in qtaimTab.SIZABLE_STYLES
+        actions = list(qtaimTab.ATOM_SIZE_ACTIONS)
+        assert actions == ["Increase atom size", "Decrease atom size"]
+        for style in mv.ATOM_STYLES:
+            items = qtaimTab.style_menu_items(mv.ATOM_STYLES, style)
+            assert items[:len(mv.ATOM_STYLES)] == list(mv.ATOM_STYLES)
+            assert items[len(mv.ATOM_STYLES):] == (actions if style in ("CPK style", "Design style") else [])
+
+    @pytest.mark.parametrize("style", ["CPK style", "Design style"])
+    def test_increase_and_decrease_step_the_viewer_scale(self, style):
+        import molecularViewer as mv
+        c = make_controller()
+        c.viewer.atom_display_style = c.style_selection.value = style
+        c.style_selection.value = qtaimTab.INCREASE_ATOM_SIZE
+        c.on_style_change(None)
+        assert c.viewer.atom_scale_factor == pytest.approx(mv.ATOM_SCALE_STEP)
+        assert c.style_selection.value == style and c.viewer.atom_display_style == style
+        assert "1.2" in c.status_label.text
+        for _ in range(2):
+            c.style_selection.value = qtaimTab.DECREASE_ATOM_SIZE
+            c.on_style_change(None)
+        assert c.viewer.atom_scale_factor == pytest.approx(1 / mv.ATOM_SCALE_STEP, abs=1e-4)
+        assert c.style_selection.value == style
+
+    def test_menu_follows_the_style(self):
+        c = make_controller()
+        c.style_selection.value = "CPK style"
+        c.on_style_change(None)
+        c.sync_canvas_widgets()   # the real viewer calls this from apply_view_settings
+        assert c.style_selection.items[-2:] == list(qtaimTab.ATOM_SIZE_ACTIONS)
+        c.viewer.atom_display_style = "vdW style"   # e.g. changed on the Display tab
+        c.sync_canvas_widgets()
+        assert qtaimTab.INCREASE_ATOM_SIZE not in c.style_selection.items
+        assert c.style_selection.value == "vdW style"
+
+    def test_size_is_clamped_and_reported(self):
+        import molecularViewer as mv
+        c = make_controller()
+        c.viewer.atom_display_style = c.style_selection.value = "CPK style"
+        c.viewer.atom_scale_factor = mv.ATOM_SCALE_LIMITS[1]
+        c.style_selection.value = qtaimTab.INCREASE_ATOM_SIZE
+        c.on_style_change(None)
+        assert c.viewer.atom_scale_factor == mv.ATOM_SCALE_LIMITS[1]
+        assert "largest" in c.status_label.text and c.style_selection.value == "CPK style"
+
+    def test_other_styles_ignore_a_size_action(self):
+        c = make_controller()
+        c.style_selection.value = qtaimTab.INCREASE_ATOM_SIZE   # Line style: not offered, so nothing happens
+        c.on_style_change(None)
+        assert c.viewer.atom_scale_factor == 1.0 and c.viewer.atom_display_style == "Line style"
+        assert c.style_selection.value == "Line style"
+
+    def test_muted_while_syncing(self):
+        c = make_controller()
+        c.viewer.atom_display_style = "Design style"
+        c._syncing = True
+        c.style_selection.value = qtaimTab.INCREASE_ATOM_SIZE
+        c.on_style_change(None)
+        assert c.viewer.atom_scale_factor == 1.0
+
+    def test_stepped_atom_scale(self):
+        import molecularViewer as mv
+        assert mv.stepped_atom_scale(1.0, 1) == 1.2 and mv.stepped_atom_scale(1.2, -1) == 1.0
+        assert mv.stepped_atom_scale(1.0, 100) == mv.ATOM_SCALE_LIMITS[1]
+        assert mv.stepped_atom_scale(1.0, -100) == mv.ATOM_SCALE_LIMITS[0]
 
     def test_initial_background_label(self):
         assert qtaimTab.background_label((0.0, 0.0, 0.0)) == "Black"
