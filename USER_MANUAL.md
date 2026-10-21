@@ -1806,14 +1806,20 @@ through the last 50 edits, including **Clear**.
 ###### Rotating, panning and zooming: building in 3D
 
 The canvas is three-dimensional: every atom has a depth, and you can turn and
-move the view at any point while you build.
+move the view at any point while you build. The mouse works as in the 3D
+Molecular Viewer's window (the one the QTAIM tab draws in): left-drag rotates,
+right-drag moves, the wheel zooms.
 
 | Action | Gesture |
 |--------|---------|
-| Rotate the molecule about its centre | Right-drag anywhere on the canvas |
-| Pan | Left-drag an empty part of the canvas |
-| Zoom in / out | **Zoom +** / **Zoom −** (zooms about the canvas centre) |
+| Rotate the molecule about its centre | Left-drag an empty part of the canvas, or a bond |
+| Pan (move the view) | Right-drag anywhere on the canvas |
+| Zoom in / out | Mouse wheel (zooms about the pointer), or **Zoom +** / **Zoom −** (about the canvas centre) |
 | Back to the original view | **Reset view** |
+
+A left-drag that starts **on an atom** still draws a bond or grows a new atom,
+and a right-click **without dragging** still deletes, so the view gestures
+never get in the way of editing.
 
 Atoms further away are drawn smaller and paler, and bonds and atoms in front
 are painted over those behind. Rotating, panning and zooming **only change how
@@ -1977,7 +1983,7 @@ orange bonds, and the Molecule panel gives its size. Moving and turning are
 rigid, so the molecule's bond lengths, angles and dihedrals never change, and
 every other molecule stays exactly where it is. The molecule follows the
 pointer on screen whatever the view rotation and zoom, and it turns the same
-way a right-drag turns the whole view. Each drag is one **Undo** step.
+way a left-drag on empty space turns the whole view. Each drag is one **Undo** step.
 
 A move is refused, with the reason in the status line, when:
 
@@ -2212,8 +2218,9 @@ is one Undo step, and the 1000-atom limit of the canvas applies.
 | Click | bond | step its type: single → double → triple → resonance → single |
 | Drag | atom → atom | bond them |
 | Drag | atom → empty space | grow a bonded atom |
-| Drag | empty space | pan the view |
-| Right-drag | anywhere | rotate the view |
+| Drag | empty space or bond | rotate the view |
+| Right-drag | anywhere | pan (move) the view |
+| Mouse wheel | anywhere | zoom in / out about the pointer |
 | Right-click | atom or bond | delete it |
 | **Shift + click** | atom or bond | select its molecule |
 | **Shift + click** | empty space | clear the selection |

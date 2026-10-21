@@ -1577,12 +1577,16 @@ MEASURING.
 BUILDING IN 3D
 
 The canvas is three-dimensional. Every atom has a depth, and the view can be
-turned and moved at any point while you build:
+turned and moved at any point while you build. The mouse works as in the 3D
+viewer's window:
 
-  . Right-drag anywhere to rotate the molecule about its centre.
-  . Drag an empty part of the canvas to pan.
-  . 'Zoom +' and 'Zoom -' zoom about the centre of the canvas; 'Reset view'
-    returns to the original, unrotated view.
+  . Drag an empty part of the canvas (or a bond) to rotate the molecule about
+    its centre. A drag that starts on an atom still draws a bond.
+  . Right-drag anywhere to pan (move the view). A right-click without
+    dragging still deletes.
+  . Turn the mouse wheel to zoom in and out about the pointer; 'Zoom +' and
+    'Zoom -' zoom about the centre of the canvas. 'Reset view' returns to the
+    original, unrotated view.
 
 Atoms further away are drawn smaller and paler. Rotating, panning and zooming
 only change how you look at the molecule: they are not edits, they are not on

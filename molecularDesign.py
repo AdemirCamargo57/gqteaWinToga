@@ -24,7 +24,10 @@ The canvas is **three-dimensional**: every atom has a depth, a
 the view can be rotated, panned and zoomed while building. The view is never
 an edit -- it pushes no undo entry and leaves a finished optimization valid.
 
-Canvas gestures, all on the left button unless stated:
+Canvas gestures, all on the left button unless stated. The view gestures are
+the 3D viewer's (the window the QTAIM tab draws in): left-drag rotates,
+right-drag moves, the wheel zooms. A left drag that starts on an atom still
+draws a bond or grows an atom, and a right-click still deletes.
 
 ========================================  ==========================================
 Gesture                                   Result
@@ -39,8 +42,9 @@ Click an atom                              Pick it for a measurement (#1-#4, in 
                                           give it the selected element instead
 Click a bond                              Step its type: single, double, triple,
                                           resonance, back to single
-Drag empty space                          Pan the view
-Right-drag                                Rotate the view about the molecule
+Drag empty space or a bond                Rotate the view about the molecule
+Right-drag                                Move (pan) the view
+Mouse wheel                               Zoom in / out about the pointer
 Right-click (no drag) an atom or bond     Delete it
 Shift+click an atom or bond               Select its whole molecule
 Shift+click empty space                   Clear the selection
@@ -140,6 +144,10 @@ DEFAULT_EXPORT_FORMAT = "XYZ"
 DEFAULT_GROWN_BOND_LENGTH = 1.5
 
 ZOOM_STEP = 1.25
+# The mouse wheel zooms by this much per notch (WHEEL_DELTA units), about the
+# pointer -- the 3D viewer's wheel step, so both canvases feel the same.
+WHEEL_ZOOM_STEP = 1.1
+WHEEL_DELTA = 120
 
 # Depth cue: the furthest atom is drawn this much smaller and this far faded
 # towards the background; the nearest is drawn as is.
@@ -247,6 +255,9 @@ class MolecularDesignController:
     # Pointer movement past this many pixels turns a click into a drag, the
     # same discrimination the 3D window makes between picking and rotating.
     DRAG_THRESHOLD = 4.0
+    # A left drag from these press targets turns the view (as in the 3D
+    # viewer); from an atom it draws a bond or grows an atom instead.
+    VIEW_ROTATION_TARGETS = ("empty", "bond")
     ATOM_RADIUS = 11.0
     BOND_LINE_OFFSET = 3.0
     UNDO_DEPTH = 50
@@ -276,7 +287,7 @@ class MolecularDesignController:
         self._last_drag_point: Optional[Tuple[float, float]] = None
         self._optimization_running = False
 
-        # The 3D view, and the right-button gesture that rotates it.
+        # The 3D view, and the right-button gesture that pans it.
         self.camera = ViewCamera()
         self.view_centre = (CANVAS_WIDTH / 2.0, CANVAS_HEIGHT / 2.0)
         self._alt_press_point: Optional[Tuple[float, float]] = None
@@ -593,6 +604,23 @@ class MolecularDesignController:
         self.set_status(f"Zoom {self.camera.zoom * 100.0:.0f}%.")
         self._redraw()
 
+    def on_canvas_wheel(self, notches: float, x: float, y: float):
+        """Mouse wheel: zoom about the pointer, in when turned away from the user.
+
+        ``notches`` is the wheel turn in detents (WinForms Delta / WHEEL_DELTA;
+        fractional on smooth-scrolling devices). A view change, not an edit.
+        """
+        if not notches:
+            return
+        self.camera.zoom_by(WHEEL_ZOOM_STEP ** notches, x, y)
+        self.set_status(f"Zoom {self.camera.zoom * 100.0:.0f}%.")
+        self._redraw()
+
+    def _start_view_rotation(self):
+        """Turn about the molecule's centre, wherever it is on screen."""
+        if not self.sketch.is_empty:
+            self.camera.set_pivot(self.sketch.positions().mean(axis=0))
+
     def reset_view(self, widget=None):
         self.camera.reset()
         self.set_status("View reset: unrotated, unpanned, 100% zoom.")
@@ -664,6 +692,8 @@ class MolecularDesignController:
             if kind != "translate" and moved <= self.DRAG_THRESHOLD ** 2:
                 return
             self._dragged = True
+            if kind in self.VIEW_ROTATION_TARGETS:
+                self._start_view_rotation()
 
         if kind == "translate":
             last_x, last_y = self._last_drag_point
@@ -673,11 +703,11 @@ class MolecularDesignController:
             anchor_x, anchor_y, _ = self.screen_positions()[target]
             self.drag_preview = (anchor_x, anchor_y, x, y)
             self._redraw()
-        elif kind == "empty":
-            # Panning starts from the press point, so the movement made while
+        elif kind in self.VIEW_ROTATION_TARGETS:
+            # Rotating starts from the press point, so the movement made while
             # still inside the drag threshold is not lost.
             last_x, last_y = self._last_drag_point
-            self.camera.pan_by(x - last_x, y - last_y)
+            self.camera.rotate_by_drag(x - last_x, y - last_y)
             self._last_drag_point = (x, y)
             self._redraw()
 
@@ -698,18 +728,19 @@ class MolecularDesignController:
                 self.select_molecule(target)
         elif kind == "atom":
             self._release_from_atom(target, x, y, dragged)
+        elif kind in self.VIEW_ROTATION_TARGETS and dragged:
+            self.set_status("View rotated. Reset view returns to the original orientation.")
         elif kind == "bond":
-            if not dragged:
-                self._cycle_bond(target)
+            self._cycle_bond(target)
         elif not dragged:
             self._place_atom(x, y)
 
         self._redraw()
 
     def on_canvas_alt_press(self, widget, x, y, **kwargs):
-        """Start a right-button gesture: a drag rotates, a click deletes.
+        """Start a right-button gesture: a drag pans, a click deletes.
 
-        With Ctrl held, a drag turns the selected molecule instead of the view.
+        With Ctrl held, a drag turns the selected molecule instead.
         """
         self._alt_press_point = (x, y)
         self._alt_last_point = (x, y)
@@ -723,21 +754,20 @@ class MolecularDesignController:
         if not self._alt_dragged:
             press_x, press_y = self._alt_press_point
             within = (x - press_x) ** 2 + (y - press_y) ** 2 <= self.DRAG_THRESHOLD ** 2
-            # The threshold tells a delete-click from a view rotation; a Ctrl
-            # turn never deletes, so it starts at once.
+            # The threshold tells a delete-click from a pan; a Ctrl turn never
+            # deletes, so it starts at once.
             if within and not self._alt_transform:
                 return
             self._alt_dragged = True
-            # Turn about the molecule's centre, wherever it is on screen.
-            if not self._alt_transform and not self.sketch.is_empty:
-                self.camera.set_pivot(self.sketch.positions().mean(axis=0))
 
+        # Measured from the press point, so the movement made while still
+        # inside the threshold is not lost.
         last_x, last_y = self._alt_last_point
         self._alt_last_point = (x, y)
         if self._alt_transform:
             self._rotate_selection(x - last_x, y - last_y)
             return
-        self.camera.rotate_by_drag(x - last_x, y - last_y)
+        self.camera.pan_by(x - last_x, y - last_y)
         self._redraw()
 
     def on_canvas_alt_release(self, widget, x, y, **kwargs):
@@ -757,7 +787,7 @@ class MolecularDesignController:
                 self._finish_transform("Molecule rotated")
             return
         if dragged:
-            self.set_status("View rotated. Reset view returns to the original orientation.")
+            self.set_status("View moved. Reset view returns to the original view.")
             self._redraw()  # the gesture is over: views catch up what they skipped (label layout)
             return
         self._delete_at(*press)
@@ -1817,6 +1847,7 @@ class DesignCanvasWindow:
 
         self.window = toga.Window(title=self.TITLE, size=self.WINDOW_SIZE, on_close=self._on_close)
         self.window.content = self._build()
+        self._attach_wheel_zoom()
 
         self.controller.register_view(self)
         self.window.show()
@@ -1847,8 +1878,8 @@ class DesignCanvasWindow:
         )
         content.add(
             toga.Label(
-                "Right-drag to rotate - drag empty space to pan - right-click to delete - "
-                "click atoms in order to measure.",
+                "Drag empty space to rotate - right-drag to move - wheel to zoom - "
+                "right-click to delete - click atoms in order to measure.",
                 style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 2, 0)),
             )
         )
@@ -2134,6 +2165,42 @@ class DesignCanvasWindow:
             self._draw_sketch()
             self.canvas.redraw()
         self._paint_now()
+
+    def _attach_wheel_zoom(self):
+        """WinForms: the mouse wheel over the canvas zooms. Toga's Canvas reports
+        no wheel events, so the native control's are used; elsewhere the Zoom
+        buttons remain the way to zoom."""
+        native = getattr(getattr(self.canvas, "_impl", None), "native", None)
+        form = getattr(getattr(self.window, "_impl", None), "native", None)
+        try:
+            native.MouseWheel += self._on_canvas_wheel
+            # Windows sends the wheel to the control with the focus (a button,
+            # a field) when "scroll inactive windows" is off; it then reaches
+            # the window, which passes it on if the pointer is over the canvas.
+            form.MouseWheel += self._on_window_wheel
+        except Exception:
+            pass
+
+    def _on_canvas_wheel(self, sender, event):
+        try:
+            impl = self.canvas._impl
+            self.controller.on_canvas_wheel(event.Delta / WHEEL_DELTA, impl.scale_out(event.X),
+                                            impl.scale_out(event.Y))
+            event.Handled = True  # HandledMouseEventArgs: not passed on to the window as well
+        except Exception:
+            pass
+
+    def _on_window_wheel(self, sender, event):
+        try:
+            from System.Windows.Forms import Control
+
+            impl = self.canvas._impl
+            point = impl.native.PointToClient(Control.MousePosition)
+            if impl.native.ClientRectangle.Contains(point):
+                self.controller.on_canvas_wheel(event.Delta / WHEEL_DELTA, impl.scale_out(point.X),
+                                                impl.scale_out(point.Y))
+        except Exception:
+            pass
 
     def _paint_now(self):
         """Have WinForms paint the invalidated canvas immediately.

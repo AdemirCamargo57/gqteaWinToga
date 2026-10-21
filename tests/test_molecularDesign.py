@@ -6,8 +6,8 @@ stub views. Nothing here creates a Toga window.
 
 Three things are under test: the canvas state machine (click to place, drag to
 bond or to grow a bonded atom, click to cycle a bond type, right-click to
-delete), the 3D view (left-drag on empty space pans, right-drag rotates, and
-neither is an edit), and the plumbing around it -- broadcasting to several
+delete), the 3D view (left-drag on empty space rotates, right-drag pans, the
+wheel zooms, and none is an edit), and the plumbing around it -- broadcasting to several
 views at once, surviving a closed window, writing an optimized geometry back
 onto the drawing, and handing the finished structure to the 3D viewer.
 """
@@ -673,16 +673,50 @@ def test_sending_without_a_viewer_attached_is_reported():
 
 
 # ------------------------------------------------------------------
-# The 3D view: pan, rotate, zoom -- none of them an edit
+# The 3D view: rotate (left-drag), pan (right-drag), zoom (wheel) -- the 3D
+# viewer's mouse controls -- none of them an edit
 # ------------------------------------------------------------------
-def test_dragging_empty_space_pans_the_view():
+def test_dragging_empty_space_rotates_the_view():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+
+    _drag(controller, 300.0, 300.0, 380.0, 300.0)
+
+    assert not np.allclose(controller.camera.rotation, np.eye(3))
+    assert controller.sketch.atom_count == 2          # no atom placed at the release point
+    assert "rotated" in controller.status_message
+
+
+def test_dragging_a_bond_rotates_the_view_and_keeps_its_type():
+    controller = _controller()
+    bond = _two_bonded_carbons(controller)
+
+    _drag(controller, 150.0, 100.0, 230.0, 160.0)
+
+    assert not np.allclose(controller.camera.rotation, np.eye(3))
+    assert bond.order == 1
+
+
+def test_dragging_from_an_atom_still_draws_a_bond():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    _click(controller, 200.0, 100.0)
+
+    _drag(controller, 100.0, 100.0, 200.0, 100.0)
+
+    assert controller.sketch.bond_count == 1
+    assert np.allclose(controller.camera.rotation, np.eye(3))
+
+
+def test_right_dragging_pans_the_view():
     controller = _controller()
     _click(controller, 100.0, 100.0)
 
-    _drag(controller, 300.0, 300.0, 340.0, 280.0)
+    _right_drag(controller, 300.0, 300.0, 340.0, 280.0)
 
     sx, sy, _ = controller.screen_positions()[controller.sketch.atoms[0].atom_id]
     assert (sx, sy) == pytest.approx((140.0, 80.0))
+    assert np.allclose(controller.camera.rotation, np.eye(3))
 
 
 def test_panning_moves_the_view_not_the_atoms():
@@ -691,22 +725,13 @@ def test_panning_moves_the_view_not_the_atoms():
     before = controller.sketch.positions()
     undo_depth = len(controller.undo_stack)
 
-    _drag(controller, 300.0, 300.0, 340.0, 280.0)
+    _right_drag(controller, 300.0, 300.0, 340.0, 280.0)
 
     assert np.array_equal(controller.sketch.positions(), before)
     assert len(controller.undo_stack) == undo_depth
 
 
-def test_right_dragging_rotates_the_view():
-    controller = _controller()
-    _two_bonded_carbons(controller)
-
-    _right_drag(controller, 300.0, 300.0, 380.0, 300.0)
-
-    assert not np.allclose(controller.camera.rotation, np.eye(3))
-
-
-def test_right_dragging_over_an_atom_rotates_instead_of_deleting():
+def test_right_dragging_over_an_atom_pans_instead_of_deleting():
     controller = _controller()
     _two_bonded_carbons(controller)
 
@@ -714,6 +739,8 @@ def test_right_dragging_over_an_atom_rotates_instead_of_deleting():
 
     assert controller.sketch.atom_count == 2
     assert controller.sketch.bond_count == 1
+    sx, sy, _ = controller.screen_positions()[controller.sketch.atoms[0].atom_id]
+    assert (sx, sy) == pytest.approx((180.0, 160.0))
 
 
 def test_rotating_is_not_an_edit():
@@ -724,7 +751,7 @@ def test_rotating_is_not_an_edit():
     before = controller.sketch.positions()
     undo_depth = len(controller.undo_stack)
 
-    _right_drag(controller, 300.0, 300.0, 380.0, 340.0)
+    _drag(controller, 300.0, 300.0, 380.0, 340.0)
 
     assert np.array_equal(controller.sketch.positions(), before)
     assert len(controller.undo_stack) == undo_depth
@@ -735,7 +762,7 @@ def test_rotation_turns_about_the_molecule_centre():
     controller = _controller()
     _two_bonded_carbons(controller)  # centred on (150, 100)
 
-    _right_drag(controller, 300.0, 300.0, 390.0, 250.0)
+    _drag(controller, 300.0, 300.0, 390.0, 250.0)
 
     centre = controller.sketch.positions().mean(axis=0)
     projected = controller.camera.project(centre)[0]
@@ -745,7 +772,7 @@ def test_rotation_turns_about_the_molecule_centre():
 def test_a_bond_can_still_be_clicked_after_rotating():
     controller = _controller()
     bond = _two_bonded_carbons(controller)
-    _right_drag(controller, 300.0, 300.0, 340.0, 330.0)
+    _drag(controller, 300.0, 300.0, 340.0, 330.0)
     a, b = (controller.screen_positions()[atom_id] for atom_id in (bond.atom_i, bond.atom_j))
 
     _click(controller, (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
@@ -756,7 +783,7 @@ def test_a_bond_can_still_be_clicked_after_rotating():
 def test_a_click_after_rotating_places_the_atom_on_the_plane_through_the_centre():
     controller = _controller()
     _two_bonded_carbons(controller)
-    _right_drag(controller, 300.0, 300.0, 380.0, 330.0)
+    _drag(controller, 300.0, 300.0, 380.0, 330.0)
     centre = controller.sketch.positions().mean(axis=0)
 
     _click(controller, 400.0, 350.0)
@@ -772,11 +799,52 @@ def test_a_rotated_view_lets_you_build_out_of_the_drawing_plane():
     at the same depth as the original drawing."""
     controller = _controller()
     _click(controller, 280.0, 210.0)
-    _right_drag(controller, 300.0, 300.0, 457.0, 300.0)  # about 90 degrees
+    _drag(controller, 300.0, 300.0, 457.0, 300.0)  # about 90 degrees
 
     _drag(controller, 280.0, 210.0, 450.0, 210.0)
 
     assert abs(controller.sketch.atoms[1].z) > 10.0
+
+
+def test_the_wheel_zooms_about_the_pointer():
+    controller = _controller()
+    _click(controller, 100.0, 100.0)
+    _click(controller, 300.0, 200.0)
+    held = controller.sketch.atoms[1].atom_id
+
+    controller.on_canvas_wheel(1, 300.0, 200.0)       # one notch away from the user: in
+
+    assert controller.camera.zoom == pytest.approx(molecularDesign.WHEEL_ZOOM_STEP)
+    assert controller.screen_positions()[held][:2] == pytest.approx((300.0, 200.0))  # stays under the pointer
+    assert "Zoom 110%" in controller.status_message
+    controller.on_canvas_wheel(-2, 300.0, 200.0)      # two notches back: out
+    assert controller.camera.zoom == pytest.approx(1.0 / molecularDesign.WHEEL_ZOOM_STEP)
+
+
+def test_the_wheel_is_not_an_edit_and_stops_at_the_zoom_limits():
+    controller = _controller()
+    _two_bonded_carbons(controller)
+    controller.apply_optimization_result(_successful_result())
+    before, undo_depth = controller.sketch.positions(), len(controller.undo_stack)
+
+    controller.on_canvas_wheel(100, 200.0, 200.0)
+    assert controller.camera.zoom == controller.camera.MAX_ZOOM
+    controller.on_canvas_wheel(-200, 200.0, 200.0)
+    assert controller.camera.zoom == controller.camera.MIN_ZOOM
+
+    assert np.array_equal(controller.sketch.positions(), before)
+    assert len(controller.undo_stack) == undo_depth
+    assert controller.last_result is not None
+
+
+def test_a_smooth_scrolling_wheel_zooms_by_a_fraction_of_a_notch():
+    controller = _controller()
+    redraws = controller.test_view.redraw_count
+    controller.on_canvas_wheel(0, 200.0, 200.0)       # nothing turned: nothing happens
+    assert controller.camera.zoom == 1.0 and controller.test_view.redraw_count == redraws
+
+    controller.on_canvas_wheel(0.5, 200.0, 200.0)
+    assert controller.camera.zoom == pytest.approx(molecularDesign.WHEEL_ZOOM_STEP ** 0.5)
 
 
 def test_zoom_buttons_change_the_zoom_and_reset_restores_it():
@@ -963,8 +1031,10 @@ def test_the_exported_frame_ignores_the_view_rotation():
     _two_bonded_carbons(controller)
     before = controller.frame_xyz_text()
 
-    _right_drag(controller, 100.0, 300.0, 300.0, 200.0)
+    _drag(controller, 100.0, 300.0, 300.0, 200.0)   # empty space: rotates the view
+    _right_drag(controller, 100.0, 300.0, 300.0, 200.0)   # pans it
 
+    assert not np.allclose(controller.camera.rotation, np.eye(3))
     assert controller.frame_xyz_text() == before
 
 
@@ -1167,7 +1237,9 @@ def test_an_import_is_one_undo_step_and_clears_the_optimization():
 
 def test_an_imported_molecule_is_centred_and_the_view_reset():
     controller = _controller()
-    _right_drag(controller, 100.0, 300.0, 300.0, 200.0)
+    _drag(controller, 100.0, 300.0, 300.0, 200.0)         # rotate
+    _right_drag(controller, 100.0, 300.0, 300.0, 200.0)   # pan
+    controller.on_canvas_wheel(3, 200.0, 200.0)           # zoom
 
     controller.import_structure(ETHYLENE_GJF)
 
@@ -1435,7 +1507,8 @@ def test_ctrl_drag_moves_by_screen_pixels_on_a_rotated_zoomed_view():
     controller = _controller()
     _two_molecules(controller)
     _shift_click(controller, 100.0, 300.0)
-    _right_drag(controller, 300.0, 200.0, 360.0, 230.0)
+    _drag(controller, 300.0, 200.0, 360.0, 230.0)   # empty space: rotates the view
+    assert not np.allclose(controller.camera.rotation, np.eye(3))
     controller.zoom_in()
     o_screen = controller.screen_positions()[controller.sketch.ordered_atom_ids()[2]]
 
@@ -2033,8 +2106,14 @@ def test_plain_drags_keep_the_click_threshold():
 
     controller.on_canvas_press(None, 300.0, 300.0)
     controller.on_canvas_drag(None, 302.0, 301.0)
-    assert np.array_equal(controller.camera.anchor, anchor)  # no pan yet: could still be a click
+    assert np.array_equal(controller.camera.rotation, np.eye(3))  # no turn yet: could still be a click
     controller.on_canvas_release(None, 302.0, 301.0)
+    assert controller.sketch.atom_count == 2                       # ...and it was one
+
+    controller.on_canvas_alt_press(None, 300.0, 300.0)
+    controller.on_canvas_alt_drag(None, 302.0, 301.0)
+    assert np.array_equal(controller.camera.anchor, anchor)        # no pan yet: could still be a delete
+    controller.on_canvas_alt_release(None, 302.0, 301.0)
 
 
 class _StubCanvas:
@@ -2077,6 +2156,32 @@ def test_the_side_panel_waits_for_the_end_of_a_drag():
     controller.on_canvas_release(None, 150.0, 300.0)
     assert window.panel_refreshes >= 1
     assert not controller.gesture_active
+
+
+def test_the_native_wheel_zooms_at_the_pointer_in_canvas_units():
+    """WinForms reports the wheel in physical pixels; Toga's own scaling turns
+    them into the canvas units every other gesture uses."""
+    from types import SimpleNamespace
+
+    controller = _controller()
+    controller.sketch.add_atom("C", 300.0, 200.0)
+    window = _headless_window(controller)
+    window.canvas._impl = SimpleNamespace(scale_out=lambda value: value / 1.25)   # 125 % display scaling
+    event = SimpleNamespace(Delta=2 * molecularDesign.WHEEL_DELTA, X=375, Y=250, Handled=False)
+
+    window._on_canvas_wheel(None, event)
+
+    assert controller.camera.zoom == pytest.approx(molecularDesign.WHEEL_ZOOM_STEP ** 2)
+    sx, sy, _ = controller.screen_positions()[controller.sketch.atoms[0].atom_id]
+    assert (sx, sy) == pytest.approx((300.0, 200.0))
+    assert event.Handled is True        # the window must not zoom a second time
+
+
+def test_without_a_native_control_the_wheel_is_simply_not_wired():
+    controller = _controller()
+    window = _headless_window(controller)
+    window.window = None
+    window._attach_wheel_zoom()         # no native canvas or form: nothing to attach, no error
 
 
 def test_without_a_native_control_the_toga_canvas_draws():
