@@ -37,7 +37,16 @@
 # the molecular design canvas (molecularCanvasRender.py) and the
 # solvent-box builders' live construction view (boxConstructionView.py),
 # and saves 3D-viewer images (matplotlib depends on it as well).
-toga-winforms
+#
+# Pinned to the 0.5 release line (0.5.3 is the verified version). The app
+# patches toga-winforms 0.5's ScrollContainer (scrollPosition.py) so that
+# scrolled tool pages - e.g. the 3D viewer's QTAIM tab - keep their scroll
+# position when an option changes, instead of flashing back to the top.
+# That patch copies 0.5's code and switches itself off on any other
+# version, so the bug would silently return. Before raising this limit,
+# re-check scrollPosition.py against the new Toga (see CLAUDE.md) and run
+# tests/test_scrollPosition.py.
+toga-winforms>=0.5.3,<0.6
 
 # Numerical core: trajectory parsing, geometry, statistics. Imported by
 # most analysis modules.

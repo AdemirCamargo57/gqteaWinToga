@@ -55,11 +55,14 @@ from gqteaMDinputBuilder import GqteaMDInputBuilderUI
 from MolGeomComparator import MolGeomComparatorUI
 from fukuiFunctionAnalyze import FukuiFunctionAnalyzeUI
 from fukuiInputBuilder import FukuiInputBuilderUI
+from scrollPosition import keep_scroll_position_on_relayout
 
 class gqteaWin(toga.App):
     def startup(self):
         """Construct and show the Toga application."""
-        
+        # Scrolled tool pages must not jump to the top whenever a widget changes.
+        keep_scroll_position_on_relayout()
+
         # 1. Main outer container
         main_box = toga.Box(style=Pack(direction=COLUMN, margin=10))
 

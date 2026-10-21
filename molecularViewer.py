@@ -27,6 +27,7 @@ from molecularDesign import (ATOM_CANVAS_COLORS, ATOM_LABEL_COLOR, DEFAULT_ATOM_
                              canvas_palette, parse_hex_color)
 from qtaimLayer import QTAIMSceneLayer
 from qtaimTab import QTAIMTabController
+from scrollPosition import keep_scroll_position_on_relayout
 
 Atom = Tuple[str, Tuple[float, float, float]]
 Frame = List[Atom]
@@ -2238,6 +2239,10 @@ class MolecularViewerUI(MolecularViewer):
         )
 
     def layout_main_window(self):
+        # Every tab is a ScrollContainer; without this, choosing an option far
+        # down a tab re-lays it out and throws it back to the top. The app
+        # entry point applies it too; repeating it covers a viewer opened alone.
+        keep_scroll_position_on_relayout()
         self.main_window = toga.Window(
             title="Molecular Viewer",
             size=(760, 620),
