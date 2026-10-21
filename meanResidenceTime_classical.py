@@ -1,3 +1,5 @@
+import math
+
 import toga
 import numpy as np
 from toga.style import Pack
@@ -5,6 +7,62 @@ from toga.style.pack import COLUMN, ROW, LEFT, CENTER
 from help import HelpGqteaWin
 from framesCounter import FramesCounter
 from displayPlots import DisplayPlots
+
+ATU_FS = 0.02418884326505  # fs per atomic unit of time
+
+TIME_STEP_UNIT_AU = "a.u."
+TIME_STEP_UNIT_FS = "fs"
+TIME_STEP_UNITS = (TIME_STEP_UNIT_AU, TIME_STEP_UNIT_FS)   # a.u. first: the CPMD convention
+
+TOLERANCE_UNIT_FRAMES = "frames"
+TOLERANCE_UNIT_FS = "fs"
+TOLERANCE_UNITS = (TOLERANCE_UNIT_FRAMES, TOLERANCE_UNIT_FS)
+DEFAULT_TOLERANCE = 0
+
+# t / dt is computed in floating point, so a tolerance that is an exact
+# multiple of the frame interval can come out a hair below the whole number
+# (3 * dt / dt = 2.9999999999999996); this much is added before rounding down.
+FRAME_ROUNDING_SLACK = 1e-9
+
+
+def frame_interval_fs(time_step: float, time_step_unit: str, sampling: int) -> float:
+    """Time between two sampled frames, in fs: simulation time step (fs) x sampling interval."""
+    if time_step_unit == TIME_STEP_UNIT_AU:
+        step_fs = time_step * ATU_FS
+    elif time_step_unit == TIME_STEP_UNIT_FS:
+        step_fs = time_step
+    else:
+        raise ValueError(f"Unknown time step unit '{time_step_unit}'; use {' or '.join(TIME_STEP_UNITS)}.")
+    return step_fs * sampling
+
+
+def tolerance_in_frames(value: float, unit: str, interval_fs: float) -> int:
+    """The tolerance as a whole number of sampled frames.
+
+    The tolerance is the largest number of consecutive sampled frames a
+    molecule may spend outside the shell without that excursion counting as
+    an exit. In frames the value must already be a whole number. In fs it is
+    converted with ``frames = time / interval_fs`` and **rounded down**: an
+    excursion of n frames lasts n x interval_fs, and it is tolerated when that
+    fits within the time given, i.e. n <= time / interval_fs. So n frames and
+    n x interval_fs fs always give the same result, and a time between two
+    multiples of the interval acts as the lower one (e.g. 2.5 frames -> 2).
+    """
+    value = float(value)
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"The tolerance must be zero or a positive number, not {value:g}.")
+    if unit == TOLERANCE_UNIT_FRAMES:
+        if not value.is_integer():
+            raise ValueError(
+                f"A tolerance in frames must be a whole number, not {value:g}. "
+                "Choose fs as the unit to give it as a time."
+            )
+        return int(value)
+    if unit == TOLERANCE_UNIT_FS:
+        if not (math.isfinite(interval_fs) and interval_fs > 0):
+            raise ValueError("The time between sampled frames must be greater than zero.")
+        return int(math.floor(value / interval_fs + FRAME_ROUNDING_SLACK))
+    raise ValueError(f"Unknown tolerance unit '{unit}'; use {' or '.join(TOLERANCE_UNITS)}.")
 
 
 class MRTAnalyzer(FramesCounter,DisplayPlots):
@@ -38,6 +96,34 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
                     arr[start_zero:end_zero + 1] = 1
 
         return corrected
+
+    @staticmethod
+    def count_exits(occupancy_row, tolerance_frames: int) -> int:
+        """Exits from the shell in one atom's tolerance-corrected occupancy (1 = inside).
+
+        An exit is an inside -> outside step whose excursion lasts more than
+        ``tolerance_frames`` sampled frames. Excursions between two in-shell
+        frames that were no longer have already been filled in by
+        :meth:`apply_tolerance_to_occupancy`, so every such step left is an
+        exit. An excursion still under way when the trajectory ends counts
+        only if it already lasts more than the tolerance. With a tolerance of
+        0 every inside -> outside step is an exit.
+        """
+        row = [int(value) for value in occupancy_row]
+        n_frames = len(row)
+        exits = 0
+        i = 0
+        while i < n_frames - 1:
+            if row[i] == 1 and row[i + 1] == 0:
+                j = i + 1
+                while j < n_frames and row[j] == 0:
+                    j += 1
+                if j < n_frames or (j - i - 1) > tolerance_frames:
+                    exits += 1
+                i = j
+            else:
+                i += 1
+        return exits
 
     async def warning_function(self, msg):
         await self.main_window.dialog(toga.InfoDialog("Error", f"{msg}"))
@@ -94,13 +180,21 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
         self.time_step = await read_input(self.textInput_time_step, "simulation time step", float)
         if self.time_step is None:
             return False
+        self.time_step_unit = self.selection_time_step_unit.value or TIME_STEP_UNIT_AU
 
         self.sampling = await read_input(self.textInput_sampling, "sampling interval between two colected frames", int)
         if self.sampling is None:
             return False
 
-        self.tolerance_frames = await read_input(self.textInput_tolerance_frames, "tolerance frames", int)
-        if self.tolerance_frames is None:
+        # Blank means the default tolerance, 0: every exit is counted.
+        self.tolerance_unit = self.selection_tolerance_unit.value or TOLERANCE_UNIT_FRAMES
+        tolerance_text = self.textInput_tolerance.value.strip()
+        try:
+            self.tolerance_value = float(tolerance_text) if tolerance_text else float(DEFAULT_TOLERANCE)
+        except ValueError:
+            await self.warning_function(
+                f"Invalid format for the tolerance: '{tolerance_text}' is not a number."
+            )
             return False
 
         self.exclude_atom_list = await read_input(self.textInput_atom_labels, "atom labels list to exclude", list)
@@ -131,8 +225,13 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
             await self.warning_function("The sampling interval must be greater than zero.")
             return False
 
-        if self.tolerance_frames < 0:
-            await self.warning_function("Tolerance frames cannot be negative.")
+        self.frame_interval_fs = frame_interval_fs(self.time_step, self.time_step_unit, self.sampling)
+        try:
+            self.tolerance_frames = tolerance_in_frames(
+                self.tolerance_value, self.tolerance_unit, self.frame_interval_fs
+            )
+        except ValueError as e:
+            await self.warning_function(str(e))
             return False
 
         invalid_excluded_labels = [
@@ -144,17 +243,31 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
             )
             return False
 
-        update_text = (
-            f"Cutoff radius --> {self.outer_radius}\n"
+        self.multi_line_text.value = self.parameters_text() + "\nRunning the MRT calculation...\n"
+        return True
+
+    def tolerance_text(self) -> str:
+        """The tolerance as entered and as applied, e.g. '25 fs -> 2 frames (24.19 fs)'."""
+        applied = (f"{self.tolerance_frames} frame{'s' if self.tolerance_frames != 1 else ''} "
+                   f"({self.tolerance_frames * self.frame_interval_fs:.6g} fs)")
+        if self.tolerance_unit == TOLERANCE_UNIT_FS:
+            return f"{self.tolerance_value:g} fs -> {applied}"
+        return applied
+
+    def parameters_text(self) -> str:
+        """The parameters of the run, as shown in the text box."""
+        exits = ("every exit from the shell is counted" if self.tolerance_frames == 0 else
+                 f"excursions of up to {self.tolerance_frames} sampled frames are not counted as exits")
+        return (
+            f"Cutoff radius --> {self.outer_radius} Å\n"
             f"Atom label for the center of the shell --> {self.center_label}\n"
             f"Atom symbol for mean residence time --> {self.atom_symbol}\n"
-            f"Time step --> {self.time_step}\n"
-            f"Sampling interval between two colected frames --> {self.sampling}\n"
-            f"Tolerance frames --> {self.tolerance_frames}\n"
+            f"Simulation time step --> {self.time_step:g} {self.time_step_unit}\n"
+            f"Sampling interval between two collected frames --> {self.sampling}\n"
+            f"Time between sampled frames --> {self.frame_interval_fs:.6g} fs\n"
+            f"Tolerance --> {self.tolerance_text()}: {exits}\n"
             f"Atom labels list to exclude --> {self.exclude_atom_list}\n"
         )
-        self.multi_line_text.value = update_text
-        return True
 
     #Get atom symbol at the center of the shell
     def shell_center_symbol(self):
@@ -185,6 +298,7 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
             "center_label",
             "atom_symbol",
             "time_step",
+            "time_step_unit",
             "sampling",
             "tolerance_frames",
             "exclude_atom_list",
@@ -211,14 +325,12 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
             that enter the shell and the number of frames processed.
         """
         self._validate_analysis_state()
-        atufs = 0.02418884326505
         inner_r = self.inner_radius
         outer_r = self.outer_radius
-        step = self.time_step  # Simulation time step
-        sampling = self.sampling  # Number of frames skipped between collected frames
         acs = self.center_label  # Atom index at the center of the shell
         symbol = self.atom_symbol  # Element symbol for MRT calculation
-        sim_time = (atufs * step * sampling) / 1000.0  # Simulation time in ps
+        # Time between two sampled frames, in ps (time step in a.u. or fs x sampling interval)
+        sim_time = frame_interval_fs(self.time_step, self.time_step_unit, self.sampling) / 1000.0
         self.sim_time = sim_time  # To be used in other functions
         shell_atom_list = []  # Labels of atoms that enter the shell at least once
 
@@ -387,24 +499,30 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
 
         with open(f"{self.output_dir}/mrt_summary.dat", "w") as f:
             rt = [0 for i in range(len(self.shell_atom_list))]  # Residence time for each atom
-            num_exchange = [0 for i in range(len(self.shell_atom_list))]
+            # mrt.dat already holds the tolerance-corrected occupancy
+            exits = [
+                self.count_exits([row[k] for row in mrt_dat], self.tolerance_frames)
+                for k in range(len(self.shell_atom_list))
+            ]
 
             for n in range(len(mrt_dat)):
                 for k in range(len(self.shell_atom_list)):
                     if mrt_dat[n][k] == 1:
                         rt[k] += 1
-                    if n < len(mrt_dat) - 1:
-                        if mrt_dat[n][k] == 0 and mrt_dat[n + 1][k] == 1:
-                            num_exchange[k] += 1
 
             total_time_sim = self.sim_time * self.total_frame_number  # Total time simulation
             f.write(f"Total simulation time.........{total_time_sim:>10.4f}\n")
+            f.write(f"Time between frames (fs)......{self.sim_time * 1000.0:>10.4f}\n")
+            f.write(f"Tolerance (frames)............{self.tolerance_frames:>10d}\n")
+            f.write(f"Tolerance (fs)................{self.tolerance_frames * self.sim_time * 1000.0:>10.4f}\n\n")
+            self.mrt_results = []
             for n in range(len(rt)):
                 tot_rt = rt[n] * self.sim_time
-                if num_exchange[n] != 0:
-                    tmp_rt = rt[n] * self.sim_time / num_exchange[n]
+                if exits[n] != 0:
+                    tmp_rt = rt[n] * self.sim_time / exits[n]
                 else:
-                    tmp_rt = rt[n] * self.sim_time
+                    tmp_rt = rt[n] * self.sim_time  # never seen to leave: a lower bound
+                self.mrt_results.append((self.shell_atom_list[n], tot_rt, tmp_rt, exits[n]))
 
                 f.write(
                     f"{symbol}{self.shell_atom_list[n]} total rt.................{tot_rt:>10.4f}\n"
@@ -413,11 +531,26 @@ class MRTAnalyzer(FramesCounter,DisplayPlots):
                     f"{symbol}{self.shell_atom_list[n]} mrt......................{tmp_rt:>10.4f}\n"
                 )
                 f.write(
-                    f"{symbol}{self.shell_atom_list[n]} exchange.................{num_exchange[n]:>10d}\n\n"
+                    f"{symbol}{self.shell_atom_list[n]} exits....................{exits[n]:>10d}\n\n"
                 )
 
         center_atom_symbol = self.shell_center_symbol()
-        self.multi_line_text.value = f"\n\n MEAN RESIDENCE TIME ANALYSIS FOR {center_atom_symbol}{self.center_label} SITE FINISHED SUCCSSEFULLY!\n"
+        self.multi_line_text.value = self.results_text(center_atom_symbol)
+
+    def results_text(self, center_atom_symbol: str) -> str:
+        """The closing message: parameters, per-atom results (times in ps) and the output files."""
+        lines = [
+            f"MEAN RESIDENCE TIME ANALYSIS FOR {center_atom_symbol}{self.center_label} SITE FINISHED SUCCESSFULLY!",
+            "",
+            self.parameters_text(),
+            "Results (times in ps; mrt = total rt / exits, or total rt when no exit was seen):",
+        ]
+        if not self.mrt_results:
+            lines.append(f"  No {self.atom_symbol} atom entered the shell.")
+        for label, tot_rt, mrt, exits in self.mrt_results:
+            lines.append(f"  {self.atom_symbol}{label:<6} total rt {tot_rt:>10.4f}   mrt {mrt:>10.4f}   exits {exits:>6d}")
+        lines += ["", f"Files written to {self.output_dir}: mrt.dat, mrt_total.dat, mrt_summary.dat"]
+        return "\n".join(lines) + "\n"
 
 
     async def mrt_plot(self,widget):
@@ -535,31 +668,41 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
         time_box = toga.Box(style=box_style)
         time_label = toga.Label("Simulation time step:", style=label_style)
         self.textInput_time_step = toga.TextInput(
-            placeholder="Enter the simulation time step",
-            style=Pack(width=110, margin=(5, 5)),
+            placeholder="Time step",
+            style=Pack(width=90, margin=(5, 5)),
         )
+        self.selection_time_step_unit = toga.Selection(
+            items=list(TIME_STEP_UNITS), style=Pack(width=60, margin=(5, 5))
+        )
+        self.selection_time_step_unit.value = TIME_STEP_UNIT_AU
         sampling_label = toga.Label(
-            "Sampling interval:",
-            style=Pack(margin=(0, 0, 5, 10), text_align=LEFT, width=120),
+            "Sampling interval (steps):",
+            style=Pack(margin=(0, 0, 5, 10), text_align=LEFT, width=150),
         )
         self.textInput_sampling = toga.TextInput(
-            placeholder="Enter the sampling interval for MRT",
+            placeholder="MD steps per frame",
             style=Pack(width=110, margin=(5, 5)),
         )
         time_box.add(time_label)
         time_box.add(self.textInput_time_step)
+        time_box.add(self.selection_time_step_unit)
         time_box.add(sampling_label)
         time_box.add(self.textInput_sampling)
         main_box.add(time_box)
 
         tolerance_box = toga.Box(style=box_style)
-        tolerance_label = toga.Label("Tolerance frames:", style=label_style)
-        self.textInput_tolerance_frames = toga.TextInput(
-            placeholder="Tolerance is the number of frames an atom/molecule may remain out the shell.",
-            style=input_style,
+        self.tolerance_label = toga.Label("", style=label_style)
+        self.textInput_tolerance = toga.TextInput(value=str(DEFAULT_TOLERANCE), style=input_style)
+        self.selection_tolerance_unit = toga.Selection(
+            items=list(TOLERANCE_UNITS), style=Pack(width=80, margin=(5, 5))
         )
-        tolerance_box.add(tolerance_label)
-        tolerance_box.add(self.textInput_tolerance_frames)
+        self.selection_tolerance_unit.value = TOLERANCE_UNIT_FRAMES
+        # Wired after the value is set, then run once to write the label.
+        self.selection_tolerance_unit.on_change = self.on_tolerance_unit_change
+        self.on_tolerance_unit_change(self.selection_tolerance_unit)
+        tolerance_box.add(self.tolerance_label)
+        tolerance_box.add(self.textInput_tolerance)
+        tolerance_box.add(self.selection_tolerance_unit)
         main_box.add(tolerance_box)
 
         # File selection button
@@ -606,6 +749,21 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
         self.main_window.content = main_box
         self.main_window.show()
 
+    TOLERANCE_LABELS = {
+        TOLERANCE_UNIT_FRAMES: ("Tolerance (frames):",
+                                "Frames outside the shell not counted as an exit (0 = count every exit)"),
+        TOLERANCE_UNIT_FS: ("Tolerance (fs):",
+                            "Time outside the shell not counted as an exit (0 = count every exit)"),
+    }
+
+    def on_tolerance_unit_change(self, widget, **kwargs):
+        """Name the tolerance field after the chosen unit."""
+        label, placeholder = self.TOLERANCE_LABELS.get(
+            self.selection_tolerance_unit.value, self.TOLERANCE_LABELS[TOLERANCE_UNIT_FRAMES]
+        )
+        self.tolerance_label.text = label
+        self.textInput_tolerance.placeholder = placeholder
+
     async def workflow(self, widget):
         params_are_valid = await self.read_params(widget)
         if not params_are_valid:
@@ -617,9 +775,7 @@ class ClassicalMeanResidenceTimeUI(MRTAnalyzer):
             await self.mrt_plot(widget)
             self.display_plots()
             await self.write_mrt_total()
-            self.multi_line_text.value = (
-                f"\n\n MEAN RESIDENCE TIME ANALYSIS FINISHED SUCCSSEFULLY!\n"
-            )
+            # mrt_summary has left the results in the text box
         except Exception as e:
             self.progress_bar.stop()
             await self.warning_function(str(e))

@@ -1205,13 +1205,39 @@ Inputs include:
 
 - Shell inner radius.
 - Shell outer radius.
-- Simulation time step.
-- Sampling interval.
-- Tolerance frames.
+- Simulation time step, in **a.u.** (the default, as in the CPMD input) or **fs** — chosen beside the field.
+- Sampling interval (MD steps between two saved frames).
+- **Tolerance**, in **frames** or **fs** — chosen beside the field (default `0`; blank means `0`).
 - Atom labels to exclude.
 - Atom labels at the shell center.
 - Element symbol to investigate.
 - `TRAJEC.xyz` trajectory file.
+
+**Tolerance.** The tolerance is the largest number of consecutive *sampled*
+frames an atom may spend outside the shell without that excursion being
+counted as an exit; a gap of up to that many frames between two in-shell
+frames is treated as inside. With the default `0`, every exit from the shell
+is counted. A tolerance in fs is converted to frames with
+
+- time between sampled frames: Δt (fs) = simulation time step (fs) × sampling interval (steps)
+  (an a.u. time step is first multiplied by 0.02418884 fs/a.u.);
+- tolerance (frames) = tolerance (fs) ÷ Δt, **rounded down**.
+
+Rounding down is not an approximation: an excursion of *n* frames lasts
+*n*·Δt and is tolerated when *n*·Δt ≤ the time given, so a time between two
+multiples of Δt acts as the lower one (2.5 Δt → 2 frames), and *n* frames and
+*n*·Δt fs always give identical results. A value in frames must be a whole
+number. The tolerance applied is shown, in frames and fs, when the run starts
+and in `mrt_summary.dat`.
+
+**Exits and MRT.** An exit is an inside → outside step whose excursion lasts
+longer than the tolerance; an excursion still under way at the end of the
+trajectory counts only if it already lasts longer than the tolerance. For each
+atom, `mrt_summary.dat` gives the total residence time, the number of exits and
+mrt = total residence time ÷ exits (or the total residence time, a lower bound,
+when the atom was never seen to leave). Up to version 0.9.5 this file counted
+entries into the shell (`exchange`) instead; the two differ by at most one per
+atom.
 
 Typical outputs:
 

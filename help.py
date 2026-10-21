@@ -854,7 +854,7 @@ STEPS TO FOLLOW TO CALCULATE MRT
    The number of frames is counted on loading. All output files are
    written to the folder that contains the trajectory.
 
-2. Fill in every field (none may be left blank):
+2. Fill in every field (only the tolerance may be left blank):
     2.1 Cutoff radius (Å): radius of the shell. An atom is inside
         when its distance to the shell center is <= this value.
         A good choice is the first minimum of the g(r) given by the
@@ -868,19 +868,34 @@ STEPS TO FOLLOW TO CALCULATE MRT
     2.4 Atom label list to exclude: 1-based labels of atoms to leave
         out of the analysis, separated by whitespace, not commas
         (e.g. 12 15 40). Enter 0 to exclude nothing.
-    2.5 Simulation time step: the MD time step in atomic units
-        (1 a.u. = 0.02418884 fs), as in the CPMD input.
-    2.6 Sampling interval: number of MD steps between two frames
-        saved in TRAJEC.xyz. The time between frames is
-        time step x sampling interval.
-    2.7 Tolerance frames: number of consecutive frames an atom may
-        spend outside the shell and still be counted as inside.
-        A gap of up to this many frames between two in-shell
-        frames is filled in; gaps at the start or end of the
-        trajectory are not. Enter 0 for no tolerance.
+    2.5 Simulation time step: the MD time step, with its unit
+        chosen beside it - a.u. (the default, as in the CPMD input;
+        1 a.u. = 0.02418884 fs) or fs.
+    2.6 Sampling interval (steps): number of MD steps between two
+        frames saved in TRAJEC.xyz. The time between sampled frames
+        is
+            dt (fs) = time step (fs) x sampling interval.
+    2.7 Tolerance: the largest number of consecutive sampled frames
+        an atom may spend outside the shell without that excursion
+        being counted as an exit. Choose its unit beside the field:
+          frames - a whole number of sampled frames;
+          fs     - a time, converted to frames as
+                     frames = tolerance (fs) / dt (fs)
+                   and ROUNDED DOWN: an excursion of n frames lasts
+                   n x dt and is tolerated when n x dt <= the time
+                   given, so a time between two multiples of dt acts
+                   as the lower one (2.5 x dt -> 2 frames). n frames
+                   and n x dt fs therefore give identical results.
+        The default is 0 (blank means 0): every exit from the shell
+        is counted. A gap of up to the tolerance between two in-shell
+        frames is filled in (treated as inside); gaps at the start or
+        end of the trajectory are not. The tolerance actually applied
+        is shown in frames and fs when the run starts.
 
 3. Press 'MRT calculation'. The progress bar follows the two passes
-   over the trajectory. Press 'Close' to close the window.
+   over the trajectory, and the parameters and the per-atom results
+   are shown in this box when it finishes. Press 'Close' to close
+   the window.
 
 OUTPUT FILES (times in ps)
 
@@ -890,12 +905,19 @@ OUTPUT FILES (times in ps)
                    after the tolerance correction.
   mrt_total.dat    Time and the total number of atoms inside the
                    shell (the coordination number) in each frame.
-  mrt_summary.dat  The total simulation time and, for each atom:
+  mrt_summary.dat  The total simulation time, the time between
+                   frames and the tolerance (frames and fs), then for
+                   each atom:
                      total rt  - total time spent inside the shell
-                     exchange  - number of times it entered the
-                                 shell (outside -> inside)
-                     mrt       - total rt / exchange, or total rt
-                                 when the atom never re-entered
+                     exits     - number of exits: inside -> outside
+                                 steps whose excursion lasts more
+                                 than the tolerance (an excursion
+                                 still under way at the end of the
+                                 trajectory counts only if it is
+                                 already longer than the tolerance)
+                     mrt       - total rt / exits, or total rt when
+                                 the atom was never seen to leave
+                                 (then a lower bound)
 
 A plot of the coordination number against time is opened in the
 interactive plot viewer.
@@ -904,8 +926,12 @@ NOTES
 
 - Distances are plain Cartesian distances: periodic boundary
   conditions are not applied.
-- The text in this box is replaced by the parameters and status
-  messages when a calculation runs; reopen the tool to see this
+- Up to version 0.9.5 mrt_summary.dat counted entries into the
+  shell ('exchange') and mrt was total rt / entries; it now counts
+  exits. The two differ by at most one per atom (an atom inside at
+  the start, or outside at the end).
+- The text in this box is replaced by the parameters and the
+  results when a calculation runs; reopen the tool to see this
   help again.
 
 MRT AND COORDINATION NUMBER
