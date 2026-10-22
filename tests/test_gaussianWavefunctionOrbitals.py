@@ -86,6 +86,14 @@ def test_mo_coefficients_by_spin():
         gw.mo_coefficients(r, "alpha")
 
 
+def test_basis_of_a_td_job():
+    """A TD fchk names the TD level between method and basis: 'SP  RPBE1PBE TD-FC  6-31G(d)'."""
+    from nto_fixtures import fixture
+    w = gw.read_fchk(fixture("uracil")[0])
+    assert (w.method, w.basis_set) == ("RPBE1PBE", "6-31G(d)")
+    assert gw.read_fchk(fchk_path("water_631gd_5d")).basis_set == "6-31G(d)"
+
+
 def test_wrong_coefficient_count_is_reported(tmp_path):
     text = fchk_path("water_631gd_5d").read_text()
     lines = text.splitlines()

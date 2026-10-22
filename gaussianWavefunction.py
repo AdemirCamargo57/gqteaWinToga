@@ -333,7 +333,7 @@ def read_fchk(path) -> FchkWavefunction:
         dipole=np.asarray(sections["Dipole Moment"]) if "Dipole Moment" in sections else None,
         total_energy=float(sections["Total Energy"]) if "Total Energy" in sections else None,
         method=line2[1] if len(line2) > 1 else "",
-        basis_set=line2[2] if len(line2) > 2 else "",
+        basis_set=line2[-1] if len(line2) > 2 else "",  # last: a TD job writes "SP RPBE1PBE TD-FC 6-31G(d)"
         n_alpha=int(sections.get("Number of alpha electrons", 0)),
         n_beta=int(sections.get("Number of beta electrons", 0)),
         alpha_orbital_energies=np.asarray(energies, dtype=float) if energies is not None else None,
