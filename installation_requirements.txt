@@ -18,7 +18,7 @@
 # This is a Windows application: toga-winforms builds on WinForms through
 # pythonnet, so the list is not portable to Linux or macOS as written.
 #
-# Verified working (gqteaWinToga 0.9.5) on Python 3.13.12 with:
+# Verified working (gqteaWinToga 1.0.0) on Python 3.13.12 with:
 #     toga-winforms 0.5.3      numpy 2.4.2         scipy 1.17.0
 #     matplotlib 3.10.8        glfw 2.10.0         PyOpenGL 3.1.10
 #     PyOpenGL-accelerate 3.1.10                   PyMuPDF 1.27.2.2

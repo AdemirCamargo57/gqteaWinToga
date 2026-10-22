@@ -141,7 +141,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-0.9.5 Molecular Analysis Toolkit
+gQTEA-1.0.0 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -6274,8 +6274,19 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-0.9.5 Molecular Analysis Toolkit
+gQTEA-1.0.0 Molecular Analysis Toolkit
 ```
+
+Version 1.0.0 (October 2026) adds the [NTO tab](#natural-transition-orbitals-nto) to the 3D Molecular Viewer:
+
+- natural transition orbitals of any CIS, TDA or TD excited state from a Gaussian `.fchk` and the output of the same job (restricted and unrestricted references), with Multiwfn's definition, checks that the two files belong together, and the `<name>_state<n>_NTO.txt` report (normalisation, pair weights, MO composition);
+- validated against Multiwfn 2026.7.15 on twelve excited states of five molecules, degenerate pairs included (weights to 3 × 10⁻⁹);
+- hole and particle ± isosurfaces in the 3D window, with their own colours, opacity and grid settings;
+- export of hole/particle cube files, of an NTO `.fchk` for GaussView or Multiwfn, and of the 3D image, plus *Send to Cube tab*;
+- **Plot Spectrum**: the GaussView-style UV-Vis spectrum of all the excited states (oscillator-strength sticks over the broadened ε curve), saved as `<name>_UVVis.json` and reopened by **Plotter**;
+- [Example 10](#example-10-natural-transition-orbitals-of-uracil-s3) and [the method](#formulas-and-methods-nto-tab) in this manual.
+
+It also fixes the basis-set name read from the `.fchk` of a TD job (it was reported as `TD-FC`).
 
 Version 0.9.5 (October 2026) adds the [QTAIM Topology Analysis](#qtaim-topology-analysis) tab to the 3D Molecular Viewer:
 
