@@ -91,10 +91,11 @@ def make_controller(name="uracil", output_dir="", excitation=True):
     c.fchk_input = W(value=str(fchk))
     c.excitation_input = W(value=str(log) if excitation else "")
     c.output_dir_input = W(value=str(output_dir))
-    for button in ("load_button", "run_button", "clear_button", "display_button", "export_cubes_button",
-                   "export_fchk_button", "send_button", "export_3d_button"):
+    for button in ("load_button", "run_button", "plot_spectrum_button", "clear_button", "display_button",
+                   "export_cubes_button", "export_fchk_button", "send_button", "export_3d_button"):
         setattr(c, button, W(enabled=True))
     c.state_selection = W(items=[], value=None)
+    c.hwhm_input = W(value="")
     c.status_label, c.summary_label = W(text="Ready."), W(text="No results.")
     c.progress_bar, c.pair_table = W(value=0), W(data=[], selection=None)
     c.pair_selection = W(items=[], value=None)
@@ -320,6 +321,71 @@ class TestExport:
         monkeypatch.setattr(shown, "_ask_save_path", ask)
         asyncio.run(shown.export_3d_image(None))
         assert asked == ["uracil_state3_NTO1.png"] and (tmp_path / "uracil_state3_NTO1.png").is_file()
+
+
+class TestPlotSpectrum:
+    @pytest.fixture
+    def launched(self, monkeypatch):
+        import displayPlots
+        calls = []
+        monkeypatch.setattr(displayPlots, "launch_plot_viewer", lambda path: calls.append(path) or True)
+        return calls
+
+    def read(self, path):
+        import json
+        return json.loads(Path(path).read_text(encoding="utf-8"))[0]
+
+    def test_every_state_is_plotted_and_saved(self, launched, tmp_path):
+        c = make_controller(output_dir=tmp_path)
+        asyncio.run(c.load_files(None))
+        choose_state(c, 3)                      # the selection does not limit the plot
+        asyncio.run(c.plot_spectrum(None))
+        path = tmp_path / "uracil_UVVis.json"
+        assert launched == [str(path)]
+        entry = self.read(path)
+        assert entry["type"] == "uv_vis" and [s["number"] for s in entry["states"]] == [1, 2, 3]
+        assert [s["oscillator"] for s in entry["states"]] == [0.0001, 0.1317, 0.0]
+        assert entry["broadening"]["hwhm_ev"] == 0.333
+        assert entry["source"] == {"fchk": "uracil.fch", "excitation_file": "uracil.out"}
+        assert str(path) in c.status_label.text
+
+    def test_loads_the_files_when_needed(self, launched, tmp_path):
+        c = make_controller("h2co_td5050", output_dir=tmp_path)
+        asyncio.run(c.plot_spectrum(None))     # no Load pressed
+        assert len(self.read(tmp_path / "h2co_td5050_631gd_UVVis.json")["states"]) == 8
+        assert c.state_selection.items          # and the states are listed as Load would
+
+    def test_half_width_field(self, launched, tmp_path):
+        c = make_controller(output_dir=tmp_path)
+        c.hwhm_input.value = "0,2"
+        asyncio.run(c.plot_spectrum(None))
+        assert self.read(tmp_path / "uracil_UVVis.json")["broadening"]["hwhm_ev"] == 0.2
+        c.hwhm_input.value = "-1"
+        asyncio.run(c.plot_spectrum(None))
+        assert "half-width" in c.viewer.main_window.dialogs[-1].message and len(launched) == 1
+
+    def test_viewer_that_cannot_start(self, monkeypatch, tmp_path):
+        import displayPlots
+        monkeypatch.setattr(displayPlots, "launch_plot_viewer", lambda path: False)
+        c = make_controller(output_dir=tmp_path)
+        asyncio.run(c.plot_spectrum(None))
+        message = c.viewer.main_window.dialogs[-1].message
+        assert "uracil_UVVis.json" in message and "Plotter" in message
+
+    def test_plain_text_file_is_refused(self, launched, tmp_path):
+        text = tmp_path / "exc.txt"
+        text.write_text("Excited State   1   1   5.0\n   29 -> 30   0.70\n")
+        c = make_controller(output_dir=tmp_path)
+        c.excitation_input.value = str(text)
+        asyncio.run(c.plot_spectrum(None))
+        assert "oscillator strengths" in c.viewer.main_window.dialogs[-1].message
+        assert launched == [] and not list(tmp_path.glob("*.json"))
+
+    def test_the_nto_results_and_view_are_untouched(self, launched, shown):
+        results, orbitals, items = shown.results, shown._orbitals, shown.viewer.nto_layer.items()
+        asyncio.run(shown.plot_spectrum(None))
+        assert shown.results is results and shown._orbitals is orbitals
+        assert shown.viewer.nto_layer.items() == items and len(launched) == 1
 
 
 def test_clear(shown):

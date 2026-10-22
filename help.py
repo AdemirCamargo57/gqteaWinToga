@@ -2072,6 +2072,19 @@ RESULTS
   the hole's largest MO coefficient is positive), and equal-weight pairs may
   come out as any rotation of each other - both as in every NTO program.
 
+SPECTRUM
+  Plot Spectrum draws EVERY state of the excitation file (not only the chosen
+  one) as GaussView does: oscillator-strength sticks f at each wavelength
+  (right axis, labelled "n: label") over the broadened absorption curve
+  epsilon (L mol^-1 cm^-1, left axis): one Gaussian band per state in
+  wavenumbers, eps = sum 1.3062974e8 f / sigma exp(-((nu - nu_i)/sigma)^2).
+  Peak half-width (eV) is the half width at half height (blank = 0.333 eV,
+  GaussView's default, i.e. sigma = 0.4 eV). The data and settings are saved
+  as <name>_UVVis.json in the output folder (states with number, label, eV,
+  nm and f; broadening; the curve) and open in the interactive plot viewer;
+  Plotter (JSON plot type) reopens the file later. It needs the Gaussian
+  output: a plain-text file has no oscillator strengths.
+
 EXPORT (to the output folder)
   Export cubes      <name>_state<n>_NTO<k>_hole.cube and _particle.cube
                     (open shell: _NTO<k>_alpha_hole.cube ...) for the chosen

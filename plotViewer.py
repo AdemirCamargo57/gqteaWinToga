@@ -28,6 +28,12 @@ map (qtaimAnalysis.plane_manifest)::
       "points": [[x, y], ...]}], "points": [{"type": "(3,-1)", "x", "y", "label"}],
       "xlabel": "...", "ylabel": "...", "title": "..."}, ...]
 
+A fifth is the UV-Vis spectrum of the NTO tab (uvVisSpectrum.spectrum_entry)::
+
+    [{"type": "uv_vis", "states": [{"number", "label", "energy_ev", "wavelength_nm",
+      "oscillator"}], "curve": {"wavelength_nm": [...], "epsilon": [...]},
+      "broadening": {...}, "xlim": [lo, hi], "xlabel", "ylabel", "ylabel_right", "title"}]
+
 Entries written before these shapes
 existed carry no ``"type"`` key at all, so the plain curve stays the default.
 
@@ -43,7 +49,7 @@ import json
 # the TkAgg pin would silently re-pin Agg and this viewer would open no
 # window at all. See draw_bar_comparison's docstring for why the renderer
 # lives there instead of here.
-from displayPlots import draw_bar_comparison, draw_plane_map, series_style_kwargs
+from displayPlots import draw_bar_comparison, draw_plane_map, draw_uv_vis, series_style_kwargs
 
 import matplotlib
 # Pin an interactive GUI backend explicitly. In a packaged (frozen) build
@@ -73,6 +79,10 @@ def build_figures(figures):
             continue
         if fig.get("type") == "plane_map":
             draw_plane_map(figure.gca(), fig, FONT_STYLE)
+            plt.tight_layout()
+            continue
+        if fig.get("type") == "uv_vis":
+            draw_uv_vis(figure.gca(), fig, FONT_STYLE)
             plt.tight_layout()
             continue
         if "series" in fig:

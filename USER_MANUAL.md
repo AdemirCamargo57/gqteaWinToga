@@ -390,6 +390,7 @@ The full procedure, with every option and what to do when points are missing, is
 4. Choose an excited state and click **Run**; read the pair weights in the table.
 5. Choose a pair, **Show** (hole, particle or both) and click **Display**.
 6. **Export cubes** / **Export NTO .fchk** write to the output folder; **Export 3D image...** saves the view.
+7. **Plot Spectrum** draws all the excited states as a GaussView-style UV-Vis spectrum and saves it as `name_UVVis.json`.
 
 The details are in [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto), a worked example in [Example 10](#example-10-natural-transition-orbitals-of-uracil-s3), and the method in [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab).
 
@@ -2840,8 +2841,9 @@ message naming it.
 - **Input**: formatted checkpoint (choosing it fills in `name.log` or `name.out`
   beside it when the excitation field is empty), excitation file, output folder
   (blank = the folder of the `.fchk`), **Load**.
-- **Excited state**: the list of states (number, label, eV, nm, f), **Run**,
-  **Clear**, status line and progress bar.
+- **Excited state**: the list of states (number, label, eV, nm, f), the *Peak
+  half-width (eV)* of the spectrum, **Run**, **Plot Spectrum**, **Clear**,
+  status line and progress bar.
 - **NTO pairs**: a one-line summary and the table of pairs with weight ≥ 0.0001
   (pair, spin, weight, %, cumulative %). Clicking a row selects that pair.
 - **Display**: pair, **Show** (*Hole*, *Particle*, *Hole and particle*),
@@ -2888,6 +2890,29 @@ message naming it.
 | `name_state<n>_NTO.txt` | header, Multiwfn's normalisation printout, the listed pairs with the hole/particle MO numbers they take in the NTO `.fchk`, the composition of each NTO in the canonical MOs (contributions ≥ 5 %), notes |
 | `name_state<n>_NTO<k>_hole.cube`, `..._particle.cube` | orbital amplitude (a.u.) on the display grid, bohr; open shell: `name_state<n>_NTO<k>_alpha_hole.cube` etc. |
 | `name_state<n>_NTO.fchk` | the input `.fchk` with the MO coefficients replaced by the NTOs and the orbital energies by their weights; everything else (density, basis) unchanged |
+| `name_UVVis.json` | **Plot Spectrum**: every excited state (number, label, energy in eV, wavelength in nm, oscillator strength), the broadening settings and the sampled ε curve, as a plot manifest that **Plotter** (*JSON plot type*) reopens |
+
+##### UV-Vis spectrum (Plot Spectrum)
+
+**Plot Spectrum** draws *all* the states of the excitation file, whichever
+state is selected, in the layout of GaussView's *Electronic Spectra* window:
+
+- wavelength λ (nm) on the horizontal axis;
+- one vertical stick per state, of height f (the oscillator strength; right
+  axis), labelled with the state's number and label (e.g. `6: Singlet-B2`);
+  dark states (f = 0, such as triplets) are drawn at zero height with their
+  labels;
+- the broadened absorption spectrum ε (L mol⁻¹ cm⁻¹, left axis), the sum of one
+  Gaussian band per state (see
+  [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab), §7).
+
+*Peak half-width (eV)* is the half width at half height of each band (blank =
+0.333 eV, GaussView's default). The spectrum opens in the interactive plot
+viewer (zoom, pan, save as image) and is saved at once as `name_UVVis.json`
+in the output folder, so it can be reopened with **Plotter** and its numbers
+reused elsewhere. It does not change the NTO results or the 3D view. The
+oscillator strengths come from the Gaussian output; a plain-text excitation
+file has none, so the button refuses it.
 
 ##### Interpretation and cautions
 
@@ -5743,7 +5768,27 @@ face on which |hole| or |particle| still reaches isovalue/10 is pushed out by
 about 0.3 s with `numba`. The isosurfaces at ±isovalue are triangulated as in
 the Cube tab.
 
-### 7. References
+### 7. UV-Vis spectrum
+
+*Plot Spectrum* uses the band shape of GaussView and of Gaussian's note
+*UV/Visible Plots in Gaussian*: a Gaussian in wavenumber for each state *i*
+with excitation energy $\tilde\nu_i$ and oscillator strength $f_i$,
+
+$$
+\varepsilon(\tilde\nu) = \sum_i 1.3062974\times10^{8}\,\frac{f_i}{\sigma}
+\exp\!\left[-\left(\frac{\tilde\nu-\tilde\nu_i}{\sigma}\right)^2\right],
+$$
+
+with $\tilde\nu$, $\tilde\nu_i$ and σ in cm⁻¹ and ε in L mol⁻¹ cm⁻¹. The half
+width at half height is $\sigma\sqrt{\ln 2}$, so the default 0.333 eV is
+σ = 0.400 eV (3226 cm⁻¹). A band of strength f therefore peaks at
+ε = 1.3062974 × 10⁸ f/σ. Wavelength, energy and wavenumber are converted with
+λ (nm) = 1239.841984 / E (eV) and $\tilde\nu$ (cm⁻¹) = 10⁷ / λ. The curve is
+sampled at 2000 wavelengths over a range that covers every band with f > 0
+± 4σ and every dark state's stick ± 1σ. Sticks are drawn at the wavelengths
+Gaussian prints.
+
+### 8. References
 
 - R. L. Martin, *J. Chem. Phys.* **2003**, 118, 4775 (natural transition orbitals).
 - T. Lu, F. Chen, *J. Comput. Chem.* **2012**, 33, 580, and the Multiwfn manual,

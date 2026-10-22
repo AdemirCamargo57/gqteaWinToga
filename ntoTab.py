@@ -24,6 +24,7 @@ from toga.style.pack import COLUMN, ROW
 
 import excitationData as ed
 import ntoAnalysis as na
+import uvVisSpectrum as uv
 import volumeData as vd
 from cubeRender import surface_item
 from cubeTab import CubeEntry, _assign, _item_names, canonical_colour
@@ -98,6 +99,9 @@ class NTOTabController:
             self.load_button = toga.Button("Load", on_press=self.load_files, style=Pack(width=110, margin=5))
             self.state_selection = toga.Selection(items=[], style=Pack(flex=1))
             self.run_button = toga.Button("Run", on_press=self.workflow, style=Pack(width=110, margin=5))
+            self.plot_spectrum_button = toga.Button("Plot Spectrum", on_press=self.plot_spectrum,
+                                                    style=Pack(width=110, margin=5))
+            self.hwhm_input = toga.TextInput(placeholder=f"{uv.DEFAULT_HWHM_EV:g}", style=Pack(width=120))
             self.clear_button = toga.Button("Clear", on_press=self.clear_output, style=Pack(width=110, margin=5))
             self.status_label = toga.Label("Ready.", style=Pack(margin=6, flex=1))
             self.progress_bar = toga.ProgressBar(max=100, style=Pack(margin=(0, 5, 5, 5)))
@@ -151,7 +155,10 @@ class NTOTabController:
             self._row(self.load_button),
             self._heading("Excited state"),
             self._row(self._label("State:"), self.state_selection),
-            self._row(self.run_button, self.clear_button),
+            self._row(self._label("Peak half-width (eV):"), self.hwhm_input),
+            self._hint("Plot Spectrum draws every listed state (lambda, f) and the broadened absorption, "
+                       "as GaussView does."),
+            self._row(self.run_button, self.plot_spectrum_button, self.clear_button),
             self.status_label,
             self.progress_bar,
             self._heading("NTO pairs"),
@@ -306,7 +313,7 @@ class NTOTabController:
         return on_progress
 
     def _set_buttons(self, enabled: bool):
-        for b in (self.load_button, self.run_button, self.clear_button, self.display_button,
+        for b in (self.load_button, self.run_button, self.plot_spectrum_button, self.clear_button, self.display_button,
                   self.export_cubes_button, self.export_fchk_button, self.send_button):
             b.enabled = enabled
 
@@ -389,6 +396,34 @@ class NTOTabController:
             self._set_buttons(True)
         if was_displayed:
             await self._display()  # a scene is on screen: show the new state's first pair
+
+    async def plot_spectrum(self, widget):
+        """Every listed excited state as a UV-Vis spectrum, saved as <stem>_UVVis.json and opened in
+        the plot viewer. Independent of the NTO run: it reads only the loaded excitation file."""
+        from displayPlots import launch_plot_viewer  # pins Agg: import only when a spectrum is plotted
+
+        try:
+            paths = self._paths()
+            hwhm = parse_optional_float(self.hwhm_input.value, uv.DEFAULT_HWHM_EV, "The peak half-width")
+        except ValueError as exc:
+            await self._show_error("Spectrum Input Error", str(exc))
+            return
+        if self.loaded_paths != paths and not await self._load(paths):
+            return
+        fchk, excitation = paths
+        folder = na.resolve_output_dir(fchk, self.output_dir_input.value)
+        source = {"fchk": Path(fchk).name, "excitation_file": Path(excitation).name}
+        try:
+            entry = uv.spectrum_entry(self.loaded[1].states, hwhm, source=source)
+            path = uv.write_spectrum(entry, Path(folder) / uv.spectrum_filename(Path(fchk).stem))
+        except ValueError as exc:
+            await self._show_error("Spectrum Error", str(exc))
+            return
+        _assign(self.status_label, "text", f"Spectrum of {len(entry['states'])} states: {path}")
+        if not launch_plot_viewer(path):
+            await self._show_info("Spectrum Saved", f"The plot viewer could not be started. The spectrum was "
+                                                    f"saved as\n{path}\nand can be opened with Plotter "
+                                                    "(JSON plot type).")
 
     def summary_text(self) -> str:
         r = self.results

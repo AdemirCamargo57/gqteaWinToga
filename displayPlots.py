@@ -182,6 +182,51 @@ def save_plane_map_image(figure_entry, path, dpi=200):
     return str(path)
 
 
+# GaussView's Electronic Spectra window: ivory plot area, dotted grid, black
+# curve and sticks, bold black titles, a dark-red frame round the figure.
+UV_VIS_BACKGROUND = "#FFFFF0"
+UV_VIS_FRAME = "#7F0000"
+UV_VIS_FONT = {"color": "black", "weight": "bold", "size": 14}
+
+
+def draw_uv_vis(axes, figure_entry, font_style=None):
+    """Draw one "uv_vis" manifest entry (uvVisSpectrum.spectrum_entry); return the f axis.
+
+    The broadened molar absorptivity on the left axis and one stick per excited
+    state, of height f, on a twin right-hand axis, each stick labelled with the
+    state's number and label - the layout of GaussView's UV-Vis spectrum.
+    ``font_style`` is accepted for the common renderer signature; the GaussView
+    look uses its own bold black titles.
+    """
+    curve = figure_entry.get("curve", {})
+    states = figure_entry.get("states", [])
+    axes.set_facecolor(UV_VIS_BACKGROUND)
+    axes.figure.patch.set_edgecolor(UV_VIS_FRAME)
+    axes.figure.patch.set_linewidth(3)
+    axes.plot(curve.get("wavelength_nm", []), curve.get("epsilon", []), color="black", linewidth=1.2)
+    top = max(curve.get("epsilon", []) or [0.0])
+    axes.set_ylim(0.0, top * 1.1 if top > 0 else 1.0)
+    if figure_entry.get("xlim"):
+        axes.set_xlim(*figure_entry["xlim"])
+    axes.grid(True, linestyle=":", color="0.6")
+    axes.set_xlabel(figure_entry.get("xlabel", ""), fontdict=UV_VIS_FONT)
+    axes.set_ylabel(figure_entry.get("ylabel", ""), fontdict=UV_VIS_FONT)
+    axes.set_title(figure_entry.get("title", ""), fontdict=UV_VIS_FONT)
+
+    twin = axes.twinx()
+    wavelengths = [s["wavelength_nm"] for s in states]
+    strengths = [s["oscillator"] for s in states]
+    twin.vlines(wavelengths, 0.0, strengths, colors="black", linewidth=1.2)
+    f_top = max(strengths or [0.0])
+    twin.set_ylim(0.0, f_top * 1.35 if f_top > 0 else 0.1)
+    for s in states:
+        twin.annotate(f"{s['number']}: {s.get('label', '')}", (s["wavelength_nm"], s["oscillator"]),
+                      xytext=(0, 3), textcoords="offset points", rotation=90, ha="center", va="bottom",
+                      fontsize=8)
+    twin.set_ylabel(figure_entry.get("ylabel_right", ""), fontdict=UV_VIS_FONT)
+    return twin
+
+
 class DisplayPlots():
 
     font_style = {'color':  'darkred','weight': 'normal','size': 14}

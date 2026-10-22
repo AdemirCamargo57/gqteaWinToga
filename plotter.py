@@ -47,7 +47,10 @@ class PlotterBase:
     #     "line": {"label": "...", "values": [...], "ylabel": "..."}},      #
     #    {"type": "plane_map", "extent": [x0, x1, y0, y1], "grid": [[..]],  #
     #     "contours": [...], "lines": [{"kind", "points"}],                 #
-    #     "points": [{"type", "x", "y", "label"}]}]   (QTAIM 2D map)        #
+    #     "points": [{"type", "x", "y", "label"}]},   (QTAIM 2D map)        #
+    #    {"type": "uv_vis", "states": [{"number", "label", "wavelength_nm", #
+    #     "oscillator", ...}], "curve": {"wavelength_nm", "epsilon"}}]      #
+    #     (UV-Vis spectrum, NTO tab)                                       #
     #                                                                      #
     # xlabel/ylabel/title/xlim/ylim are optional; so are a group's 'errors' #
     # and a bars figure's 'line'.                                           #
@@ -111,6 +114,27 @@ class PlotterBase:
             if not isinstance(point, dict) or point.get("type") not in PLANE_MAP_POINT_COLOURS:
                 raise ValueError(f"{tag}: 'type' must be one of {', '.join(PLANE_MAP_POINT_COLOURS)}.")
             cls._check_numeric_sequence([point.get("x"), point.get("y")], f"{tag}: 'x'/'y'")
+
+    @classmethod
+    def _check_uv_vis(cls, figure: dict, where: str) -> None:
+        """A UV-Vis spectrum (uvVisSpectrum.spectrum_entry); messages name the figure."""
+        states = figure.get("states")
+        if not isinstance(states, list) or not states:
+            raise ValueError(f"{where}: 'states' must be a non-empty list of excited states.")
+        for s_index, state in enumerate(states, start=1):
+            tag = f"{where}, state {s_index}"
+            if not isinstance(state, dict) or "wavelength_nm" not in state or "oscillator" not in state:
+                raise ValueError(f"{tag} needs 'wavelength_nm' and 'oscillator'.")
+            cls._check_numeric_sequence([state["wavelength_nm"], state["oscillator"]],
+                                        f"{tag}: 'wavelength_nm'/'oscillator'")
+        curve = figure.get("curve")
+        if not isinstance(curve, dict):
+            raise ValueError(f"{where}: 'curve' must hold 'wavelength_nm' and 'epsilon' lists.")
+        n_x = cls._check_numeric_sequence(curve.get("wavelength_nm"), f"{where}: curve 'wavelength_nm'")
+        n_y = cls._check_numeric_sequence(curve.get("epsilon"), f"{where}: curve 'epsilon'")
+        if n_x != n_y:
+            raise ValueError(f"{where}: the curve's 'wavelength_nm' and 'epsilon' must have the same length "
+                             f"({n_x} vs {n_y}).")
 
     @classmethod
     def validate_plot_manifest(cls, payload) -> List[dict]:
@@ -177,6 +201,8 @@ class PlotterBase:
                         )
             elif figure.get("type") == "plane_map":
                 cls._check_plane_map(figure, where)
+            elif figure.get("type") == "uv_vis":
+                cls._check_uv_vis(figure, where)
             elif "series" in figure:
                 series = figure["series"]
                 if not isinstance(series, list) or not series:
@@ -257,6 +283,8 @@ class PlotterBase:
             elif figure.get("type") == "plane_map":
                 detail = (f"{len(figure.get('points', []))} critical points, "
                           f"{len(figure.get('lines', []))} lines")
+            elif figure.get("type") == "uv_vis":
+                detail = f"{len(figure.get('states', []))} excited states"
             elif "series" in figure:
                 n_points = len(figure["series"][0].get("x", []))
                 detail = f"{len(figure['series'])} curves, {n_points} points each"
@@ -938,6 +966,9 @@ class PlotterBase:
                 elif figure.get("type") == "plane_map":
                     from displayPlots import draw_plane_map
                     draw_plane_map(figure_obj.gca(), figure)
+                elif figure.get("type") == "uv_vis":
+                    from displayPlots import draw_uv_vis
+                    draw_uv_vis(figure_obj.gca(), figure)
                 else:
                     if "series" in figure:
                         for curve in figure["series"]:
