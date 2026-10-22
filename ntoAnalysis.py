@@ -25,18 +25,30 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+import cubeFile as cf
 import excitationData as ed
 import gaussianWavefunction as gw
+import molecularSurface as ms
+from help import AtomicData
 
 LISTED_WEIGHT = 1e-4           # pairs listed in the table and the report (at least the largest)
 NORMALIZATION_TOLERANCE = 0.01  # |deviation| above which the coefficients look incomplete
 DOMINANT_WEIGHT = 0.5          # below this the largest pair does not "dominate"
 COMPOSITION_THRESHOLD = 0.05   # MO contributions listed for each NTO
 SPIN_ORDER = (ed.SPIN_ALPHA, ed.SPIN_BETA)
+KINDS = ("hole", "particle")
+
+DEFAULT_SPACING_BOHR = 0.2
+ORBITAL_ISOVALUE = 0.02        # GaussView's / the Cube tab's orbital default
+MAX_GRID_POINTS = 25_000_000   # as the Fukui tool's cubes (~13 bytes per value in a cube file)
+SLAB_POINTS = 2_000_000        # points evaluated at a time
+BOHR_RADIUS_ANGSTROM = cf.BOHR_RADIUS_ANGSTROM
+CUBE_COMMENT = "Made by the gQTEA 3D Molecular Viewer (NTO tab); orbital amplitude (a.u.)"
+FCHK_VALUES_PER_LINE = 5
 
 
 @dataclass
@@ -110,6 +122,18 @@ class NTOResults:
                              f"{'restricted' if self.restricted else 'unrestricted'}).")
         return self.sets[spin]
 
+    def pair_orbitals(self, spin: str, pair: int) -> Tuple[np.ndarray, np.ndarray, float]:
+        """(hole coefficients, particle coefficients, weight) of ``pair`` (1-based), fchk basis."""
+        s = self.nto_set(spin)
+        if not 1 <= int(pair) <= len(s.weights):
+            raise ValueError(f"There is no {spin} NTO pair {pair}; the pairs are 1-{len(s.weights)}.")
+        k = int(pair) - 1
+        return s.holes[:, k], s.particles[:, k], float(s.weights[k])
+
+    @property
+    def stem(self) -> str:
+        return Path(self.fchk_path).stem
+
 
 def transition_matrix(state: ed.ExcitedState, spin: str, n_occ: int, n_mo: int) -> np.ndarray:
     """T[i-1, a-n_occ-1] = w(i -> a) over ``spin``'s excitation lines; de-excitations are ignored."""
@@ -135,6 +159,217 @@ def natural_transition_orbitals(t: np.ndarray, c_mo: np.ndarray, n_occ: int, fac
             vt[k] *= -1.0
     v = vt.T
     return NTOSet(spin, n_occ, factor * s ** 2, u, v, c_mo[:, :n_occ] @ u, c_mo[:, n_occ:] @ v)
+
+
+# ----------------------------------------------------------------------
+# Grids and cubes
+# ----------------------------------------------------------------------
+def resolve_output_dir(fchk_path: str, chosen: Optional[str]) -> str:
+    """The chosen folder, or the folder of the .fchk file when blank."""
+    chosen = (chosen or "").strip()
+    return chosen if chosen else str(Path(fchk_path).resolve().parent)
+
+
+def check_grid_size(shape: Tuple[int, int, int], spacing: float) -> None:
+    points = int(np.prod(shape))
+    if points > MAX_GRID_POINTS:
+        smallest = np.ceil(100.0 * spacing * (points / MAX_GRID_POINTS) ** (1.0 / 3.0)) / 100.0
+        raise ValueError(f"A grid at {spacing:g} bohr would have {points / 1e6:.1f} million points. "
+                         f"Use a grid spacing of at least {smallest:g} bohr.")
+
+
+def _vdw_radii_bohr(wfn) -> np.ndarray:
+    return np.array([AtomicData.vdw_radii.get(s, AtomicData.DEFAULT_VDW_RADIUS)
+                     for s in wfn.atom_symbols()]) / BOHR_RADIUS_ANGSTROM
+
+
+def _orbital_title(results: NTOResults, spin: str, pair: int, kind: str, weight: float) -> str:
+    spin_text = "" if results.restricted else f" ({spin})"
+    return f"NTO {pair} {kind}{spin_text} of excited state {results.state.number}, weight {weight:.6f}"
+
+
+def pair_volumes(results: NTOResults, spin: str, pair: int, spacing: float = DEFAULT_SPACING_BOHR,
+                 isovalue: float = ORBITAL_ISOVALUE, progress: Optional[Callable[[float], None]] = None,
+                 use_numba: Optional[bool] = None) -> Tuple[cf.CubeVolume, cf.CubeVolume]:
+    """Hole and particle of one pair on one grid, every value computed exactly.
+
+    The box is Multiwfn's (atoms +/- 1.7 r_vdW), grown until both orbitals are
+    below isovalue / 10 on every face (molecularSurface.grid_box).
+    """
+    if not (spacing > 0 and np.isfinite(spacing)):
+        raise ValueError(f"The grid spacing must be a positive number of bohr, not {spacing}.")
+    if not (isovalue > 0 and np.isfinite(isovalue)):
+        raise ValueError(f"The isovalue must be a positive number, not {isovalue}.")
+    hole, particle, weight = results.pair_orbitals(spin, pair)
+    wfn = results.wavefunction
+    both = np.column_stack([hole, particle])
+
+    def envelope(points):
+        return np.abs(gw.orbital_values(wfn, both, points, use_numba=use_numba)).max(axis=1)
+
+    origin, shape = ms.grid_box(wfn.coordinates, _vdw_radii_bohr(wfn), envelope, isovalue, spacing)
+    check_grid_size(shape, spacing)
+    nx, ny, nz = shape
+    values = np.empty((2, nx, ny, nz))
+    planes = max(1, SLAB_POINTS // (ny * nz))
+    for x0 in range(0, nx, planes):
+        x1 = min(nx, x0 + planes)
+        points = ms.grid_points(origin + np.array([x0 * spacing, 0.0, 0.0]), spacing, (x1 - x0, ny, nz))
+        slab = gw.orbital_values(wfn, both, points, use_numba=use_numba)
+        values[:, x0:x1] = slab.T.reshape(2, x1 - x0, ny, nz)
+        if progress is not None:
+            progress(x1 / nx)
+    return tuple(cf.CubeVolume(_orbital_title(results, spin, pair, kind, weight), CUBE_COMMENT,
+                               np.asarray(wfn.atomic_numbers), np.asarray(wfn.nuclear_charges, dtype=float),
+                               wfn.coordinates.copy(), np.asarray(origin, dtype=float).copy(),
+                               spacing * np.eye(3), np.ascontiguousarray(values[k]))
+                 for k, kind in enumerate(KINDS))
+
+
+def cube_filename(stem: str, state_number: int, pair: int, kind: str, spin: Optional[str] = None) -> str:
+    """<stem>_state<n>_NTO<k>_hole.cube; an unrestricted run inserts the spin before the kind."""
+    spin_part = f"_{spin}" if spin else ""
+    return f"{stem}_state{state_number}_NTO{pair}{spin_part}_{kind}.cube"
+
+
+def nto_fchk_filename(stem: str, state_number: int) -> str:
+    return f"{stem}_state{state_number}_NTO.fchk"
+
+
+def report_filename(stem: str, state_number: int) -> str:
+    return f"{stem}_state{state_number}_NTO.txt"
+
+
+# ----------------------------------------------------------------------
+# NTO formatted checkpoint (Multiwfn's layout)
+# ----------------------------------------------------------------------
+def _padded(values: np.ndarray, n: int) -> np.ndarray:
+    out = np.zeros(n)
+    out[:min(n, len(values))] = values[:n]
+    return out
+
+
+def nto_orbital_sections(results: NTOResults) -> Dict[str, np.ndarray]:
+    """Replacement values of the orbital-energy and MO-coefficient sections.
+
+    Multiwfn's order: the occupied NTOs by ascending weight (the dominant hole
+    takes the HOMO's place), the virtual NTOs by descending weight (the
+    dominant particle takes the LUMO's place); the "energies" are the weights.
+    """
+    sections = {}
+    for spin, s in results.sets.items():
+        n_vir = s.particles.shape[1]
+        coefficients = np.hstack([s.holes[:, ::-1], s.particles])            # (n_basis, n_mo)
+        energies = np.concatenate([_padded(s.weights, s.n_occ)[::-1], _padded(s.weights, n_vir)])
+        name = "Alpha" if spin == ed.SPIN_ALPHA else "Beta"
+        sections[f"{name} Orbital Energies"] = energies
+        sections[f"{name} MO coefficients"] = coefficients.T.ravel()         # stored MO by MO
+    return sections
+
+
+def _fchk_value_lines(values: np.ndarray) -> List[str]:
+    return ["".join(f"{v:16.8E}" for v in values[i:i + FCHK_VALUES_PER_LINE])
+            for i in range(0, len(values), FCHK_VALUES_PER_LINE)]
+
+
+def nto_fchk_text(results: NTOResults) -> str:
+    """The input .fchk with only its orbital energies and MO coefficients replaced by the NTOs.
+
+    Rotations among occupied and among virtual orbitals leave the SCF density
+    unchanged, so every other section stays valid (GaussView, cubegen, Multiwfn).
+    """
+    try:
+        lines = Path(results.fchk_path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        raise ValueError(f"Cannot read {results.fchk_path}: {exc}") from exc
+    replacements = nto_orbital_sections(results)
+    out: List[str] = []
+    done = set()
+    n = 0
+    while n < len(lines):
+        line = lines[n]
+        out.append(line)
+        n += 1
+        name = line[:43].strip() if line[:1] != " " else ""
+        if name in replacements:
+            values = replacements[name]
+            declared = int(line.split("N=")[1])
+            if declared != values.size:
+                raise ValueError(f"{Path(results.fchk_path).name}: '{name}' holds {declared} values, "
+                                 f"but the NTOs need {values.size}.")
+            while n < len(lines) and lines[n][:1] == " ":
+                n += 1  # drop the old values
+            out.extend(_fchk_value_lines(values))
+            done.add(name)
+    missing = sorted(set(replacements) - done)
+    if missing:
+        raise ValueError(f"{Path(results.fchk_path).name} lacks the section(s) {', '.join(missing)}.")
+    return "\n".join(out) + "\n"
+
+
+# ----------------------------------------------------------------------
+# Report
+# ----------------------------------------------------------------------
+def _composition_text(s: NTOSet, kind: str, pair: int) -> str:
+    parts = [f"MO {mo} {100 * f:.1f}%" for mo, f in s.composition(kind, pair)]
+    return ", ".join(parts) if parts else "no MO above 5%"
+
+
+def report_text(results: NTOResults, written: Sequence[str] = ()) -> str:
+    wfn, state = results.wavefunction, results.state
+    listed = results.listed_pairs()
+    total = results.weight_sum()
+    lines = [
+        "# gQTEA Natural Transition Orbitals",
+        "# NTOs of one excited state from the excitation coefficients (Multiwfn's definition; de-excitations "
+        "ignored).",
+        f"# formatted checkpoint   {Path(results.fchk_path).name}",
+        f"# excitation file        {Path(results.excitation_path).name} ({results.excitations.source})",
+        f"# method / basis         {wfn.method} / {wfn.basis_set}",
+        f"# reference              {'restricted' if results.restricted else 'unrestricted'}; "
+        f"electrons {wfn.n_electrons} (alpha {wfn.n_alpha}, beta {wfn.n_beta}); "
+        f"{wfn.n_basis} basis functions, {wfn.n_mo} MOs",
+        f"# excited state          {state.title()}  multiplicity {state.multiplicity or 'undefined'}",
+        f"# weight factor          {results.factor:g} (weight = factor x singular value^2)",
+    ]
+    norm = [("Sum of square of excitation coefficients", results.sum_excitation),
+            ("Negative of the sum of square of de-excitation coefficients", -results.sum_deexcitation),
+            ("Sum of above two values", results.sum_excitation - results.sum_deexcitation),
+            (f"Deviation to expected normalization value ({results.expected_norm:g})", results.deviation),
+            ("Sum of all NTO weights", total)]
+    if not results.restricted:
+        norm += [(f"Sum of {spin} NTO weights", results.weight_sum(spin)) for spin in SPIN_ORDER]
+    lines += ["", "NORMALIZATION (as Multiwfn)"] + [f"  {label:<62}{value:10.6f}" for label, value in norm]
+    lines += [
+        "",
+        f"NTO PAIRS (weight >= {LISTED_WEIGHT:g}; hole and particle MO numbers in the exported NTO .fchk)",
+        "  pair  spin    weight         %   cum. %   hole  particle",
+    ]
+    cumulative = 0.0
+    for p in listed:
+        s = results.sets[p.spin]
+        cumulative += p.weight
+        lines.append(f"  {p.pair:2d}   {p.spin:<5}   {p.weight:.6f}  {100 * p.weight:6.2f}  {100 * cumulative:6.2f}"
+                     f"  {s.n_occ + 1 - p.pair:5d}  {s.n_occ + p.pair:5d}")
+    lines += ["", "COMPOSITION IN THE CANONICAL MOs (contributions of 5% or more)"]
+    for p in listed:
+        s = results.sets[p.spin]
+        for kind in KINDS:
+            lines.append(f"  pair {p.pair:2d} {p.spin:<5} {kind + ':':<9} {_composition_text(s, kind, p.pair)}")
+    lines += ["", "NOTES"]
+    lines += [f"  - {n}" for n in results.notes] or ["  none"]
+    if written:
+        lines += ["", "FILES"] + [f"  {w}" for w in written]
+    return "\n".join(lines) + "\n"
+
+
+def _write(path: Path, text: str) -> str:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Could not write {path}: {exc}") from exc
+    return str(path)
 
 
 def _file_key(path) -> Tuple[str, int, int]:
@@ -212,3 +447,37 @@ class NTOAnalyser:
             notes.append(f"No NTO pair dominates (largest weight {top:.4f}): this transition is not one hole -> "
                          "particle pair; discuss the listed pairs together.")
         return notes
+
+    # --- outputs ------------------------------------------------------
+    @staticmethod
+    def write_report(results: NTOResults, output_dir: str) -> str:
+        """<stem>_state<n>_NTO.txt in ``output_dir``; OSError becomes ValueError."""
+        path = Path(output_dir) / report_filename(results.stem, results.state.number)
+        return _write(path, report_text(results))
+
+    @staticmethod
+    def write_cubes(results: NTOResults, output_dir: str, pairs: Sequence[NTOPair],
+                    spacing: float = DEFAULT_SPACING_BOHR, isovalue: float = ORBITAL_ISOVALUE,
+                    progress: Optional[Callable[[float], None]] = None,
+                    use_numba: Optional[bool] = None) -> List[str]:
+        """Hole and particle cubes of each pair; returns the written paths in order."""
+        written = []
+        for n, p in enumerate(pairs):
+            def step(fraction, n=n):
+                if progress is not None:
+                    progress((n + fraction) / len(pairs))
+            volumes = pair_volumes(results, p.spin, p.pair, spacing, isovalue, step, use_numba)
+            for kind, volume in zip(KINDS, volumes):
+                name = cube_filename(results.stem, results.state.number, p.pair, kind,
+                                     None if results.restricted else p.spin)
+                path = Path(output_dir) / name
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    written.append(cf.write_cube_volume(path, volume))
+                except OSError as exc:
+                    raise ValueError(f"Could not write {path}: {exc}") from exc
+        return written
+
+    @staticmethod
+    def write_nto_fchk(results: NTOResults, path) -> str:
+        return _write(Path(path), nto_fchk_text(results))

@@ -225,6 +225,162 @@ def test_the_benzene_reference_has_a_degenerate_pair():
     assert groups(weights[:3])[0] == [0, 1]
 
 
+# --------------------------------------------------------------------------- #
+# Grids, cubes, NTO fchk, report                                               #
+# --------------------------------------------------------------------------- #
+import os
+import cubeFile as cf
+from gaussianUtilities import find_gaussian_utility
+
+
+@pytest.fixture(scope="module")
+def uracil_pair1(uracil3):
+    return na.pair_volumes(uracil3, "alpha", 1, spacing=0.25)
+
+
+def grid_points_of(volume, index):
+    return volume.origin + np.asarray(index, dtype=float) @ volume.axes
+
+
+class TestGrids:
+    def test_hole_and_particle_share_one_grid(self, uracil_pair1):
+        hole, particle = uracil_pair1
+        assert hole.values.shape == particle.values.shape
+        assert np.array_equal(hole.origin, particle.origin) and np.array_equal(hole.axes, particle.axes)
+        assert np.allclose(hole.axes, 0.25 * np.eye(3))
+
+    def test_faces_are_below_a_tenth_of_the_isovalue(self, uracil_pair1):
+        for v in uracil_pair1:
+            a = np.abs(v.values)
+            faces = [a[0], a[-1], a[:, 0], a[:, -1], a[:, :, 0], a[:, :, -1]]
+            assert max(f.max() for f in faces) < na.ORBITAL_ISOVALUE / 10
+
+    def test_orbitals_are_normalised_on_the_grid(self, uracil_pair1):
+        for v in uracil_pair1:
+            assert (v.values ** 2).sum() * 0.25 ** 3 == pytest.approx(1.0, abs=0.02)
+
+    def test_values_are_exact_orbital_values(self, uracil3, uracil_pair1):
+        hole, particle = uracil_pair1
+        rng = np.random.default_rng(1)
+        idx = np.column_stack([rng.integers(0, n, 40) for n in hole.values.shape])
+        pts = grid_points_of(hole, idx)
+        s = uracil3.sets["alpha"]
+        exact = gw.orbital_values(uracil3.wavefunction, np.column_stack([s.holes[:, 0], s.particles[:, 0]]), pts)
+        assert np.allclose(hole.values[tuple(idx.T)], exact[:, 0], rtol=1e-12, atol=1e-14)
+        assert np.allclose(particle.values[tuple(idx.T)], exact[:, 1], rtol=1e-12, atol=1e-14)
+
+    def test_titles_name_state_pair_kind_and_weight(self, uracil_pair1):
+        hole, particle = uracil_pair1
+        assert hole.title == "NTO 1 hole of excited state 3, weight 0.865529"
+        assert particle.title.startswith("NTO 1 particle of excited state 3")
+        assert hole.title.isascii() and "NTO tab" in hole.comment
+
+    def test_spin_appears_in_open_shell_titles(self):
+        hole, _ = na.pair_volumes(run("ch3", 1), "beta", 1, spacing=0.4)
+        assert "(beta)" in hole.title
+
+    def test_too_fine_a_grid_is_refused_before_any_work(self, uracil3):
+        with pytest.raises(ValueError, match="at least .* bohr"):
+            na.pair_volumes(uracil3, "alpha", 1, spacing=0.01)
+
+    def test_bad_pair_or_spin(self, uracil3):
+        with pytest.raises(ValueError, match="pair 500"):
+            na.pair_volumes(uracil3, "alpha", 500)
+        with pytest.raises(ValueError, match="no beta NTOs"):
+            na.pair_volumes(uracil3, "beta", 1)
+
+    def test_file_names(self):
+        assert na.cube_filename("uracil", 3, 1, "hole") == "uracil_state3_NTO1_hole.cube"
+        assert na.cube_filename("ch3", 1, 2, "particle", "beta") == "ch3_state1_NTO2_beta_particle.cube"
+        assert na.nto_fchk_filename("uracil", 3) == "uracil_state3_NTO.fchk"
+        assert na.report_filename("uracil", 3) == "uracil_state3_NTO.txt"
+
+    def test_write_cubes(self, uracil3, tmp_path):
+        pairs = uracil3.listed_pairs()[:2]
+        paths = ANALYSER.write_cubes(uracil3, str(tmp_path), pairs, spacing=0.4)
+        assert [Path(p).name for p in paths] == ["uracil_state3_NTO1_hole.cube", "uracil_state3_NTO1_particle.cube",
+                                                 "uracil_state3_NTO2_hole.cube", "uracil_state3_NTO2_particle.cube"]
+        back = cf.read_cube_volumes(paths[0])[0]
+        hole, _ = na.pair_volumes(uracil3, "alpha", 1, spacing=0.4)
+        assert np.allclose(back.values, hole.values, rtol=1e-5, atol=1e-10)
+
+
+def reread(text, tmp_path, name="nto.fchk"):
+    path = tmp_path / name
+    path.write_text(text)
+    return gw.read_fchk(path)
+
+
+class TestFchkExport:
+    def test_restricted_layout_matches_multiwfn(self, uracil3, tmp_path):
+        out = reread(na.nto_fchk_text(uracil3), tmp_path)
+        wfn, s = uracil3.wavefunction, uracil3.sets["alpha"]
+        assert np.array_equal(out.density, wfn.density)  # occ-occ / vir-vir rotations keep the density
+        n = s.n_occ
+        assert np.allclose(out.alpha_mo[:, n - 1], s.holes[:, 0], rtol=1e-7, atol=1e-12)
+        assert np.allclose(out.alpha_mo[:, n], s.particles[:, 0], rtol=1e-7, atol=1e-12)
+        ref = gw.read_fchk(multiwfn_reference("uracil", 3, tmp_path))
+        assert np.allclose(out.alpha_orbital_energies, ref.alpha_orbital_energies, atol=2e-8)
+
+    def test_unrestricted_writes_both_spins(self, tmp_path):
+        r = run("ch3", 1)
+        out = reread(na.nto_fchk_text(r), tmp_path)
+        ref = gw.read_fchk(multiwfn_reference("ch3", 1, tmp_path))
+        assert np.allclose(out.alpha_orbital_energies, ref.alpha_orbital_energies, atol=2e-8)
+        assert np.allclose(out.beta_orbital_energies, ref.beta_orbital_energies, atol=2e-8)
+        assert np.allclose(out.beta_mo[:, r.sets["beta"].n_occ - 1], r.sets["beta"].holes[:, 0], rtol=1e-7,
+                           atol=1e-12)
+
+    def test_write_nto_fchk(self, uracil3, tmp_path):
+        path = ANALYSER.write_nto_fchk(uracil3, str(tmp_path / na.nto_fchk_filename("uracil", 3)))
+        assert gw.read_fchk(path).n_mo == uracil3.wavefunction.n_mo
+        with pytest.raises(ValueError, match="Could not write"):
+            ANALYSER.write_nto_fchk(uracil3, str(tmp_path))  # a folder, not a file
+
+    @pytest.mark.skipif(find_gaussian_utility("cubegen") is None, reason="cubegen (Gaussian) not installed")
+    def test_cubegen_reads_the_exported_fchk(self, uracil3, tmp_path):
+        fchk = ANALYSER.write_nto_fchk(uracil3, str(tmp_path / "nto.fchk"))
+        cubegen = find_gaussian_utility("cubegen")
+        n = uracil3.sets["alpha"].n_occ
+        env = dict(os.environ, GAUSS_EXEDIR=str(Path(cubegen).parent))
+        subprocess.run([cubegen, "0", f"MO={n}", fchk, str(tmp_path / "hole.cube"), "-2", "h"], env=env,
+                       cwd=tmp_path, check=True, capture_output=True, timeout=300)
+        cube = cf.read_cube_volumes(tmp_path / "hole.cube")[0]
+        nx, ny, nz = cube.values.shape
+        idx = np.indices((nx, ny, nz)).reshape(3, -1).T
+        ours = gw.orbital_values(uracil3.wavefunction, uracil3.sets["alpha"].holes[:, 0],
+                                 grid_points_of(cube, idx))[:, 0]
+        # cubegen approximates near the nuclei: even a canonical MO of Gaussian's own fchk differs from the
+        # exact value by 3.5e-5 x max|phi| (measured, uracil MO 29); the NTO differs by 6.1e-5.
+        assert np.abs(ours - cube.values.ravel()).max() <= 2e-4 * np.abs(ours).max()
+
+
+class TestReport:
+    def test_report_content(self, uracil3):
+        text = na.report_text(uracil3)
+        assert text.startswith("# gQTEA Natural Transition Orbitals")
+        for piece in ('Singlet-A"', "6.0180 eV", "0.865529", "86.55", "NTO PAIRS", "hole", "particle", "NOTES",
+                      "de-excitation"):
+            assert piece in text, piece
+        deviation = next(l for l in text.splitlines() if "Deviation to expected normalization value (0.5)" in l)
+        assert deviation.split()[-1] == "0.000007"
+        # pair 1: hole = MO 29 and particle = MO 30 of the exported fchk (Multiwfn's numbering)
+        assert "   1   alpha   0.865529   86.55   86.55     29     30" in text
+
+    def test_write_report(self, uracil3, tmp_path):
+        path = ANALYSER.write_report(uracil3, str(tmp_path))
+        assert Path(path).name == "uracil_state3_NTO.txt"
+        assert Path(path).read_text(encoding="utf-8") == na.report_text(uracil3)
+        blocker = tmp_path / "file"
+        blocker.write_text("")
+        with pytest.raises(ValueError, match="Could not write"):
+            ANALYSER.write_report(uracil3, str(blocker / "sub"))
+
+    def test_resolve_output_dir(self, tmp_path):
+        assert na.resolve_output_dir(str(tmp_path / "a.fchk"), "") == str(tmp_path.resolve())
+        assert na.resolve_output_dir(str(tmp_path / "a.fchk"), " D:/out ") == "D:/out"
+
+
 def test_numerical_module_does_not_import_toga():
     code = "import sys, ntoAnalysis; print('toga' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)
