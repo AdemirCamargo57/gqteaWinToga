@@ -225,10 +225,20 @@ class FchkWavefunction:
     alpha_orbital_energies: Optional[np.ndarray] = None  # Hartree
     other_densities: List[str] = field(default_factory=list)  # e.g. ["Total MP2 Density"]
     packed: Optional["PackedShells"] = field(default=None, repr=False, compare=False)  # numba layout cache
+    n_basis: int = 0                                    # "Number of basis functions"
+    n_mo: int = 0                                       # "Number of independent functions" (<= n_basis)
+    alpha_mo: Optional[np.ndarray] = field(default=None, repr=False)  # (n_basis, n_mo), columns = MOs, fchk basis
+    beta_mo: Optional[np.ndarray] = field(default=None, repr=False)   # unrestricted only
+    beta_orbital_energies: Optional[np.ndarray] = None
 
     @property
     def n_atoms(self) -> int:
         return len(self.atomic_numbers)
+
+    @property
+    def is_unrestricted(self) -> bool:
+        """True when the file has a separate beta MO set (UHF/UKS)."""
+        return self.beta_mo is not None
 
     def atom_symbols(self) -> List[str]:
         return [SYMBOL_BY_ATOMIC_NUMBER.get(int(z), "X") for z in self.atomic_numbers]
@@ -290,6 +300,22 @@ def read_fchk(path) -> FchkWavefunction:
     density[np.tril_indices(nbf)] = tri
     density = density + density.T - np.diag(np.diag(density))
 
+    n_basis = int(sections.get("Number of basis functions", nbf))
+    n_mo = int(sections.get("Number of independent functions", n_basis))
+
+    def mo_matrix(name: str) -> Optional[np.ndarray]:
+        values = sections.get(name)
+        if values is None:
+            return None
+        if values.size != n_mo * nbf:
+            raise ValueError(f"{path.name}: '{name}' has {values.size} values, "
+                             f"expected {n_mo} MOs x {nbf} basis functions.")
+        return np.ascontiguousarray(values.reshape(n_mo, nbf).T)  # stored MO by MO
+
+    def energy_array(name: str) -> Optional[np.ndarray]:
+        values = sections.get(name)
+        return np.asarray(values, dtype=float) if values is not None else None
+
     lines = text.splitlines()
     line2 = lines[1].split() if len(lines) > 1 else []
     energies = sections.get("Alpha Orbital Energies")
@@ -313,6 +339,11 @@ def read_fchk(path) -> FchkWavefunction:
         alpha_orbital_energies=np.asarray(energies, dtype=float) if energies is not None else None,
         other_densities=sorted(k for k in sections
                                if k.startswith("Total ") and k.endswith(" Density") and k != DENSITY_SECTION),
+        n_basis=n_basis,
+        n_mo=n_mo,
+        alpha_mo=mo_matrix("Alpha MO coefficients"),
+        beta_mo=mo_matrix("Beta MO coefficients"),
+        beta_orbital_energies=energy_array("Beta Orbital Energies"),
     )
     wfn.transform = basis_transform(shells)
     wfn.cart_density = wfn.transform.T @ density @ wfn.transform
@@ -435,6 +466,37 @@ def matrix_densities(wfn: FchkWavefunction, matrices: Sequence[np.ndarray], poin
         ao = evaluate_cartesian_aos(wfn, points[a:a + chunk], use_numba)
         for values, matrix in zip(out, matrices):
             values[a:a + chunk] = np.einsum("ij,ij->i", ao @ matrix, ao)
+    return out
+
+
+SPINS = ("alpha", "beta")
+
+
+def mo_coefficients(wfn: FchkWavefunction, spin: str) -> np.ndarray:
+    """The (n_basis, n_mo) MO coefficients of ``spin``; ValueError if the file has none."""
+    if spin not in SPINS:
+        raise ValueError(f"The spin must be one of {SPINS}, not '{spin}'.")
+    c = wfn.alpha_mo if spin == "alpha" else wfn.beta_mo
+    if c is None:
+        raise ValueError(f"{Path(wfn.path).name} has no {spin} MO coefficients.")
+    return c
+
+
+def orbital_values(wfn: FchkWavefunction, coefficients: np.ndarray, points: np.ndarray,
+                   chunk: int = 20000, use_numba: Optional[bool] = None) -> np.ndarray:
+    """(n_points, k) values of k orbitals given as fchk-basis coefficient columns (a.u.).
+
+    phi = sum_p c_p chi_p and chi_p = sum_c T[p, c] cart_c, so the orbital in
+    the normalised Cartesian components is T^T c: one AO evaluation per chunk
+    and one matrix product serve every orbital.
+    """
+    use_numba = _resolve_numba(use_numba)
+    coefficients = np.asarray(coefficients, dtype=float).reshape(wfn.transform.shape[0], -1)
+    cart = wfn.transform.T @ coefficients
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    out = np.empty((points.shape[0], cart.shape[1]))
+    for a in range(0, points.shape[0], chunk):
+        out[a:a + chunk] = evaluate_cartesian_aos(wfn, points[a:a + chunk], use_numba) @ cart
     return out
 
 
