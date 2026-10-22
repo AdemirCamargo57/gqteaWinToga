@@ -1063,8 +1063,25 @@ def test_the_cube_tab_follows_design_and_keeps_the_other_tabs_in_order():
     import inspect
     source = inspect.getsource(MolecularViewerUI.layout_main_window)
     order = [source.index(f'("{name}"') for name in
-             ("Display", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "Box & Performance")]
+             ("Display", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "NTO", "Box & Performance")]
     assert order == sorted(order)
+
+
+def test_ui_draws_the_nto_layer_and_frames_it():
+    from cubeRender import CubeSceneLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.frames = []
+    ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
+    plain = ui.get_scene_radius()
+    ui.nto_layer = CubeSceneLayer()
+    drawn = []
+    ui.nto_layer.draw = lambda: drawn.append(True)
+    ui.render_scene_extras()
+    assert drawn == [True] and ui.get_scene_radius() == pytest.approx(plain)
+    ui.nto_layer = CubeSceneLayer()
+    ui.nto_layer.set_items([_cube_item()])
+    assert ui.get_scene_radius() > 10.0 * 0.529 > plain
 
 
 def test_ui_draws_the_esp_layer_and_its_colour_bar_and_frames_it():

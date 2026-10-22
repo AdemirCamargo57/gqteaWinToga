@@ -2022,6 +2022,76 @@ sphere search; no periodic systems. ECP files: the .fchk has no core density,
 so the (3,-3) points of ECP atoms and properties near them are unreliable.
 """
 
+    help_nto = """NATURAL TRANSITION ORBITALS (NTO)
+
+An excitation computed by CIS, TDA or TD (TD-DFT/TDHF) usually mixes several
+occupied -> virtual MO pairs. NTOs (Martin, J. Chem. Phys. 2003, 118, 4775)
+rotate the occupied MOs among themselves and the virtual MOs among themselves
+so that as few pairs as possible describe it: one "hole" (where the electron
+leaves) and one "particle" (where it goes) per pair, each pair with a weight.
+Multiwfn's definition is used (main function 18, subfunction 6; manual 3.21.6).
+
+INPUT (two files of the same Gaussian job)
+  Formatted checkpoint   the .fchk / .fch (formchk name.chk name.fchk): MOs and
+                         basis set.
+  Excitation file        the Gaussian output (.log / .out) of the CIS, TDA or
+                         TD job. Add IOp(9/40=4) to the route, e.g.
+                           # PBE1PBE/6-31G* TD(NStates=5) IOp(9/40=4)
+                         Without it Gaussian prints only coefficients above 0.1
+                         and the NTOs are approximate (a NOTE says so). Choosing
+                         the .fchk fills in <name>.log / <name>.out beside it.
+                         Multiwfn's plain-text format ("Excited State n mult eV"
+                         then "i -> a coefficient" lines) is also read.
+  Load reads both files, checks that they belong together (atoms, geometry,
+  basis, electrons) and lists the excited states. An excited-state
+  optimisation output is fine: its last excitation block is used.
+
+METHOD
+  T[i,a] = coefficient of i -> a for the chosen state (excitations only: the
+  "<-" de-excitations of TD are ignored, as in Multiwfn and Gaussian), then
+  T = U S V^T. Hole k = occupied MOs x column k of U, particle k = virtual MOs
+  x column k of V, weight k = f x S_k^2 with f = 2 for a closed-shell reference
+  (Gaussian normalises its coefficients to 0.5) and 1 per spin otherwise.
+  Weight x 100 = percent of the excitation carried by that pair. CIS/TDA
+  weights sum to 1; TD weights can sum slightly above 1 (well above 1 means
+  the TD result is unreliable - try TDA). Open shell: alpha and beta NTOs are
+  computed separately and listed together; the largest weight says which spin
+  is excited.
+
+RESULTS
+  Run writes <name>_state<n>_NTO.txt (output folder, or the folder of the
+  .fchk): Multiwfn's normalisation check, the pairs with weight >= 0.0001, the
+  hole/particle MO numbers they take in the exported .fchk and their
+  composition in the canonical MOs. If no pair is above 0.5 the transition is
+  not one hole -> particle pair (a NOTE says so).
+  Display draws the chosen pair: Hole, Particle or both, +/- isosurfaces of the
+  orbital (default isovalue 0.02 a.u.; hole +/- blue/red, particle +/-
+  green/yellow; names or #rrggbb, Enter applies). The orbitals are computed
+  exactly on a grid (default spacing 0.2 bohr) that grows until they are below
+  isovalue/10 on every face. The overall sign of each pair is arbitrary (here:
+  the hole's largest MO coefficient is positive), and equal-weight pairs may
+  come out as any rotation of each other - both as in every NTO program.
+
+EXPORT (to the output folder)
+  Export cubes      <name>_state<n>_NTO<k>_hole.cube and _particle.cube
+                    (open shell: _NTO<k>_alpha_hole.cube ...) for the chosen
+                    pair, or every listed pair with "All listed pairs".
+  Export NTO .fchk  <name>_state<n>_NTO.fchk: the input file with the MOs
+                    replaced by the NTOs and the orbital energies by the
+                    weights (Multiwfn's layout: dominant hole at the HOMO's
+                    place, dominant particle at the LUMO's). Open it in
+                    GaussView, Multiwfn or with cubegen.
+  Send to Cube tab  the displayed pair's two orbitals as unsaved Cube-tab
+                    entries (slices, A - B, saving).
+  Export 3D image   the 3D window exactly as shown.
+
+LIMITATIONS
+  Gaussian files only (no ORCA, CP2K, GAMESS); no spin-flip TD; no
+  restricted open-shell (ROHF/ROKS) references; single-reference methods only
+  (not EOM-CC, CASSCF); no X+Y transition density; no excited-to-excited
+  state NTOs; no hole-electron analysis; basis functions up to g.
+"""
+
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)
 
 Maps the molecular electrostatic potential V(r) onto an electron-density

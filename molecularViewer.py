@@ -29,6 +29,7 @@ from help import AtomicData
 from cubeTab import _assign  # write-only-on-change: every widget write re-lays out the window
 from molecularDesign import (ATOM_CANVAS_COLORS, ATOM_LABEL_COLOR, DEFAULT_ATOM_COLOR, MolecularDesignController,
                              canvas_palette, parse_hex_color)
+from ntoTab import NTOTabController
 from qtaimLayer import QTAIMSceneLayer
 from qtaimTab import QTAIMTabController
 from scrollPosition import keep_scroll_position_on_relayout
@@ -2279,6 +2280,10 @@ class MolecularViewerUI(MolecularViewer):
         self.qtaim_layer = QTAIMSceneLayer()
         self.qtaim_controller = None
 
+        # NTO tab: hole and particle isosurfaces (a second cube layer) and the controller.
+        self.nto_layer = CubeSceneLayer()
+        self.nto_controller = None
+
         self.layout_main_window()
 
     # ------------------------------------------------------------------
@@ -2364,6 +2369,7 @@ class MolecularViewerUI(MolecularViewer):
                 ("Cube", self._tab_page(self._build_cube_tab())),
                 ("ESP", self._tab_page(self._build_esp_tab())),
                 ("QTAIM", self._tab_page(self._build_qtaim_tab())),
+                ("NTO", self._tab_page(self._build_nto_tab())),
                 ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
             ],
             style=Pack(flex=1),
@@ -2785,8 +2791,13 @@ class MolecularViewerUI(MolecularViewer):
         self.qtaim_controller = QTAIMTabController(viewer=self)
         return self.qtaim_controller.build_tab()
 
-    # The hooks below draw the Cube tab's volume, the ESP tab's surface and the
-    # QTAIM tab's critical points and paths.
+    def _build_nto_tab(self) -> toga.Box:
+        """Natural transition orbitals of an excited state (ntoTab.NTOTabController)."""
+        self.nto_controller = NTOTabController(viewer=self)
+        return self.nto_controller.build_tab()
+
+    # The hooks below draw the Cube tab's volume, the ESP tab's surface, the
+    # QTAIM tab's critical points and paths and the NTO tab's orbitals.
     # They are overridden here, not in MolecularViewer, whose hooks must stay
     # empty for subclasses such as espViewer.ESPSurfaceViewer. getattr keeps
     # them safe on headless instances built with __new__.
@@ -2800,6 +2811,9 @@ class MolecularViewerUI(MolecularViewer):
         qtaim_layer = getattr(self, "qtaim_layer", None)
         if qtaim_layer is not None:
             qtaim_layer.draw_scene(self)
+        nto_layer = getattr(self, "nto_layer", None)
+        if nto_layer is not None:
+            nto_layer.draw()
 
     def draw_screen_overlay(self):
         esp_layer = getattr(self, "esp_layer", None)
@@ -2817,12 +2831,14 @@ class MolecularViewerUI(MolecularViewer):
         qtaim_layer = getattr(self, "qtaim_layer", None)
         if qtaim_layer is not None and qtaim_layer.get() is not None:
             base = max(base, qtaim_layer.radius() + 0.3)
-        layer = getattr(self, "cube_layer", None)
-        if layer is None or not layer.items():
+        layers = [layer for layer in (getattr(self, "cube_layer", None), getattr(self, "nto_layer", None))
+                  if layer is not None and layer.items()]
+        if not layers:
             return base
         if frame_data is None:
             frame_data = self.get_current_frame_data()
-        return max(base, layer.radius_about(self.get_system_center(frame_data)) + 0.3)
+        centre = self.get_system_center(frame_data)
+        return max([base] + [layer.radius_about(centre) + 0.3 for layer in layers])
 
     def _on_main_window_close(self, window, **kwargs) -> bool:
         """Design windows must not outlive the viewer that owns them."""
