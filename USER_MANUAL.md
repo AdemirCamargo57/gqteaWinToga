@@ -60,6 +60,7 @@
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
     - [QTAIM Topology Analysis](#qtaim-topology-analysis)
     - [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)
+      - [UV-Vis spectrum (Plot Spectrum)](#uv-vis-spectrum-plot-spectrum)
     - [Analysis of Fukui Functions](#analysis-of-fukui-functions)
       - [Molecular Design](#molecular-design)
         - [Opening and using the two windows](#opening-and-using-the-two-windows)
@@ -124,6 +125,7 @@
   - [Plot windows do not appear](#plot-windows-do-not-appear)
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
   - [ESP tool messages](#esp-tool-messages)
+  - [NTO tab messages](#nto-tab-messages)
   - [Fukui input builder messages](#fukui-input-builder-messages)
   - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
 - [Version, Contributors, and License](#version-contributors-and-license)
@@ -131,6 +133,8 @@
 ## Overview
 
 gqteaWinToga is a desktop molecular analysis toolkit developed by the gQTEA group. It helps users prepare, inspect, convert, visualize, and analyze molecular simulation data from CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping workflows, and related molecular dynamics tools.
+
+It also analyzes Gaussian electronic-structure results without running any external program. From a formatted checkpoint (`.fchk`) it maps the electrostatic surface potential, computes Fukui functions and QTAIM topology, and, with the output of a CIS/TDA/TD job, builds natural transition orbitals (NTOs) and the UV-Vis spectrum of the excited states.
 
 The program is a graphical application built with Python and Toga. Most tools follow the same pattern: open a tool window from the main tabbed interface, browse to one or more input files, enter calculation parameters, then click the tool's action button to generate outputs.
 
@@ -239,6 +243,10 @@ python -m pip install numba
 - Electron densities on grids become about four times faster. This speeds up
   the density grid of the ESP tool, and the grids and Hirshfeld charges of the
   [Analysis of Fukui Functions](#analysis-of-fukui-functions) tool.
+- Orbital values on grids use the same compiled kernel, so the hole and
+  particle isosurfaces and cube files of the
+  [NTO tab](#natural-transition-orbitals-nto) are computed about ten times
+  faster (uracil, one hole/particle pair at 0.2 bohr: 0.2 s instead of 2 s).
 - Solvent packing in the three solvation-box builders
   ([Single Solute](#single-solute-solvent-box),
   [Mixture](#mixture-of-two-solvent-box),
@@ -277,6 +285,12 @@ The Electrostatic Surface Potential tool (the ESP tab of the 3D Molecular Viewer
 (`.fchk`/`.fch`), made with Gaussian's `formchk` utility. It does not need
 Gaussian itself; if Gaussian's `cubegen` is installed it can optionally be used
 as the ESP engine.
+
+The NTO tab (natural transition orbitals and the UV-Vis spectrum) reads a
+Gaussian `.fchk` together with the `.log`/`.out` of the same CIS, TDA or TD
+job. Gaussian is needed only to produce those files; for accurate NTOs, run the
+job with `IOp(9/40=4)` in the route (see
+[Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)).
 
 ### Install from Source
 
@@ -1579,7 +1593,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **Cube** tab: Gaussian cube files as isosurfaces and slices, grid arithmetic, cube and image export (see [Cube tab](#cube-tab)).
 - **ESP** tab: the electrostatic potential mapped on electron-density isosurfaces of a Gaussian `.fchk`, its extrema, and ESP/density cube export (see [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)).
 - **QTAIM** tab: Bader's topology analysis of a Gaussian `.fchk` density — critical points, their properties, bond and ring paths, a text report and a 2D plane map (see [QTAIM Topology Analysis](#qtaim-topology-analysis)).
-- **NTO** tab: natural transition orbitals of a CIS/TDA/TD excited state from a Gaussian `.fchk` and its output — pair weights, hole and particle isosurfaces, cube and NTO `.fchk` export (see [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)).
+- **NTO** tab: natural transition orbitals of a CIS/TDA/TD excited state from a Gaussian `.fchk` and its output — pair weights, hole and particle isosurfaces, cube and NTO `.fchk` export — and the GaussView-style UV-Vis spectrum of all the excited states (see [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)).
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
@@ -3071,6 +3085,31 @@ or several labelled curves drawn together
 
 `xlabel`, `ylabel`, `title`, `xlim` and `ylim` are optional. Within one curve, `x` and `y` must be lists of finite numbers of equal length.
 
+Three tools write figures of a special kind, marked by a `"type"` key, and the Plotter redraws each exactly as the tool showed it:
+
+| `"type"` | Written by | Drawn as |
+| --- | --- | --- |
+| `"bars"` | [Comparison of Molecular Geometric Parameters](#comparison-of-molecular-geometric-parameters) | grouped bars with error bars and an optional percentage line |
+| `"plane_map"` | the QTAIM tab's *Plot 2D map* (`name_QTAIM_map.json`) | density contours, gradient and interbasin lines, critical points |
+| `"uv_vis"` | the NTO tab's *Plot Spectrum* (`name_UVVis.json`) | the GaussView-style UV-Vis spectrum: broadened ε curve and labelled oscillator-strength sticks |
+
+A UV-Vis figure has this form (every key is written by the NTO tab; the Plotter needs `states` and `curve`):
+
+```text
+{"type": "uv_vis", "title": "UV-Vis Spectrum",
+ "states": [{"number": 1, "label": "Singlet-A\"", "energy_ev": 4.7968,
+             "wavelength_nm": 258.47, "oscillator": 0.0001}, ...],
+ "curve": {"wavelength_nm": [...], "epsilon": [...]},
+ "broadening": {"shape": "gaussian", "hwhm_ev": 0.333, "sigma_ev": 0.39997, ...},
+ "xlim": [lo, hi], "source": {"fchk": "...", "excitation_file": "..."}}
+```
+
+The message panel describes it as, for example:
+
+```text
+  1. UV-Vis Spectrum - 3 excited states  [Wavelength (nm) vs ε (L mol⁻¹ cm⁻¹)]
+```
+
 **Error handling.** A file that cannot be used is reported with a message identifying the figure at fault, so you can fix it without reading the JSON by hand:
 
 | Problem | Message |
@@ -3082,6 +3121,9 @@ or several labelled curves drawn together
 | `x` and `y` differ in length | `Figure 1: 'x' and 'y' must have the same length (3 vs 2).` |
 | Neither `x`/`y` nor `series` | `Figure 1 must provide either 'x' and 'y', or 'series'.` |
 | A value is not a number | `Figure 1: 'y' must contain only numbers.` |
+| UV-Vis figure without states | `Figure 1: 'states' must be a non-empty list of excited states.` |
+| UV-Vis state without wavelength or strength | `Figure 1, state 2 needs 'wavelength_nm' and 'oscillator'.` |
+| UV-Vis curve arrays of different length | `Figure 1: the curve's 'wavelength_nm' and 'epsilon' must have the same length (2000 vs 1999).` |
 
 ##### Multi-column data file
 
@@ -3673,6 +3715,20 @@ The weights are those of the Multiwfn manual (0.865529, 0.134025, ...). The devi
 
 - The weights sum to 1.0004, slightly above 1, because this is full TD-DFT and the de-excitations (Σ = 0.000196) are not part of the NTOs. The report's note says so.
 - The overall sign of the hole/particle pair is arbitrary. Only the relative phases within each orbital carry meaning.
+
+#### 5. The UV-Vis spectrum
+
+Press **Plot Spectrum** (the *Peak half-width* field left blank, i.e. 0.333 eV). All three states are plotted, whichever one is selected, and `uracil_UVVis.json` is written to the output folder:
+
+| State | Label | λ (nm) | f |
+| --- | --- | --- | --- |
+| 1 | Singlet-A″ | 258.47 | 0.0001 |
+| 2 | Singlet-A′ | 228.67 | 0.1317 |
+| 3 | Singlet-A″ | 206.02 | 0.0000 |
+
+- The spectrum is one band, peaking at 228.7 nm with ε = 5333 L mol⁻¹ cm⁻¹: the bright S2 alone gives 1.3062974 × 10⁸ × 0.1317 / 3226 cm⁻¹ = 5333.
+- S1 and S3, both A″, are essentially dark: their sticks are at, or almost at, zero height, so the n → π\* state analysed above (S3) does not appear in the absorption at all (run its NTOs to see what S1 is). A spectrum alone would never reveal it; the NTOs and the f values together tell which excitations are bright and what they are.
+- Reopen the file later with **Plotter** (*JSON plot file*), or change the half-width and press **Plot Spectrum** again to compare band widths.
 
 ## Formulas and Methods (All Bond / Angle / Dihedral tools)
 
@@ -6167,6 +6223,30 @@ appear as `NOTE:` lines at the end of the results summary.
 | `NOTE: cubegen was not found; …` / `NOTE: cubegen failed: …` | The cubegen engine was chosen but cubegen is missing, or it failed on this file (for example a file written by a newer Gaussian than the cubegen). | Nothing required: the built-in engine was used. Fix the cubegen path to use cubegen. |
 | `Could not write …` | The output folder is read-only or missing. | Choose another output folder. |
 | `The 3D viewer could not be opened` | OpenGL/GLFW problem, as for the 3D molecular viewer. | See [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view). |
+
+### NTO tab messages
+
+Errors from the NTO tab appear in a dialog; notes appear under `NOTES` in the
+report `name_state<n>_NTO.txt`.
+
+| Message | Cause | What to do |
+| --- | --- | --- |
+| `Press Load to read these files and list their excited states.` | The file fields changed since the last **Load**. | Press **Load** (or **Run**, which loads first). |
+| `… and … describe different atoms` / `… have different geometries (atom n differs by …). Use the .fchk of the same job.` | The `.fchk` and the output belong to different molecules or geometries (e.g. a reoptimized `.fchk`). | Use the `.fchk` converted from the checkpoint of the same TD job. |
+| `… has N basis functions but … has M` / `… alpha electrons …` | Same molecule, different basis set, charge or multiplicity. | Use the two files of one job. |
+| `… is unrestricted (A/B labels) but … is restricted` (or the reverse) | The output and the `.fchk` come from a closed-shell and an open-shell calculation. | Use the two files of one job. |
+| `… is a restricted open-shell (RO…) reference` | ROHF/ROKS-based TD is not supported. | Use an unrestricted (UHF/UKS) reference. |
+| `… is a spin-flip pair; spin-flip excitations are not supported.` | A spin-flip TD output. | Not supported. |
+| `… is a Gaussian output without excited states.` | The `.log` is of a ground-state job. | Run a CIS, TDA or TD job and use its output. |
+| `… has no MO coefficients; use the .fchk of the CIS/TD job.` | The `.fchk` was written without orbitals. | Re-create it with `formchk` from the job's checkpoint. |
+| `The configuration coefficients sum to … instead of 0.5 … Rerun Gaussian with IOp(9/40=4)` | Gaussian printed only the coefficients above 0.1 (no `IOp(9/40=4)`). | Rerun the TD job with `IOp(9/40=4)`; until then the NTOs are approximate. |
+| `TDHF/TD-DFT state: the de-excitation coefficients … are not part of the NTOs …` | Normal for full TD: the weights can sum slightly above 1. | Nothing; well above 1 suggests using TDA. |
+| `No NTO pair dominates …` | The excitation genuinely mixes several hole → particle pairs. | Discuss the listed pairs together. |
+| `A grid at … bohr would have … million points. Use a grid spacing of at least … bohr.` | The grid spacing is too fine for the molecule. | Use the suggested spacing (or larger). |
+| `No +0.02 surface for the hole.` (status line) | The orbital never reaches the isovalue with that sign. | Lower the isovalue. |
+| `The excitation file gives no oscillator strengths …` (Plot Spectrum) | A plain-text excitation file was loaded; it has no f values. | Load the Gaussian output instead. |
+| `The peak half-width must be a positive …` (Plot Spectrum) | The half-width field holds zero, a negative number or text. | Type a positive value in eV, or leave it blank for 0.333 eV. |
+| `The plot viewer could not be started. The spectrum was saved as …` | The interactive viewer could not open (see [Plot windows do not appear](#plot-windows-do-not-appear)). | The spectrum is saved; reopen it with **Plotter** (*JSON plot file*). |
 
 ### Fukui input builder messages
 
