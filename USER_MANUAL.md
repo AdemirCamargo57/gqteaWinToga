@@ -18,6 +18,7 @@
 - [Basic Workflows](#basic-workflows)
   - [Analyze a Bond Length](#analyze-a-bond-length)
   - [Run a QTAIM Topology Analysis](#run-a-qtaim-topology-analysis)
+  - [Generate Natural Transition Orbitals](#generate-natural-transition-orbitals)
   - [Build CPMD Input Files](#build-cpmd-input-files)
   - [Select Frames and Generate Gaussian Inputs](#select-frames-and-generate-gaussian-inputs)
   - [Plot CPMD Energy Data](#plot-cpmd-energy-data)
@@ -58,6 +59,7 @@
       - [Cube tab](#cube-tab)
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
     - [QTAIM Topology Analysis](#qtaim-topology-analysis)
+    - [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)
     - [Analysis of Fukui Functions](#analysis-of-fukui-functions)
       - [Molecular Design](#molecular-design)
         - [Opening and using the two windows](#opening-and-using-the-two-windows)
@@ -96,6 +98,7 @@
   - [Example 7: Analyze All Solute Dihedral Angles](#example-7-analyze-all-solute-dihedral-angles)
   - [Example 8: Read a Fukui Function Figure (phenol, f⁺)](#example-8-read-a-fukui-function-figure-phenol-f)
   - [Example 9: QTAIM Analysis of a Hydrogen Bond (water dimer)](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)
+  - [Example 10: Natural Transition Orbitals of Uracil S3](#example-10-natural-transition-orbitals-of-uracil-s3)
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
@@ -103,6 +106,7 @@
 - [Formulas and Methods (Fukui Function tool)](#formulas-and-methods-fukui-function-tool)
 - [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules)
 - [Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab)
+- [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab)
 - [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
@@ -377,6 +381,17 @@ Typical outputs include bond length time series, distribution data, free-energy 
 9. Read `name_QTAIM.txt` in the output folder.
 
 The full procedure, with every option and what to do when points are missing, is in [QTAIM Topology Analysis](#qtaim-topology-analysis) (*Step-by-step procedure*); a worked example with real numbers is [Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer); the theory is in [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules).
+
+### Generate Natural Transition Orbitals
+
+1. Run a Gaussian CIS, TDA or TD job that keeps a checkpoint, with `IOp(9/40=4)` in the route (for example `# PBE1PBE/6-31G* TD(NStates=5) IOp(9/40=4)`), and convert it: `formchk name.chk name.fchk`.
+2. Open **Tools > 3D Molecular Viewer** and choose the **NTO** tab.
+3. Browse to `name.fchk`; the Gaussian output `name.log` (or `name.out`) beside it is filled in. Click **Load**.
+4. Choose an excited state and click **Run**; read the pair weights in the table.
+5. Choose a pair, **Show** (hole, particle or both) and click **Display**.
+6. **Export cubes** / **Export NTO .fchk** write to the output folder; **Export 3D image...** saves the view.
+
+The details are in [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto), a worked example in [Example 10](#example-10-natural-transition-orbitals-of-uracil-s3), and the method in [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab).
 
 ### Build CPMD Input Files
 
@@ -1553,7 +1568,7 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-**Window layout.** The controls are arranged as a fixed header, eight tabs, and a status line:
+**Window layout.** The controls are arranged as a fixed header, nine tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels. The atom styles are Line, CPK (ball and stick), vdW (space-filling) and **Design style**, which draws the molecule as the Molecular Design Canvas does: equal flat discs in the canvas colours with a thin outline, single bond lines, the element symbol centred on each disc and the atom number beside it, in colours that stay readable on the current background. The *Atom numbers* and *Atomic symbols* switches are independent (either, both or neither) and are the same settings as the QTAIM tab's *Atom labels*.
@@ -1563,6 +1578,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **Cube** tab: Gaussian cube files as isosurfaces and slices, grid arithmetic, cube and image export (see [Cube tab](#cube-tab)).
 - **ESP** tab: the electrostatic potential mapped on electron-density isosurfaces of a Gaussian `.fchk`, its extrema, and ESP/density cube export (see [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)).
 - **QTAIM** tab: Bader's topology analysis of a Gaussian `.fchk` density — critical points, their properties, bond and ring paths, a text report and a 2D plane map (see [QTAIM Topology Analysis](#qtaim-topology-analysis)).
+- **NTO** tab: natural transition orbitals of a CIS/TDA/TD excited state from a Gaussian `.fchk` and its output — pair weights, hole and particle isosurfaces, cube and NTO `.fchk` export (see [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)).
 - **Box & Performance** tab: periodic box settings and playback performance options.
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
@@ -2784,6 +2800,144 @@ Limitations:
   Shannon aromaticity and ring-normal curvature, ESP or other functions at the
   CPs, `.wfn`/`.wfx` input, periodic systems.
 
+#### Natural Transition Orbitals (NTO)
+
+Use the **NTO** tab of the **3D Molecular Viewer** (Tools > 3D Molecular Viewer)
+to describe an electronic excitation by *natural transition orbitals*. A CIS,
+TDA or TD excitation usually mixes several occupied → virtual MO pairs; the NTOs
+(Martin, *J. Chem. Phys.* **2003**, 118, 4775) rotate the occupied orbitals among
+themselves and the virtual orbitals among themselves so that one or a few
+**hole → particle** pairs carry the whole excitation, each with a **weight**
+(weight × 100 = percent of the excitation). The definition, conventions and
+output layout are Multiwfn's (main function 18, subfunction 6), and the results
+agree with Multiwfn 2026.7.15 to the digits it writes (see *Validation*). No
+external program is needed at run time. The method is in
+[Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab).
+
+##### What you need
+
+Two files **of the same Gaussian job**:
+
+- the formatted checkpoint (`formchk name.chk name.fchk`): basis set and MOs;
+- the Gaussian output (`.log`/`.out`) of the CIS, TDA or TD calculation, which
+  holds the configuration coefficients. **Add `IOp(9/40=4)` to the route**:
+  without it Gaussian prints only coefficients above 0.1, the coefficients no
+  longer sum to 0.5, and the NTOs are approximate (the report says so).
+
+Example route: `# PBE1PBE/6-31G* TD(NStates=5) IOp(9/40=4)`. An excited-state
+optimisation output also works (its last excitation block, at the final
+geometry, is used). Multiwfn's plain-text format (`Excited State  n  mult  eV`
+headers followed by `i -> a  coefficient` lines; closed-shell coefficients
+normalised to 0.5) is accepted in place of the Gaussian output.
+
+**Load** checks that the two files belong together: same atoms and geometry
+(1e-4 Å), same basis-function and electron counts, both restricted or both
+unrestricted, every orbital number in range. A mismatch is refused with a
+message naming it.
+
+##### Tab layout
+
+- **Input**: formatted checkpoint (choosing it fills in `name.log` or `name.out`
+  beside it when the excitation field is empty), excitation file, output folder
+  (blank = the folder of the `.fchk`), **Load**.
+- **Excited state**: the list of states (number, label, eV, nm, f), **Run**,
+  **Clear**, status line and progress bar.
+- **NTO pairs**: a one-line summary and the table of pairs with weight ≥ 0.0001
+  (pair, spin, weight, %, cumulative %). Clicking a row selects that pair.
+- **Display**: pair, **Show** (*Hole*, *Particle*, *Hole and particle*),
+  isovalue (default 0.02 a.u.), grid spacing (default 0.2 bohr), the four
+  isosurface colours (Hole + blue, Hole − red, Particle + green, Particle −
+  yellow; a colour name or `#rrggbb`, Enter applies), opacity and **Display**.
+  Colour, opacity and Show changes redraw at once without recomputing; a new
+  pair, isovalue or spacing recomputes the orbitals (a fraction of a second for
+  a molecule of uracil's size).
+- **Export**: **Export cubes** (the chosen pair, or every listed pair with *All
+  listed pairs*), **Export NTO .fchk**, **Send to Cube tab** (the displayed
+  pair's two orbitals as unsaved Cube-tab entries, for slices, grid arithmetic
+  or saving under another name) and **Export 3D image...** (the 3D window as
+  shown; captured first, then the file name is asked).
+- The report (the help text until the first run).
+
+##### Step-by-step procedure
+
+1. Run the Gaussian job with `IOp(9/40=4)` and a `%Chk`; convert the checkpoint
+   with `formchk`.
+2. In the NTO tab, browse to the `.fchk` (the output beside it is filled in) and
+   click **Load**. The status line reports the number of states, whether the
+   reference is restricted or unrestricted, and the number of MOs.
+3. Choose a state and click **Run**. The report `name_state<n>_NTO.txt` is
+   written to the output folder and shown at the bottom of the tab.
+4. Check the **normalisation** in the report: the deviation from 0.5 (1 for an
+   unrestricted reference) should be ≈ 0.00001. A larger value means missing
+   coefficients (rerun with `IOp(9/40=4)`).
+5. Read the **weights**. One pair near 1 means the excitation is that hole →
+   particle transition. Several pairs of similar weight mean it is not a
+   single-pair excitation (the report notes it when no pair exceeds 0.5).
+6. Choose a pair and click **Display**. Compare hole and particle: where the
+   electron density is taken from and where it goes (n → π\*, π → π\*, charge
+   transfer between fragments, ...).
+7. Export what you need. The cube files open in GaussView, VMD, Multiwfn or the
+   Cube tab. The NTO `.fchk` opens in GaussView or Multiwfn, where the orbital
+   "energies" are the weights. The dominant hole sits at the HOMO's place and
+   the dominant particle at the LUMO's: for uracil, MOs 29 and 30.
+
+##### Output files
+
+| File | Content |
+|---|---|
+| `name_state<n>_NTO.txt` | header, Multiwfn's normalisation printout, the listed pairs with the hole/particle MO numbers they take in the NTO `.fchk`, the composition of each NTO in the canonical MOs (contributions ≥ 5 %), notes |
+| `name_state<n>_NTO<k>_hole.cube`, `..._particle.cube` | orbital amplitude (a.u.) on the display grid, bohr; open shell: `name_state<n>_NTO<k>_alpha_hole.cube` etc. |
+| `name_state<n>_NTO.fchk` | the input `.fchk` with the MO coefficients replaced by the NTOs and the orbital energies by their weights; everything else (density, basis) unchanged |
+
+##### Interpretation and cautions
+
+- **Weights.** For CIS and TDA they lie between 0 and 1 and sum to 1. For full TD
+  (TDHF/TD-DFT) the de-excitation part is left out, as in Multiwfn and
+  Gaussian, so a weight or the sum can slightly exceed 1. Much more than 1
+  means the TD result itself is doubtful; TDA is then the better choice.
+- **Open shell.** Alpha and beta NTOs are separate; both are listed, sorted by
+  weight, and the largest tells which spin carries the excitation (for the
+  methyl radical's first state, a beta pair with 0.98).
+- **Signs and degeneracy.** The overall sign of a pair is arbitrary (here: the
+  hole's largest MO coefficient is positive; hole and particle flip together).
+  Pairs of equal weight (benzene's first state: two pairs of 0.4996) may come
+  out as any rotation of one another. Only the space they span is defined, in
+  this program as in every other.
+- **When NTOs do not help.** If no pair dominates, the excitation genuinely
+  involves several hole → particle pairs; discuss them together.
+
+##### Validation
+
+Five fixtures in `tests/data/nto/` are tested against Multiwfn 2026.7.15
+(12 states): Multiwfn's own uracil example (PBE0/6-31G*, TD), formaldehyde TD
+singlets and triplets and CIS/cc-pVDZ (pure d shells), the methyl radical
+(UB3LYP, open shell) and benzene (degenerate pairs).
+
+| Quantity | Agreement with Multiwfn |
+|---|---|
+| NTO weights | ≤ 3.3 × 10⁻⁹ (Multiwfn writes 8 significant digits) |
+| hole and particle orbitals (sign- and rotation-free, 1500 points) | ≤ 6.4 × 10⁻⁹ of the orbital's maximum |
+| uracil S3 (Multiwfn manual §4.18.6) | 0.865529, 0.134025, 0.000582, 0.000121, 0.000063; sum of the ten largest 1.000387 |
+
+The exported NTO `.fchk` is read by Gaussian's cubegen (to cubegen's own
+accuracy near the nuclei, ~5 × 10⁻⁵ of the maximum). The orbital values
+themselves are checked by an exact identity: the squared occupied orbitals sum
+to the electron density.
+
+##### Limitations
+
+- Gaussian files only (no ORCA, CP2K, GAMESS/Firefly, BDF).
+- Single-reference methods only (CIS, TDA, TDHF, TD-DFT); not EOM-CC, CASSCF or
+  other multi-reference excited states. No spin-flip TD and no restricted
+  open-shell (ROHF/ROKS) references.
+- The transition density is built from the excitation coefficients only (no
+  X+Y option); NTOs between two excited states and the hole–electron analysis
+  are not available.
+- Accuracy is limited by the coefficients Gaussian prints (5 decimals, > 1e-4
+  with `IOp(9/40=4)`): NTOs agree with Multiwfn, which reads the same numbers,
+  to round-off, but with Gaussian's own `Pop=NTO` only to about 1e-4.
+- Basis functions up to g (as the other `.fchk` tools); no periodic systems.
+
 #### Analysis of Fukui Functions
 
 **Tools > Analysis of Fukui Functions** shows where a molecule is most susceptible to nucleophilic (f⁺), electrophilic (f⁻) and radical (f⁰) attack, and the dual descriptor Δf = f⁺ − f⁻ (positive: nucleophilic attack; negative: electrophilic attack). The results indicate *likely* reactive regions. They are not predictions of reaction outcome: sterics, solvent and barriers are not included.
@@ -3442,6 +3596,58 @@ The second fixture, `tests/data/qtaim/bicyclopentane_631gd.fchk` (B3LYP/6-31G(d)
 - There is **no** bond path between the two bridgehead carbons, although they are only 1.88 Å apart: the density between them has no saddle point.
 - The strained C–C bonds are **curved** ("banana bonds"): their path is 1.0027 × the internuclear distance (a straight bond gives 1.0000), bowed outwards from the cage. ρ<sub>BCP</sub> = 0.233 a.u. is a single-bond value (benzene's C–C bonds: 0.311 a.u.).
 - The three ring points (ρ = 0.0994 a.u.) lie only 0.25 Å from the cage point (0.0969 a.u.), with almost the same density: in this small cage the density is very flat, and the topology is close to a *catastrophe point*, where a small change of geometry can make ring and cage points merge and disappear. Such flat regions are where the search is most sensitive to its parameters.
+
+### Example 10: Natural Transition Orbitals of Uracil S3
+
+This is the example of the Multiwfn manual (§4.18.6). The files are in `tests/data/nto/`: `uracil.fch` and `uracil.out`, from Gaussian 09, `# PBE1PBE/6-31G* TD IOp(9/40=4)`, three singlet states.
+
+#### 1. Why NTOs
+
+Gaussian lists the third excited state (6.018 eV, 206 nm, f = 0) as a mixture of four main MO pairs:
+
+```
+ Excited State   3:      Singlet-A"     6.0180 eV  206.02 nm  f=0.0000
+      26 -> 30         0.54135
+      26 -> 31        -0.20634
+      28 -> 30        -0.15424
+      28 -> 31         0.36715
+```
+
+The largest pair carries only 2 × 0.541² = 58.5 %, so no single MO pair describes the excitation.
+
+#### 2. Run
+
+NTO tab: browse to `uracil.fch` (`uracil.out` is filled in), **Load**, choose `3: Singlet-A" 6.0180 eV 206.02 nm f=0.0000`, **Run**. The report `uracil_state3_NTO.txt` gives:
+
+```
+NORMALIZATION (as Multiwfn)
+  Sum of square of excitation coefficients                        0.500203
+  Negative of the sum of square of de-excitation coefficients    -0.000196
+  Sum of above two values                                         0.500007
+  Deviation to expected normalization value (0.5)                 0.000007
+  Sum of all NTO weights                                          1.000406
+
+  pair  spin    weight         %   cum. %   hole  particle
+   1   alpha   0.865529   86.55   86.55     29     30
+   2   alpha   0.134025   13.40   99.96     28     31
+
+  pair  1 alpha hole:     MO 26 74.9%, MO 28 25.1%
+  pair  1 alpha particle: MO 30 68.9%, MO 31 30.4%
+```
+
+The weights are those of the Multiwfn manual (0.865529, 0.134025, ...). The deviation of 0.000007 shows that `IOp(9/40=4)` captured essentially all of the coefficients.
+
+#### 3. How to read it
+
+- One pair carries 86.6 % of the excitation: the NTO transformation has turned four comparable MO pairs into one dominant hole → particle pair plus a 13.4 % companion.
+- **Display** pair 1 with *Hole and particle*. The hole is an in-plane lone pair on the carbonyl oxygen. The particle is a π\* orbital over the ring and the C=O groups. S3 is therefore an n → π\* excitation, consistent with its A″ symmetry and zero oscillator strength.
+- Each NTO is a mixture of canonical MOs (hole 1 = 75 % MO 26 + 25 % MO 28). That is why the canonical MOs alone gave no clear picture.
+- **Export NTO .fchk** writes `uracil_state3_NTO.fchk`. In GaussView or Multiwfn, MO 29 is hole 1 and MO 30 is particle 1, with "energies" 0.865529.
+
+#### 4. Cautions
+
+- The weights sum to 1.0004, slightly above 1, because this is full TD-DFT and the de-excitations (Σ = 0.000196) are not part of the NTOs. The report's note says so.
+- The overall sign of the hole/particle pair is arbitrary. Only the relative phases within each orbital carry meaning.
 
 ## Formulas and Methods (All Bond / Angle / Dihedral tools)
 
@@ -5443,6 +5649,105 @@ T. Lu, F. Chen, *J. Comput. Chem.* 33, 580 (2012) and T. Lu, *J. Chem. Phys.*
 161, 082503 (2024) (Multiwfn); Multiwfn manual §3.14 (topology analysis) and
 §3.5.5 (CPs and paths on plane maps); E. Espinosa, I. Alkorta, J. Elguero,
 E. Molins, *J. Chem. Phys.* 117, 5529 (2002) (the |V|/G regions of section 4).
+
+## Formulas and Methods (NTO tab)
+
+### 1. Excited states of single-reference methods
+
+In CIS and TDA the excited state is a linear combination of singly excited
+determinants, each moving one electron from an occupied MO *i* to a virtual MO
+*a*, with configuration coefficients $w_i^a$:
+
+$$
+\Psi_{\text{exc}} = \sum_{i}^{\text{occ}}\sum_{a}^{\text{vir}} w_i^a\,\Phi_i^a .
+$$
+
+TDHF and TD-DFT add de-excitation coefficients $w_i'^a$ (Gaussian's `<-` lines),
+with $\sum (w_i^a)^2 - \sum (w_i'^a)^2 = 1$. For a closed-shell reference
+Gaussian prints one set of coefficients normalised to 0.5 instead of 1 (the α and
+β halves are identical). An unrestricted reference has separate α and β
+coefficients (`A`/`B` labels) normalised together to 1.
+
+### 2. Transition matrix
+
+For each spin, the transition matrix is the occupied × virtual array of the
+excitation coefficients (Multiwfn's definition; de-excitations are left out, as
+Gaussian's `Pop=NTO` also does):
+
+$$
+T_{ia} = w_i^a .
+$$
+
+The report repeats Multiwfn's check:
+$\sum (w_i^a)^2$, $-\sum (w_i'^a)^2$, their sum and its deviation from 0.5
+(restricted) or 1 (unrestricted).
+
+### 3. Singular value decomposition
+
+$$
+T = U\,\Sigma\,V^{\mathsf T}, \qquad
+\Sigma = \operatorname{diag}(\sigma_1 \ge \sigma_2 \ge \dots \ge 0),
+$$
+
+with $U$ (occupied × occupied) and $V$ (virtual × virtual) orthogonal. The
+squared singular values are the eigenvalues of $TT^{\mathsf T}$ and of
+$T^{\mathsf T}T$, which are the two matrices Multiwfn diagonalises separately.
+The SVD gives the same values and pairs every particle with its hole by
+construction: $v_k = T^{\mathsf T}u_k/\sigma_k$.
+
+### 4. Holes, particles and weights
+
+With $C_{\text{occ}}$ and $C_{\text{vir}}$ the coefficient matrices of the
+occupied and virtual MOs (basis functions × MOs):
+
+$$
+\phi^{\text{hole}}_k = C_{\text{occ}}\,u_k, \qquad
+\phi^{\text{particle}}_k = C_{\text{vir}}\,v_k, \qquad
+\lambda_k = f\,\sigma_k^2,
+$$
+
+with $f = 2$ for a restricted reference (undoing Gaussian's 0.5
+normalisation) and $f = 1$ for each spin of an unrestricted one. $100\,\lambda_k$
+is the percentage of the excitation described by pair *k*. The NTOs are
+orthonormal because $U$ and $V$ are orthogonal and the MOs are orthonormal.
+The orbitals are rotated only among the occupied and among the virtual MOs,
+so the ground-state density is unchanged. That is why the NTO `.fchk` keeps
+its `Total SCF Density` section as it is. The composition of NTO *k* in
+the canonical MOs is $u_{ik}^2$ (hole) and $v_{ak}^2$ (particle).
+
+For CIS and TDA, $0 \le \lambda_k \le 1$ and $\sum_k\lambda_k = 1$. For TD the
+omitted de-excitations let $\sum_k \lambda_k$ exceed 1 by $f\sum(w_i'^a)^2$.
+
+### 5. Signs and degeneracy
+
+Each pair can change sign as a whole, $(u_k, v_k) \to (-u_k, -v_k)$. This
+program makes the largest-magnitude element of $u_k$ positive. When several
+pairs share one weight, any orthogonal rotation of them is an equally valid
+set; only the space they span is defined. The tests compare with Multiwfn
+accordingly: sign-free for single pairs, and by subspace (an orthogonal
+least-squares map) for degenerate groups.
+
+### 6. Orbitals on a grid
+
+The orbital value at a point is
+$\phi(\mathbf r) = \sum_\mu c_\mu \chi_\mu(\mathbf r)$, evaluated exactly at
+every grid point. The basis functions χ are the same normalised Cartesian
+Gaussians as in the ESP, Fukui and QTAIM tools, and pure shells are mapped onto
+Cartesians. The AOs are computed once per block of points (by the compiled
+kernel when `numba` is installed) and multiplied by the hole and particle
+coefficients together.
+
+The grid starts from the atoms ± 1.7 van der Waals radii (Multiwfn's box). Any
+face on which |hole| or |particle| still reaches isovalue/10 is pushed out by
+1 bohr until none does. A pair on uracil at 0.2 bohr (≈ 0.4 million points) takes
+about 0.3 s with `numba`. The isosurfaces at ±isovalue are triangulated as in
+the Cube tab.
+
+### 7. References
+
+- R. L. Martin, *J. Chem. Phys.* **2003**, 118, 4775 (natural transition orbitals).
+- T. Lu, F. Chen, *J. Comput. Chem.* **2012**, 33, 580, and the Multiwfn manual,
+  §3.21 and §4.18.6.
 
 ## Formulas and Methods (Solvation box builders)
 
