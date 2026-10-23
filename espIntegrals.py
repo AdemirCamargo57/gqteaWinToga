@@ -108,15 +108,20 @@ def _primitive_pairs(sa, sb):
     return al, be, p, ca * cb * k, centers
 
 
-def build_hermite_batches(wfn: FchkWavefunction) -> List[HermiteBatch]:
-    """Contract the density into point-independent Hermite coefficients."""
+def build_hermite_batches(wfn: FchkWavefunction, density: Optional[np.ndarray] = None) -> List[HermiteBatch]:
+    """Contract a density into point-independent Hermite coefficients.
+
+    ``density`` is a symmetric matrix in the fchk basis (default: the SCF
+    density of ``wfn``), e.g. the electron density of an excitation.
+    """
+    cart_density = wfn.cart_density if density is None else wfn.transform.T @ density @ wfn.transform
     shells = wfn.shells
     offsets = np.cumsum([0] + [s.n_cart for s in shells])
     acc: Dict[int, List[Tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
     for ia, sa in enumerate(shells):
         for ib in range(ia + 1):
             sb = shells[ib]
-            block = wfn.cart_density[offsets[ia]:offsets[ia + 1], offsets[ib]:offsets[ib + 1]]
+            block = cart_density[offsets[ia]:offsets[ia + 1], offsets[ib]:offsets[ib + 1]]
             block_max = np.abs(block).max()
             if block_max == 0.0:
                 continue
@@ -270,6 +275,44 @@ def overlap_matrix(wfn: FchkWavefunction) -> np.ndarray:
                         * np.sum(pre * e[0][:, pa[0], pb[0], 0] * e[1][:, pa[1], pb[1], 0]
                                  * e[2][:, pa[2], pb[2], 0]))
     return s_mat
+
+
+MOMENT_KEYS = ("s", "x", "y", "z", "xx", "yy", "zz")
+
+
+def moment_matrices(wfn: FchkWavefunction) -> Dict[str, np.ndarray]:
+    """Overlap, dipole (x, y, z) and diagonal second-moment (xx, yy, zz) integrals.
+
+    Same layout as ``overlap_matrix`` (normalised Cartesian components), origin
+    at (0, 0, 0) bohr. Along one axis, with x = (x - B_x) + B_x on the right-hand
+    Gaussian, <a|x|b> = S(i, j+1) + B_x S(i, j) and
+    <a|x^2|b> = S(i, j+2) + 2 B_x S(i, j+1) + B_x^2 S(i, j), where S(i, j) is the
+    one-dimensional overlap E^{ij}_0 sqrt(pi/p).
+    """
+    shells = wfn.shells
+    offsets = np.cumsum([0] + [s.n_cart for s in shells])
+    out = {key: np.zeros((offsets[-1], offsets[-1])) for key in MOMENT_KEYS}
+    for ia, sa in enumerate(shells):
+        for ib, sb in enumerate(shells):
+            _, _, p, ckk, centers = _primitive_pairs(sa, sb)
+            root = np.sqrt(pi / p)
+            e = [hermite_coefficients(sa.l, sb.l + 2, centers[:, d] - sa.center[d],
+                                      centers[:, d] - sb.center[d], 0.5 / p)[..., 0] * root[:, None, None]
+                 for d in range(3)]  # (pairs, la+1, lb+3): 1-D overlaps
+            for a, pa in enumerate(cartesian_components(sa.l)):
+                for b, pb in enumerate(cartesian_components(sb.l)):
+                    norm = component_angular_norm(pa) * component_angular_norm(pb)
+                    s1 = [e[d][:, pa[d], pb[d]] for d in range(3)]
+                    first = [e[d][:, pa[d], pb[d] + 1] + sb.center[d] * s1[d] for d in range(3)]
+                    second = [e[d][:, pa[d], pb[d] + 2] + 2.0 * sb.center[d] * e[d][:, pa[d], pb[d] + 1]
+                              + sb.center[d] ** 2 * s1[d] for d in range(3)]
+                    row, col = offsets[ia] + a, offsets[ib] + b
+                    out["s"][row, col] = norm * np.sum(ckk * s1[0] * s1[1] * s1[2])
+                    for d, (k1, k2) in enumerate((("x", "xx"), ("y", "yy"), ("z", "zz"))):
+                        others = [s1[o] for o in range(3) if o != d]
+                        out[k1][row, col] = norm * np.sum(ckk * first[d] * others[0] * others[1])
+                        out[k2][row, col] = norm * np.sum(ckk * second[d] * others[0] * others[1])
+    return out
 
 
 # 1 Hartree/e in kcal/(mol e): CODATA 2018 E_h = 4.3597447222071e-18 J times
