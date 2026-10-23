@@ -240,6 +240,51 @@ class TestGridIndices:
         assert abs(xa.lambda_index(state, wfn, grid_of("h2co_cis")).value - g.sr) < 1e-6
 
 
+def isotropic_moments(d, sigma_h, sigma_e):
+    zero = np.zeros(3)
+    return xa.MomentIndices(1.0, 1.0, 0.0, zero, np.array([0.0, 0.0, d]), np.full(3, sigma_h),
+                            np.full(3, sigma_e), zero)
+
+
+class TestCoulomb:
+    def test_isotropic_gaussians_have_the_erf_form(self):
+        from scipy.special import erf
+        for d in (0.5, 2.0, 7.0):
+            total = 2 * 1.2 ** 2 + 2 * 0.8 ** 2  # per-axis variance sum x 2
+            expected = erf(d / np.sqrt(total)) / d
+            assert abs(xa.coulomb_gaussian(isotropic_moments(d, 1.2, 0.8)) - expected) < 1e-10
+
+    def test_coincident_centroids(self):
+        total = 2 * (1.0 ** 2 + 1.0 ** 2)
+        assert abs(xa.coulomb_gaussian(isotropic_moments(0.0, 1.0, 1.0)) - 2 / np.sqrt(np.pi * total)) < 1e-10
+
+    @pytest.mark.parametrize("name,state", [("D-pi-A", 1), ("D-pi-A", 2), ("4-nitroaniline", 2), ("h2co_cis", 1)])
+    def test_matches_multiwfn_option_18(self, name, state):
+        # Multiwfn sums C_ele C_hole / r on its low-quality uniform grid, skipping C_ele < 1e-6 and r = 0
+        ref = reference(name, state, "coulomb")["coulomb"]
+        assert abs(xa.coulomb_gaussian(core(name, state, 0.01).moments) - ref) < 0.02 * ref
+
+    def test_exact_coulomb_is_positive_and_comparable(self):
+        r = core("h2co_cis", 1)
+        calls = []
+
+        def progress(fraction):
+            calls.append(fraction)
+            raise RuntimeError("ignored")
+
+        exact = xa.coulomb_exact(r.wfn, r.dm, grid_of("h2co_cis"), progress=progress)
+        gaussian = xa.coulomb_gaussian(r.moments)
+        assert exact > 0 and abs(exact - gaussian) < 0.3 * gaussian
+        assert calls and calls[-1] == 1.0
+
+    def test_exact_coulomb_numpy_and_numba_agree(self):
+        pytest.importorskip("numba")
+        r = core("h2co_cis", 1)
+        g = grid_of("h2co_cis")
+        assert abs(xa.coulomb_exact(r.wfn, r.dm, g, use_numba=False)
+                   - xa.coulomb_exact(r.wfn, r.dm, g, use_numba=True)) < 1e-8
+
+
 def test_numerical_modules_do_not_import_toga():
     code = "import sys, excitationAnalysis; print('toga' in sys.modules, 'molecularViewer' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)

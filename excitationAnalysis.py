@@ -381,6 +381,63 @@ def grid_indices(wfn, dm: DensityMatrices, grid, use_numba: Optional[bool] = Non
 
 
 # ----------------------------------------------------------------------
+# Hole-electron Coulomb attraction
+# ----------------------------------------------------------------------
+@dataclass
+class CoulombEnergies:
+    """Coulomb attraction between hole and electron (Hartree, given as a positive magnitude)."""
+    gaussian: float              # between C_hole and C_ele, as Multiwfn's option 18 computes it
+    exact: Optional[float]       # between rho_hole and rho_ele, the manual's definition (optional)
+
+
+def coulomb_gaussian(m: MomentIndices) -> float:
+    """Coulomb energy of the normalised anisotropic Gaussians C_hole and C_ele (Multiwfn's option 18).
+
+    With 1/r = (2/sqrt(pi)) int_0^inf exp(-s^2 r^2) ds and the convolution of the two
+    Gaussians (variances sigma_e^2 + sigma_h^2 per axis, centre distance d), the six-
+    dimensional integral reduces to one dimension. C_hole and C_ele are scaled to the hole and
+    electron integrals, as Multiwfn does.
+    """
+    from scipy.integrate import quad
+
+    var = m.sigma_electron ** 2 + m.sigma_hole ** 2
+    d2 = m.separation ** 2
+
+    def integrand(s):
+        den = 1.0 + 2.0 * s * s * var
+        return float(np.prod(den ** -0.5) * np.exp(-np.sum(s * s * d2 / den)))
+
+    value = 2.0 / np.sqrt(np.pi) * quad(integrand, 0.0, np.inf, limit=200, epsabs=1e-13, epsrel=1e-11)[0]
+    return value * m.hole_integral * m.electron_integral
+
+
+def _electronic_potential(batches, points: np.ndarray, use_numba: Optional[bool]) -> np.ndarray:
+    use_numba = ei.numba_available() if use_numba is None else use_numba
+    if use_numba:
+        import espNumba  # imported by espIntegrals when available
+        return espNumba.electronic_potential(batches, points)
+    return ei.electronic_potential(batches, points)
+
+
+def coulomb_exact(wfn, dm: DensityMatrices, grid, progress=None, use_numba: Optional[bool] = None) -> float:
+    """int int rho_hole(r1) rho_ele(r2) / |r1 - r2|: the electron's potential (analytic, espIntegrals) at
+    the Becke grid points, integrated against the hole density."""
+    batches = ei.build_hermite_batches(wfn, density=dm.electron)
+    total, n = 0.0, len(grid.points)
+    chunk = 5000
+    for k in range(0, n, chunk):
+        pts = grid.points[k:k + chunk]
+        hole, _, _ = point_densities(wfn, dm, pts, use_numba)
+        total += float((grid.weights[k:k + chunk] * hole) @ _electronic_potential(batches, pts, use_numba))
+        if progress is not None:
+            try:
+                progress(min(1.0, (k + chunk) / n))
+            except Exception:
+                pass  # reporting must never abort the analysis
+    return total
+
+
+# ----------------------------------------------------------------------
 # Atom and fragment contributions, IFCT
 # ----------------------------------------------------------------------
 PARTITION_MULLIKEN, PARTITION_HIRSHFELD = "mulliken", "hirshfeld"
