@@ -51,6 +51,9 @@ class PlotterBase:
     #    {"type": "uv_vis", "states": [{"number", "label", "wavelength_nm", #
     #     "oscillator", ...}], "curve": {"wavelength_nm", "epsilon"}}]      #
     #     (UV-Vis spectrum, NTO tab)                                       #
+    #    {"type": "heat_map", "matrix": [[..]], "row_labels": [..],         #
+    #     "col_labels": [..], "vmin", "vmax", "colorbar"}                   #
+    #     (composition / charge-transfer matrices, Excitation tab)          #
     #                                                                      #
     # xlabel/ylabel/title/xlim/ylim are optional; so are a group's 'errors' #
     # and a bars figure's 'line'.                                           #
@@ -137,6 +140,24 @@ class PlotterBase:
                              f"({n_x} vs {n_y}).")
 
     @classmethod
+    def _check_heat_map(cls, figure: dict, where: str) -> None:
+        """A heat map (excitationAnalysis.heat_map_entry); messages name the figure."""
+        matrix = figure.get("matrix")
+        if not isinstance(matrix, list) or not matrix or not all(isinstance(r, list) for r in matrix):
+            raise ValueError(f"{where}: 'matrix' must be a non-empty list of rows.")
+        n_cols = cls._check_numeric_sequence(matrix[0], f"{where}: 'matrix' row 1")
+        for r_index, row in enumerate(matrix[1:], start=2):
+            if cls._check_numeric_sequence(row, f"{where}: 'matrix' row {r_index}") != n_cols:
+                raise ValueError(f"{where}: 'matrix' row {r_index} has a different length from row 1.")
+        for key, n in (("row_labels", len(matrix)), ("col_labels", n_cols)):
+            labels = figure.get(key)
+            if not isinstance(labels, list) or len(labels) != n:
+                raise ValueError(f"{where}: '{key}' must be a list of {n} labels.")
+        for key in ("vmin", "vmax"):
+            if figure.get(key) is not None:
+                cls._check_numeric_sequence([figure[key]], f"{where}: '{key}'")
+
+    @classmethod
     def validate_plot_manifest(cls, payload) -> List[dict]:
         """Check a decoded JSON plot manifest and return its figures.
 
@@ -203,6 +224,8 @@ class PlotterBase:
                 cls._check_plane_map(figure, where)
             elif figure.get("type") == "uv_vis":
                 cls._check_uv_vis(figure, where)
+            elif figure.get("type") == "heat_map":
+                cls._check_heat_map(figure, where)
             elif "series" in figure:
                 series = figure["series"]
                 if not isinstance(series, list) or not series:
@@ -285,6 +308,9 @@ class PlotterBase:
                           f"{len(figure.get('lines', []))} lines")
             elif figure.get("type") == "uv_vis":
                 detail = f"{len(figure.get('states', []))} excited states"
+            elif figure.get("type") == "heat_map":
+                matrix = figure.get("matrix", [[]])
+                detail = f"{len(matrix)} x {len(matrix[0]) if matrix else 0} heat map"
             elif "series" in figure:
                 n_points = len(figure["series"][0].get("x", []))
                 detail = f"{len(figure['series'])} curves, {n_points} points each"
@@ -969,6 +995,9 @@ class PlotterBase:
                 elif figure.get("type") == "uv_vis":
                     from displayPlots import draw_uv_vis
                     draw_uv_vis(figure_obj.gca(), figure)
+                elif figure.get("type") == "heat_map":
+                    from displayPlots import draw_heat_map
+                    draw_heat_map(figure_obj.gca(), figure)
                 else:
                     if "series" in figure:
                         for curve in figure["series"]:

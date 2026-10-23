@@ -34,6 +34,11 @@ A fifth is the UV-Vis spectrum of the NTO tab (uvVisSpectrum.spectrum_entry)::
       "oscillator"}], "curve": {"wavelength_nm": [...], "epsilon": [...]},
       "broadening": {...}, "xlim": [lo, hi], "xlabel", "ylabel", "ylabel_right", "title"}]
 
+A sixth is the heat map of the Excitation tab (excitationAnalysis.heat_map_entry)::
+
+    [{"type": "heat_map", "matrix": [[...], ...], "row_labels": [...], "col_labels": [...],
+      "vmin": null, "vmax": null, "colorbar": "...", "xlabel", "ylabel", "title"}]
+
 Entries written before these shapes
 existed carry no ``"type"`` key at all, so the plain curve stays the default.
 
@@ -49,7 +54,7 @@ import json
 # the TkAgg pin would silently re-pin Agg and this viewer would open no
 # window at all. See draw_bar_comparison's docstring for why the renderer
 # lives there instead of here.
-from displayPlots import draw_bar_comparison, draw_plane_map, draw_uv_vis, series_style_kwargs
+from displayPlots import draw_bar_comparison, draw_heat_map, draw_plane_map, draw_uv_vis, series_style_kwargs
 
 import matplotlib
 # Pin an interactive GUI backend explicitly. In a packaged (frozen) build
@@ -83,6 +88,10 @@ def build_figures(figures):
             continue
         if fig.get("type") == "uv_vis":
             draw_uv_vis(figure.gca(), fig, FONT_STYLE)
+            plt.tight_layout()
+            continue
+        if fig.get("type") == "heat_map":
+            draw_heat_map(figure.gca(), fig, FONT_STYLE)
             plt.tight_layout()
             continue
         if "series" in fig:

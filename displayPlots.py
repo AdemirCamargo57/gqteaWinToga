@@ -227,6 +227,34 @@ def draw_uv_vis(axes, figure_entry, font_style=None):
     return twin
 
 
+HEAT_MAP_ROTATE_LABELS = 12   # more column labels than this are drawn vertically
+
+
+def draw_heat_map(axes, figure_entry, font_style=None):
+    """Draw one "heat_map" manifest entry (the Excitation tab's composition / CT matrices).
+
+    ``matrix`` is a list of rows; ``row_labels`` / ``col_labels`` label them;
+    ``vmin`` / ``vmax`` (optional, null = automatic) fix the colour scale; the
+    colour bar carries ``colorbar``. Returns the image.
+    """
+    import numpy as np
+
+    font_style = font_style or {}
+    matrix = np.asarray(figure_entry.get("matrix", [[]]), dtype=float)
+    image = axes.imshow(matrix, aspect="auto", cmap="viridis", interpolation="nearest",
+                        vmin=figure_entry.get("vmin"), vmax=figure_entry.get("vmax"))
+    rows, cols = figure_entry.get("row_labels", []), figure_entry.get("col_labels", [])
+    axes.set_yticks(range(len(rows)))
+    axes.set_yticklabels(rows)
+    axes.set_xticks(range(len(cols)))
+    axes.set_xticklabels(cols, rotation=90 if len(cols) > HEAT_MAP_ROTATE_LABELS else 0)
+    axes.set_xlabel(figure_entry.get("xlabel", ""), fontdict=font_style)
+    axes.set_ylabel(figure_entry.get("ylabel", ""), fontdict=font_style)
+    axes.set_title(figure_entry.get("title", ""), fontdict=font_style)
+    axes.figure.colorbar(image, ax=axes, label=figure_entry.get("colorbar", ""))
+    return image
+
+
 class DisplayPlots():
 
     font_style = {'color':  'darkred','weight': 'normal','size': 14}

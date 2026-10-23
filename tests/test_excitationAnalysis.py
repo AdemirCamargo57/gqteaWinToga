@@ -338,3 +338,40 @@ class TestFieldVolumes:
         written = xa.ExcitationAnalyser.write_cubes(results, str(tmp_path), ["hole", "CDD"], spacing=0.3)
         assert [Path(p).name for p in written] == ["h2co_cis_ccpvdz_state1_hole.cube",
                                                    "h2co_cis_ccpvdz_state1_CDD.cube"]
+
+
+class TestHeatMaps:
+    @pytest.fixture(scope="class")
+    def results(self):
+        fchk, log = xf.fixture_paths("4-nitroaniline")
+        analyser = xa.ExcitationAnalyser()
+        return (analyser.run(fchk, log, 2), analyser.run(fchk, log, 2, fragments_text=xf.FRAGMENTS["4-nitroaniline"]))
+
+    def test_atom_composition_hides_hydrogens_by_default(self, results):
+        plain, _ = results
+        entry = xa.heat_map_entry(plain, "atoms")
+        n_heavy = int((plain.wavefunction.atomic_numbers != 1).sum())
+        assert entry["row_labels"] == ["Hole", "Electron", "Overlap"] and len(entry["col_labels"]) == n_heavy
+        assert all("(H)" not in label for label in entry["col_labels"])
+        assert len(xa.heat_map_entry(plain, "atoms", include_hydrogens=True)["col_labels"]) == plain.wavefunction.n_atoms
+
+    def test_ifct_matrix_and_fragment_maps(self, results):
+        _, with_fragments = results
+        ifct = xa.heat_map_entry(with_fragments, "ifct")
+        assert np.allclose(ifct["matrix"], with_fragments.ifct.matrix)
+        assert ifct["row_labels"] == ["Fragment 1", "Fragment 2", "Fragment 3"]
+        assert len(xa.heat_map_entry(with_fragments, "fragments")["matrix"]) == 3
+
+    def test_fragment_maps_need_fragments(self, results):
+        plain, _ = results
+        with pytest.raises(ValueError, match="Define fragments"):
+            xa.heat_map_entry(plain, "ifct")
+
+    def test_written_manifest_is_valid(self, results, tmp_path):
+        import json
+        from plotter import PlotterBase
+        _, with_fragments = results
+        for kind in xa.HEATMAP_KINDS:
+            path = xa.ExcitationAnalyser.write_heat_map(with_fragments, kind, str(tmp_path))
+            assert Path(path).name.endswith(f"_state2_{kind}_heatmap.json")
+            PlotterBase.validate_plot_manifest(json.loads(Path(path).read_text(encoding="utf-8")))

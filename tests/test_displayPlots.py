@@ -268,3 +268,18 @@ def test_viewer_renders_a_plane_map():
     plotViewer.build_figures([plane_map_entry()])
     assert plt.figure(1).axes[0].get_title() == "map"
     plt.close("all")
+
+
+def test_draw_heat_map_labels_and_colour_bar():
+    from matplotlib.figure import Figure
+
+    from displayPlots import draw_heat_map
+    figure = Figure()
+    axes = figure.add_subplot()
+    entry = {"type": "heat_map", "matrix": [[0.1, 0.5], [0.0, 0.3]], "row_labels": ["Hole", "Electron"],
+             "col_labels": ["1(C)", "2(N)"], "vmin": 0.0, "vmax": None, "colorbar": "Fraction", "title": "T"}
+    image = draw_heat_map(axes, entry)
+    assert image.get_array().shape == (2, 2)
+    assert [t.get_text() for t in axes.get_yticklabels()] == ["Hole", "Electron"]
+    assert [t.get_text() for t in axes.get_xticklabels()] == ["1(C)", "2(N)"]
+    assert len(figure.axes) == 2 and figure.axes[1].get_ylabel() == "Fraction"   # colour bar

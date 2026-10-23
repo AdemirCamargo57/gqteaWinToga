@@ -802,6 +802,59 @@ def field_volumes(results: "ExcitationResults", spacing: float = DEFAULT_SPACING
             for name in FIELDS}
 
 
+# ----------------------------------------------------------------------
+# Heat maps (plot-viewer manifest, "heat_map" shape of displayPlots)
+# ----------------------------------------------------------------------
+HEATMAP_KINDS = {"atoms": "Atom composition", "fragments": "Fragment composition", "ifct": "IFCT matrix",
+                 "atom_ct": "Atom-atom CT matrix"}
+
+
+def heatmap_filename(stem: str, state_number: int, kind: str) -> str:
+    return f"{stem}_state{state_number}_{kind}_heatmap.json"
+
+
+def _atom_labels(wfn, atoms: Sequence[int]) -> List[str]:
+    symbols = wfn.atom_symbols()
+    return [f"{a + 1}({symbols[a]})" for a in atoms]
+
+
+def heat_map_entry(results: "ExcitationResults", kind: str, include_hydrogens: bool = False) -> dict:
+    """One "heat_map" manifest figure: Multiwfn's hole/electron/overlap composition map or a CT matrix."""
+    if kind not in HEATMAP_KINDS:
+        raise ValueError(f"The heat map must be one of {', '.join(HEATMAP_KINDS)}, not '{kind}'.")
+    wfn, atoms = results.wavefunction, results.atoms
+    method = "Mulliken-like" if atoms.method == PARTITION_MULLIKEN else "Hirshfeld"
+    title = f"{HEATMAP_KINDS[kind]}, excited state {results.state.number} ({method})"
+    if kind in ("fragments", "ifct") and results.ifct is None:
+        raise ValueError("Define fragments (e.g. 1-10; 11-13) and run the analysis first.")
+    if kind in ("atoms", "atom_ct"):
+        keep = [a for a in range(wfn.n_atoms) if include_hydrogens or int(wfn.atomic_numbers[a]) != 1]
+        if not keep:
+            keep = list(range(wfn.n_atoms))
+        labels = _atom_labels(wfn, keep)
+    if kind == "atoms":
+        matrix = np.vstack([atoms.hole[keep], atoms.electron[keep], atoms.overlap[keep]])
+        rows, cols, xlabel, ylabel, colorbar = ["Hole", "Electron", "Overlap"], labels, "Atom", "", "Fraction"
+    elif kind == "atom_ct":
+        matrix = atom_ct_matrix(atoms)[np.ix_(keep, keep)]
+        rows, cols, xlabel, ylabel = labels, labels, "Electron on atom", "Hole on atom"
+        colorbar = "Electrons transferred"
+    elif kind == "fragments":
+        f = results.ifct
+        overlap = np.sqrt(np.maximum(f.hole * f.electron, 0.0))
+        matrix = np.vstack([f.hole, f.electron, overlap])
+        rows, cols = ["Hole", "Electron", "Overlap"], [x.name for x in f.fragments]
+        xlabel, ylabel, colorbar = "Fragment", "", "Fraction"
+    else:
+        f = results.ifct
+        matrix = f.matrix
+        rows = cols = [x.name for x in f.fragments]
+        xlabel, ylabel, colorbar = "To fragment (electron)", "From fragment (hole)", "Electrons transferred"
+    return {"type": "heat_map", "matrix": [[float(v) for v in row] for row in matrix], "row_labels": rows,
+            "col_labels": cols, "vmin": 0.0, "vmax": None, "colorbar": colorbar, "xlabel": xlabel,
+            "ylabel": ylabel, "title": title}
+
+
 class ExcitationAnalyser:
     """Reads an .fchk + excitation file pair (cached) and analyses one excited state.
 
@@ -955,6 +1008,16 @@ class ExcitationAnalyser:
             except OSError as exc:
                 raise ValueError(f"Could not write {path}: {exc}") from exc
         return written
+
+    @staticmethod
+    def write_heat_map(results: ExcitationResults, kind: str, output_dir: str,
+                       include_hydrogens: bool = False) -> str:
+        """A one-figure plot-viewer manifest <stem>_state<n>_<kind>_heatmap.json; returns its path."""
+        import json
+
+        entry = heat_map_entry(results, kind, include_hydrogens)
+        path = Path(output_dir) / heatmap_filename(results.stem, results.state.number, kind)
+        return _write(path, json.dumps([entry], indent=1))
 
     @staticmethod
     def write_report(results: ExcitationResults, output_dir: str, written: Sequence[str] = ()) -> str:

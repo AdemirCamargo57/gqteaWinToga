@@ -1086,3 +1086,29 @@ class TestPlaneMapManifests:
                                                                 qa.PlaneMapOptions(points=20)))
         path = write(tmp_path, [entry])
         assert PlotterBase.load_json_plot_file(path)[0]["type"] == "plane_map"
+
+
+def heat_map():
+    return {"type": "heat_map", "matrix": [[0.1, 0.5, 0.2], [0.0, 0.3, 0.7]], "row_labels": ["Hole", "Electron"],
+            "col_labels": ["1(C)", "2(N)", "3(O)"], "vmin": 0.0, "vmax": None, "colorbar": "Fraction",
+            "title": "Composition"}
+
+
+class TestHeatMapManifest:
+    def test_accepted_and_described(self):
+        figures = PlotterBase.validate_plot_manifest([heat_map()])
+        assert "2 x 3 heat map" in PlotterBase.describe_json_figures(figures)
+
+    @pytest.mark.parametrize("change,message", [
+        ({"matrix": []}, "non-empty list of rows"),
+        ({"matrix": [[0.1, 0.2, 0.3], [0.4, 0.5]]}, "row 2 has a different length"),
+        ({"matrix": [[0.1, float("nan"), 0.3], [0.0, 0.3, 0.7]]}, "finite"),
+        ({"row_labels": ["Hole"]}, "'row_labels' must be a list of 2 labels"),
+        ({"col_labels": ["a", "b"]}, "'col_labels' must be a list of 3 labels"),
+        ({"vmax": "high"}, "'vmax'"),
+    ])
+    def test_rejected_with_the_figure_named(self, change, message):
+        figure = dict(heat_map(), **change)
+        with pytest.raises(ValueError, match="Figure 1") as error:
+            PlotterBase.validate_plot_manifest([figure])
+        assert message in str(error.value)
