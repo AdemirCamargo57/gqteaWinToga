@@ -138,7 +138,7 @@ Thresholds (constants in the module, quoted in the report):
 | `t` sign | 0 | Manual: t < 0 = hole and electron not separated; clearly positive = separated. |
 | `DIFFUSE_SPREAD` | 1.0 Å (Δσ) | No literature value; **our heuristic**, labelled as such, calibrated on the H₂CO/aug-cc-pVDZ Rydberg fixture. |
 | `DIFFUSE_ELECTRON` | 50 % | Fraction of the electron on diffuse basis functions; **our heuristic** (rule 3). |
-| `NORMALIZATION_TOLERANCE` | 0.01 | As the NTO tab; plus |∫hole − 1|, |∫ele − 1| > 0.01 on the grid. |
+| `NORMALIZATION_TOLERANCE` | 0.01 | As the NTO tab; also applied to abs(∫hole − 1) and abs(∫ele − 1). |
 | `IFCT_CT_MAJORITY` | 50 % | Intrinsic CT% above half of the excited electron. |
 
 Rules, first match wins:

@@ -63,6 +63,20 @@ def references_for(keys: Iterable[str]) -> List[str]:
     return [text for key, text in REFERENCES.items() if key in wanted]
 
 
+# Functionals with full or high exact exchange at long range (Multiwfn's ghost-state comment names wB97XD,
+# CAM-B3LYP and M06-2X); matched against the fchk method name (e.g. RCAM-B3LYP, UWB97XD).
+LONG_RANGE_SAFE = ("CAM-", "WB97", "LC-", "LCW", "M11", "M062X", "M06HF", "BHANDHLYP", "HF", "CIS")
+
+
+def long_range_safe(method: str) -> bool:
+    """True when ``method`` (fchk line 2, e.g. 'RCAM-B3LYP') handles long-range CT: range-separated or
+    high-exchange hybrids, Hartree-Fock/CIS."""
+    name = method.upper().lstrip()
+    if name[:1] in ("R", "U") and not name.startswith(("RO",)):
+        name = name[1:]
+    return any(name.startswith(tag) for tag in LONG_RANGE_SAFE)
+
+
 @dataclass(frozen=True)
 class Descriptors:
     """What the rules look at. Lengths in Angstrom."""
@@ -79,6 +93,7 @@ class Descriptors:
     diffuse_electron: float          # fraction of the electron on diffuse basis functions (Mulliken)
     energy_ev: float
     ghost_ev: Optional[float] = None
+    method: str = ""                 # fchk method, e.g. 'RCAM-B3LYP' (warnings only)
 
 
 @dataclass
@@ -188,14 +203,22 @@ def classify(d: Descriptors, ifct=None) -> Classification:
     else:
         confidence = "consistent: the independent indices agree"
 
+    safe = long_range_safe(d.method)
     if d.ghost_ev is not None and d.energy_ev < d.ghost_ev:
-        warnings.append(f"The excitation energy ({d.energy_ev:.3f} eV) is below the ghost-hunter index "
-                        f"({d.ghost_ev:.3f} eV): possibly a spurious (ghost) CT state. This is a necessary, not a "
-                        "sufficient condition (Multiwfn manual 3.21.7), meaningful only for one-dimensional CT.")
+        text = (f"The excitation energy ({d.energy_ev:.3f} eV) is below the ghost-hunter index ({d.ghost_ev:.3f} eV): "
+                "possibly a spurious (ghost) CT state. This is a necessary, not a sufficient condition (Multiwfn "
+                "manual 3.21.7), meaningful only for one-dimensional CT.")
+        if safe:
+            text += (f" With {d.method}, which has full or high exact exchange at long range, ghost states are not "
+                     "expected (Multiwfn's comment).")
+        warnings.append(text)
     if (d.delta_r is not None and d.delta_r >= CT_DISTANCE) or (d.lambda_ is not None and d.lambda_ < LOW_OVERLAP):
-        warnings.append("Long-range or low-overlap excitation (Delta_r >= 2.0 A or Lambda < 0.3): pure and low-"
-                        "exact-exchange functionals (BLYP, PBE, B3LYP, PBE0) are unreliable here; prefer a "
-                        "range-separated hybrid such as CAM-B3LYP or wB97XD (manual 3.21.4; Peach et al.).")
+        text = ("Long-range or low-overlap excitation (Delta_r >= 2.0 A or Lambda < 0.3): pure and low-exact-"
+                "exchange functionals (BLYP, PBE, B3LYP, PBE0) are unreliable here; a range-separated hybrid such "
+                "as CAM-B3LYP or wB97XD is needed (manual 3.21.4; Peach et al.).")
+        text += (f" The method used ({d.method}) is of that kind." if safe else
+                 f" The method used ({d.method or 'unknown'}) is not recognised as one." )
+        warnings.append(text)
     return Classification(verdict, rule, evidence, checks, confidence, _fragment_assignment(ifct), ORBITAL_NOTE,
                           warnings)
 

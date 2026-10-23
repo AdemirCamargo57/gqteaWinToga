@@ -23,8 +23,10 @@ terms, which ``cross_term_threshold`` reproduces for the validation tests.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -39,6 +41,7 @@ HARTREE_TO_EV = 27.211386245988   # CODATA 2018
 BOHR_RADIUS_ANGSTROM = cf.BOHR_RADIUS_ANGSTROM
 SPIN_ORDER = (ed.SPIN_ALPHA, ed.SPIN_BETA)
 MAJOR_TRANSITION_THRESHOLD = 0.05  # Multiwfn: 10 x compthres (0.5 %) = 5 %
+NORMALIZATION_TOLERANCE = 0.01    # |deviation| above which the coefficients look incomplete
 
 
 # ----------------------------------------------------------------------
@@ -237,12 +240,6 @@ def mo_contributions(coeffs: Dict[str, SpinCoefficients], factor: float) -> List
         out += [MOContribution(spin, i + 1, float(v), 0.0) for i, v in enumerate(hole) if v != 0.0]
         out += [MOContribution(spin, s.n_occ + a + 1, 0.0, float(v)) for a, v in enumerate(electron) if v != 0.0]
     return out
-
-
-def _orbital_label(kind: str, offset: int) -> str:
-    if kind == "H":
-        return "H" if offset == 0 else f"H{offset}"
-    return "L" if offset == 0 else f"L+{offset}"
 
 
 def major_transitions(state: ed.ExcitedState, wfn, threshold: float = MAJOR_TRANSITION_THRESHOLD) -> str:
@@ -634,3 +631,227 @@ def delta_r(state: ed.ExcitedState, wfn, moments: Dict[str, np.ndarray]) -> Orbi
         pairs.append((c, k, contribution))
         total += contribution
     return OrbitalIndex(total, pairs)
+
+
+# ----------------------------------------------------------------------
+# The whole analysis of one state
+# ----------------------------------------------------------------------
+@dataclass
+class ExcitationResults:
+    fchk_path: str
+    excitation_path: str
+    wavefunction: gw.FchkWavefunction = field(repr=False)
+    excitations: ed.ExcitationFile = field(repr=False)
+    state: ed.ExcitedState = field(repr=False)
+    restricted: bool = True
+    factor: float = 2.0
+    coefficients: Dict[str, SpinCoefficients] = field(default_factory=dict, repr=False)
+    densities: Optional[DensityMatrices] = field(default=None, repr=False)
+    moments: Optional[MomentIndices] = None
+    grid: Optional[GridIndices] = None
+    mo_contributions: List[MOContribution] = field(default_factory=list)
+    major: str = ""
+    ghost: Optional[GhostHunter] = None
+    delta_r: Optional[OrbitalIndex] = None
+    lambda_: Optional[OrbitalIndex] = None
+    partition: str = "mulliken"
+    atoms: Optional["AtomContributions"] = None
+    fragments: List["Fragment"] = field(default_factory=list)
+    ifct: Optional["IFCTResult"] = None
+    coulomb: Optional[CoulombEnergies] = None
+    has_diffuse: bool = False
+    diffuse_electron: float = 0.0
+    classification: object = None   # excitationClassification.Classification
+    sum_excitation: float = 0.0
+    sum_deexcitation: float = 0.0
+    expected_norm: float = 0.5
+    log_dipole: Optional[Tuple[float, float, float]] = None
+    cross_term_threshold: float = 0.0
+    notes: List[str] = field(default_factory=list)
+    elapsed: float = 0.0
+
+    @property
+    def deviation(self) -> float:
+        """Multiwfn's 'Deviation to expected normalization value'."""
+        return self.sum_excitation - self.sum_deexcitation - self.expected_norm
+
+    @property
+    def stem(self) -> str:
+        return Path(self.fchk_path).stem
+
+
+def resolve_output_dir(fchk_path: str, chosen: Optional[str]) -> str:
+    """The chosen folder, or the folder of the .fchk file when blank."""
+    chosen = (chosen or "").strip()
+    return chosen if chosen else str(Path(fchk_path).resolve().parent)
+
+
+def report_filename(stem: str, state_number: int) -> str:
+    return f"{stem}_state{state_number}_excitation.txt"
+
+
+def diffuse_electron_fraction(dm: DensityMatrices, overlap: np.ndarray, mask: np.ndarray) -> float:
+    """Mulliken population of the electron on the diffuse basis functions, as a fraction of the electron."""
+    population = np.einsum("ij,ji->i", dm.electron, overlap)
+    total = population.sum()
+    return float(population[mask].sum() / total) if total else 0.0
+
+
+def _write(path: Path, text: str) -> str:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Could not write {path}: {exc}") from exc
+    return str(path)
+
+
+def _file_key(path) -> Tuple[str, int, int]:
+    stat = Path(path).stat()
+    return str(Path(path).resolve()), stat.st_mtime_ns, stat.st_size
+
+
+class ExcitationAnalyser:
+    """Reads an .fchk + excitation file pair (cached) and analyses one excited state.
+
+    The constructor arguments are validation knobs, not user options:
+    ``cross_term_threshold`` = 0.01 and ``pair_screen`` = 0.001 reproduce
+    Multiwfn's screening of small configuration coefficients.
+    """
+
+    def __init__(self, cross_term_threshold: float = 0.0, pair_screen: float = 0.0,
+                 use_numba: Optional[bool] = None):
+        self.cross_term_threshold = cross_term_threshold
+        self.pair_screen = pair_screen
+        self.use_numba = use_numba
+        self._loaded = None    # (key, (wfn, data, notes))
+        self._geometry = None  # (key, moments, grid)
+
+    def load(self, fchk_path, excitation_path):
+        """(wavefunction, excitation file, notes); ValueError when the files do not belong together."""
+        try:
+            key = (_file_key(fchk_path), _file_key(excitation_path))
+        except OSError as exc:
+            raise ValueError(f"Cannot read {exc.filename}: {exc.strerror}") from exc
+        if self._loaded is not None and self._loaded[0] == key:
+            return self._loaded[1]
+        wfn = gw.read_fchk(fchk_path)
+        data = ed.read_excitation_file(excitation_path)
+        notes = ed.check_against_wavefunction(data, wfn)
+        self._loaded = (key, (wfn, data, notes))
+        return self._loaded[1]
+
+    def geometry(self, wfn):
+        """(fchk-basis moment integrals, Becke grid) of ``wfn``, cached."""
+        key = _file_key(wfn.path)
+        if self._geometry is None or self._geometry[0] != key:
+            self._geometry = (key, basis_moments(wfn), molecular_grid(wfn, self.use_numba))
+        return self._geometry[1], self._geometry[2]
+
+    def run(self, fchk_path, excitation_path, state_number: int, partition: str = "mulliken",
+            fragments_text: str = "", exact_coulomb: bool = False,
+            progress: Optional[Callable[[float, str], None]] = None) -> ExcitationResults:
+        import excitationClassification as xc
+
+        start = time.perf_counter()
+
+        def report(fraction, message):
+            if progress is not None:
+                try:
+                    progress(fraction, message)
+                except Exception:
+                    pass  # reporting must never abort the analysis
+
+        if partition not in PARTITIONS:
+            raise ValueError(f"The partition must be one of {PARTITIONS}, not '{partition}'.")
+        report(0.02, "Reading the files...")
+        wfn, data, load_notes = self.load(fchk_path, excitation_path)
+        state = data.state(int(state_number))
+        fragments, fragment_notes = parse_fragments(fragments_text, wfn.n_atoms)  # before any heavy work
+        restricted = not wfn.is_unrestricted
+        factor = 2.0 if restricted else 1.0
+        report(0.08, "Integrals and the integration grid...")
+        moments, grid = self.geometry(wfn)
+        report(0.15, "Hole and electron density matrices...")
+        coeffs = coefficient_matrices(state, wfn)
+        dm = density_matrices(coeffs, wfn, factor, self.cross_term_threshold)
+        report(0.22, "Centroids, RMSD, D, H, t and the transition dipole...")
+        m = moment_indices(dm, moments)
+        dr = delta_r(state, wfn, moments)
+        ghost = ghost_hunter(state, wfn, m.d_index)
+        report(0.35, "Sm, Sr, HDI and EDI on the Becke grid...")
+        gi = grid_indices(wfn, dm, grid, self.use_numba)
+        report(0.55, "Lambda index...")
+        lam = lambda_index(state, wfn, grid, self.use_numba)
+        report(0.68, "Atom contributions...")
+        notes = list(load_notes) + fragment_notes
+        if partition == PARTITION_HIRSHFELD:
+            try:
+                atoms = hirshfeld_contributions(wfn, dm, grid, self.use_numba)
+            except ValueError as exc:
+                notes.append(f"Hirshfeld partition not possible ({exc}); the Mulliken-like partition is used.")
+                partition = PARTITION_MULLIKEN
+        if partition == PARTITION_MULLIKEN:
+            atoms = mulliken_contributions(dm, moments["s"], wfn, self.pair_screen, coeffs, factor)
+        result_ifct = ifct(atoms, fragments) if fragments else None
+        has_diffuse = xc.has_diffuse_functions(wfn)
+        diffuse = diffuse_electron_fraction(dm, moments["s"], xc.diffuse_function_mask(wfn)) if has_diffuse else 0.0
+        report(0.78, "Coulomb attraction...")
+        exact = None
+        if exact_coulomb:
+            exact = coulomb_exact(wfn, dm, grid, lambda f: report(0.78 + 0.2 * f, "Exact Coulomb attraction..."),
+                                  self.use_numba)
+        coulomb = CoulombEnergies(coulomb_gaussian(m), exact)
+        x2, y2 = state.norm_terms()
+        expected = 0.5 if restricted else 1.0
+        descriptors = xc.Descriptors(
+            d=m.d_index * BOHR_RADIUS_ANGSTROM, t=m.t_index * BOHR_RADIUS_ANGSTROM, sr=gi.sr,
+            delta_sigma=m.delta_sigma_index * BOHR_RADIUS_ANGSTROM, delta_r=dr.value * BOHR_RADIUS_ANGSTROM,
+            lambda_=lam.value, normalization_deviation=x2 - y2 - expected, hole_integral=m.hole_integral,
+            electron_integral=m.electron_integral, has_diffuse=has_diffuse, diffuse_electron=diffuse,
+            energy_ev=state.energy_ev, ghost_ev=ghost.value * HARTREE_TO_EV, method=wfn.method)
+        results = ExcitationResults(
+            fchk_path=str(fchk_path), excitation_path=str(excitation_path), wavefunction=wfn, excitations=data,
+            state=state, restricted=restricted, factor=factor, coefficients=coeffs, densities=dm, moments=m,
+            grid=gi, mo_contributions=mo_contributions(coeffs, factor), major=major_transitions(state, wfn),
+            ghost=ghost, delta_r=dr, lambda_=lam, partition=partition, atoms=atoms, fragments=fragments,
+            ifct=result_ifct, coulomb=coulomb, has_diffuse=has_diffuse, diffuse_electron=diffuse,
+            classification=xc.classify(descriptors, result_ifct), sum_excitation=x2, sum_deexcitation=y2,
+            expected_norm=expected, log_dipole=data.transition_dipoles.get(state.number),
+            cross_term_threshold=self.cross_term_threshold, notes=notes)
+        results.notes += self._notes(results)
+        results.elapsed = time.perf_counter() - start
+        report(1.0, "Done.")
+        return results
+
+    @staticmethod
+    def _notes(r: ExcitationResults) -> List[str]:
+        notes = []
+        if abs(r.deviation) > NORMALIZATION_TOLERANCE:
+            notes.append(f"The configuration coefficients sum to {r.sum_excitation - r.sum_deexcitation:.6f} instead "
+                         f"of {r.expected_norm:g} (deviation {r.deviation:+.6f}): small coefficients are probably "
+                         "missing. Rerun Gaussian with IOp(9/40=4); the indices are approximate.")
+        if r.sum_deexcitation > 0:
+            notes.append("TDHF/TD-DFT state: de-excitations enter the hole and electron with a minus sign "
+                         "(Multiwfn's convention), so the hole or electron density can be slightly negative in "
+                         "places. The moments here are exact; Multiwfn integrates the densities clipped at zero.")
+        if r.partition == PARTITION_MULLIKEN and (r.has_diffuse or r.atoms.negative):
+            reason = "the basis set has diffuse functions" if r.has_diffuse else "some atomic contributions are negative"
+            notes.append(f"Mulliken-like contributions are unreliable here ({reason}); the Hirshfeld partition is "
+                         "recommended (Multiwfn manual 3.21.1.1).")
+        if r.ifct is not None and r.ifct.clamped:
+            notes.append("A negative fragment contribution was set to zero in the IFCT matrix (as Multiwfn does); "
+                         "consider the Hirshfeld partition.")
+        if r.state.multiplicity == 3 and r.restricted:
+            notes.append("Triplet state of a singlet reference: the transition density and dipole are those of the "
+                         "spatial part only (they vanish by spin symmetry), as Multiwfn reports them.")
+        return notes
+
+    # --- outputs ------------------------------------------------------
+    @staticmethod
+    def write_report(results: ExcitationResults, output_dir: str, written: Sequence[str] = ()) -> str:
+        """<stem>_state<n>_excitation.txt in ``output_dir``; OSError becomes ValueError."""
+        import excitationReport
+
+        path = Path(output_dir) / report_filename(results.stem, results.state.number)
+        return _write(path, excitationReport.report_text(results, written))

@@ -68,6 +68,18 @@ class TestRules:
         assert any("necessary, not a sufficient" in w for w in c.warnings)
         assert any("range-separated" in w for w in c.warnings)
 
+    @pytest.mark.parametrize("method,safe", [("RCAM-B3LYP", True), ("UWB97XD", True), ("RM062X", True),
+                                             ("RHF", True), ("RB3LYP", False), ("RPBE1PBE", False), ("", False)])
+    def test_long_range_safe_methods(self, method, safe):
+        assert xc.long_range_safe(method) is safe
+
+    def test_warnings_acknowledge_a_range_separated_functional(self):
+        ct = replace(LE, d=3.5, t=0.6, delta_r=4.0, energy_ev=1.0, ghost_ev=1.5)
+        safe = xc.classify(replace(ct, method="RCAM-B3LYP")).warnings
+        unsafe = xc.classify(replace(ct, method="RB3LYP")).warnings
+        assert any("is of that kind" in w for w in safe) and any("not expected" in w for w in safe)
+        assert any("not recognised as one" in w for w in unsafe)
+
     def test_orbital_character_is_never_assigned(self):
         assert "not assigned" in xc.classify(LE).orbital_note
 
