@@ -289,3 +289,52 @@ def test_numerical_modules_do_not_import_toga():
     code = "import sys, excitationAnalysis; print('toga' in sys.modules, 'molecularViewer' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False False"
+
+
+class TestFieldVolumes:
+    @pytest.fixture(scope="class")
+    def volumes(self):
+        fchk, log = xf.fixture_paths("h2co_cis")
+        results = xa.ExcitationAnalyser().run(fchk, log, 1)
+        return results, xa.field_volumes(results, spacing=0.25, isovalue=0.002)
+
+    def test_all_fields_on_one_grid(self, volumes):
+        results, v = volumes
+        assert set(v) == set(xa.FIELDS)
+        shapes = {vol.values.shape for vol in v.values()}
+        assert len(shapes) == 1
+        assert all(np.array_equal(vol.origin, v["hole"].origin) for vol in v.values())
+
+    def test_integrals(self, volumes):
+        results, v = volumes
+        dv = 0.25 ** 3
+        assert abs(v["hole"].values.sum() * dv - 1) < 1e-2
+        assert abs(v["electron"].values.sum() * dv - 1) < 1e-2
+        assert abs(v["transdens"].values.sum() * dv) < 1e-2
+        assert abs(v["Chole"].values.sum() * dv - results.moments.hole_integral) < 1e-2
+
+    def test_derived_fields(self, volumes):
+        results, v = volumes
+        h, e = v["hole"].values, v["electron"].values
+        assert h.min() >= 0 and e.min() >= 0
+        assert np.allclose(v["CDD"].values, e - h)
+        assert np.allclose(v["Sr"].values, np.sqrt(h * e))
+
+    def test_c_function_peaks_at_the_centroid(self, volumes):
+        results, v = volumes
+        c = v["Cele"]
+        k = np.unravel_index(np.argmax(c.values), c.values.shape)
+        point = c.origin + np.array(k) * 0.25
+        assert np.linalg.norm(point - results.moments.electron_centroid) < 0.25 * np.sqrt(3)
+
+    def test_grid_size_limit(self, volumes):
+        results, _ = volumes
+        with pytest.raises(ValueError, match="grid spacing of at least"):
+            xa.field_volumes(results, spacing=0.005)
+
+    def test_cube_names_and_writing(self, volumes, tmp_path):
+        results, _ = volumes
+        assert xa.cube_filename("mol", 3, "Sr") == "mol_state3_Sr.cube"
+        written = xa.ExcitationAnalyser.write_cubes(results, str(tmp_path), ["hole", "CDD"], spacing=0.3)
+        assert [Path(p).name for p in written] == ["h2co_cis_ccpvdz_state1_hole.cube",
+                                                   "h2co_cis_ccpvdz_state1_CDD.cube"]

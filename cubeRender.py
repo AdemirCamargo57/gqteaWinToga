@@ -81,6 +81,71 @@ def slice_item(points_bohr: np.ndarray, colours: np.ndarray, opacity: float) -> 
                  _rgba(colours, n1 * n2, opacity))
 
 
+def _icosphere(subdivisions: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Unit-sphere vertices and triangles: an icosahedron split ``subdivisions`` times."""
+    t = (1.0 + 5 ** 0.5) / 2.0
+    v = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+         (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    f = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2),
+         (10, 7, 6), (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11),
+         (6, 2, 10), (8, 6, 7), (9, 8, 1)]
+    vertices = [np.array(p, dtype=float) / np.linalg.norm(p) for p in v]
+    for _ in range(subdivisions):
+        cache, faces = {}, []
+
+        def middle(a, b):
+            key = (min(a, b), max(a, b))
+            if key not in cache:
+                p = vertices[a] + vertices[b]
+                vertices.append(p / np.linalg.norm(p))
+                cache[key] = len(vertices) - 1
+            return cache[key]
+
+        for a, b, c in f:
+            ab, bc, ca = middle(a, b), middle(b, c), middle(c, a)
+            faces += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        f = faces
+    return np.array(vertices), np.array(f, dtype=np.uint32)
+
+
+def sphere_item(centre_bohr, radius_bohr: float, rgb, opacity: float = 1.0, subdivisions: int = 2) -> RenderItem:
+    """A lit sphere (e.g. a hole or electron centroid marker)."""
+    unit, triangles = _icosphere(subdivisions)
+    vertices = np.asarray(centre_bohr, dtype=float) + radius_bohr * unit
+    return _item("surface", vertices, triangles, _rgba(rgb, len(vertices), opacity), unit)
+
+
+def arrow_item(start_bohr, end_bohr, radius_bohr: float, rgb, opacity: float = 1.0,
+               sides: int = 16) -> Optional[RenderItem]:
+    """A shaft (80 % of the length) and a cone (radius 2x) from ``start`` to ``end``; None for zero length."""
+    start, end = np.asarray(start_bohr, dtype=float), np.asarray(end_bohr, dtype=float)
+    axis = end - start
+    length = float(np.linalg.norm(axis))
+    if length < 1e-9:
+        return None
+    w = axis / length
+    helper = np.array([1.0, 0.0, 0.0]) if abs(w[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    u = np.cross(w, helper)
+    u /= np.linalg.norm(u)
+    v = np.cross(w, u)
+    angles = 2 * np.pi * np.arange(sides) / sides
+    ring = np.outer(np.cos(angles), u) + np.outer(np.sin(angles), v)       # (sides, 3) unit radial
+    neck = start + 0.8 * axis
+    vertices = np.vstack([start + radius_bohr * ring, neck + radius_bohr * ring,  # shaft
+                          neck + 2 * radius_bohr * ring, np.repeat(end[None], sides, axis=0)])  # cone
+    slope = 2 * radius_bohr / (0.2 * length)
+    cone_normal = ring + slope * w
+    cone_normal /= np.linalg.norm(cone_normal, axis=1)[:, None]
+    normals = np.vstack([ring, ring, cone_normal, cone_normal])
+    triangles = []
+    for k in range(sides):
+        n = (k + 1) % sides
+        triangles += [(k, n, sides + n), (k, sides + n, sides + k)]                        # shaft
+        triangles += [(2 * sides + k, 2 * sides + n, 3 * sides + k)]                       # cone
+    return _item("surface", vertices, np.array(triangles, dtype=np.uint32),
+                 _rgba(rgb, len(vertices), opacity), normals)
+
+
 def draw_order(items: Iterable[RenderItem]) -> List[RenderItem]:
     """Opaque items first, then translucent ones, each group in the given order."""
     items = list(items)

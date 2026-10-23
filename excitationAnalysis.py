@@ -711,6 +711,97 @@ def _file_key(path) -> Tuple[str, int, int]:
     return str(Path(path).resolve()), stat.st_mtime_ns, stat.st_size
 
 
+# ----------------------------------------------------------------------
+# Real-space functions on a uniform grid (display and cube files)
+# ----------------------------------------------------------------------
+FIELDS = ("hole", "electron", "Sr", "CDD", "transdens", "Chole", "Cele")
+SIGNED_FIELDS = frozenset({"CDD", "transdens"})
+FIELD_TITLES = {"hole": "hole density", "electron": "electron density", "Sr": "Sr function sqrt(hole x electron)",
+                "CDD": "charge density difference (electron - hole)", "transdens": "transition density",
+                "Chole": "C_hole function", "Cele": "C_ele function"}
+DEFAULT_SPACING_BOHR = 0.2
+DEFAULT_ISOVALUE = 0.002             # Multiwfn's default for hole, electron, Sr, CDD, C functions
+DEFAULT_ISOVALUES = {"transdens": 0.001}
+MAX_GRID_POINTS = 25_000_000
+SLAB_POINTS = 1_000_000
+CUBE_COMMENT = "Made by the gQTEA 3D Molecular Viewer (Excitation tab); a.u."
+
+
+def default_isovalue(name: str) -> float:
+    return DEFAULT_ISOVALUES.get(name, DEFAULT_ISOVALUE)
+
+
+def cube_filename(stem: str, state_number: int, name: str) -> str:
+    return f"{stem}_state{state_number}_{name}.cube"
+
+
+def check_grid_size(shape, spacing: float) -> None:
+    points = int(np.prod(shape))
+    if points > MAX_GRID_POINTS:
+        smallest = np.ceil(100.0 * spacing * (points / MAX_GRID_POINTS) ** (1.0 / 3.0)) / 100.0
+        raise ValueError(f"A grid at {spacing:g} bohr would have {points / 1e6:.1f} million points. "
+                         f"Use a grid spacing of at least {smallest:g} bohr.")
+
+
+def gaussian_function(points: np.ndarray, centre: np.ndarray, sigma: np.ndarray, integral: float) -> np.ndarray:
+    """Multiwfn's C_hole / C_ele: an anisotropic Gaussian at the centroid with the RMSDs as widths, normalised
+    to ``integral`` (exactly, rather than on the grid)."""
+    norm = integral / ((2.0 * np.pi) ** 1.5 * float(np.prod(sigma)))
+    return norm * np.exp(-0.5 * np.sum(((points - centre) / sigma) ** 2, axis=1))
+
+
+def field_volumes(results: "ExcitationResults", spacing: float = DEFAULT_SPACING_BOHR,
+                  isovalue: float = DEFAULT_ISOVALUE, progress: Optional[Callable[[float], None]] = None,
+                  use_numba: Optional[bool] = None) -> Dict[str, cf.CubeVolume]:
+    """All FIELDS on one grid, every value computed exactly (no interpolation).
+
+    The box is Multiwfn's (atoms +/- 1.7 r_vdW), grown until hole, electron and
+    |transition density| are below isovalue / 10 on every face. Hole and electron
+    are clipped at 0 as Multiwfn does before Sr and the CDD are formed.
+    """
+    import molecularSurface as ms
+    from help import AtomicData
+
+    if not (spacing > 0 and np.isfinite(spacing)):
+        raise ValueError(f"The grid spacing must be a positive number of bohr, not {spacing}.")
+    if not (isovalue > 0 and np.isfinite(isovalue)):
+        raise ValueError(f"The isovalue must be a positive number, not {isovalue}.")
+    wfn, dm, m = results.wavefunction, results.densities, results.moments
+    radii = np.array([AtomicData.vdw_radii.get(s, AtomicData.DEFAULT_VDW_RADIUS)
+                      for s in wfn.atom_symbols()]) / BOHR_RADIUS_ANGSTROM
+
+    def envelope(points):
+        hole, electron, transition = point_densities(wfn, dm, points, use_numba)
+        return np.maximum(np.maximum(np.abs(hole), np.abs(electron)), np.abs(transition))
+
+    origin, shape = ms.grid_box(wfn.coordinates, radii, envelope, isovalue, spacing)
+    check_grid_size(shape, spacing)
+    nx, ny, nz = shape
+    values = {name: np.empty((nx, ny, nz)) for name in FIELDS}
+    planes = max(1, SLAB_POINTS // (ny * nz))
+    for x0 in range(0, nx, planes):
+        x1 = min(nx, x0 + planes)
+        pts = ms.grid_points(origin + np.array([x0 * spacing, 0.0, 0.0]), spacing, (x1 - x0, ny, nz))
+        hole, electron, transition = point_densities(wfn, dm, pts, use_numba)
+        hole, electron = np.maximum(hole, 0.0), np.maximum(electron, 0.0)
+        slab = {"hole": hole, "electron": electron, "Sr": np.sqrt(hole * electron), "CDD": electron - hole,
+                "transdens": transition,
+                "Chole": gaussian_function(pts, m.hole_centroid, m.sigma_hole, m.hole_integral),
+                "Cele": gaussian_function(pts, m.electron_centroid, m.sigma_electron, m.electron_integral)}
+        for name in FIELDS:
+            values[name][x0:x1] = slab[name].reshape(x1 - x0, ny, nz)
+        if progress is not None:
+            try:
+                progress(x1 / nx)
+            except Exception:
+                pass
+    title = f"excited state {results.state.number}"
+    return {name: cf.CubeVolume(f"{FIELD_TITLES[name]} of {title}", CUBE_COMMENT, np.asarray(wfn.atomic_numbers),
+                                np.asarray(wfn.nuclear_charges, dtype=float), wfn.coordinates.copy(),
+                                np.asarray(origin, dtype=float).copy(), spacing * np.eye(3), values[name])
+            for name in FIELDS}
+
+
 class ExcitationAnalyser:
     """Reads an .fchk + excitation file pair (cached) and analyses one excited state.
 
@@ -848,6 +939,23 @@ class ExcitationAnalyser:
         return notes
 
     # --- outputs ------------------------------------------------------
+    @staticmethod
+    def write_cubes(results: ExcitationResults, output_dir: str, fields: Sequence[str],
+                    spacing: float = DEFAULT_SPACING_BOHR, isovalue: float = DEFAULT_ISOVALUE,
+                    progress: Optional[Callable[[float], None]] = None,
+                    use_numba: Optional[bool] = None) -> List[str]:
+        """One cube per field (hole, electron, Sr, CDD, transdens, Chole, Cele); returns the written paths."""
+        volumes = field_volumes(results, spacing, isovalue, progress, use_numba)
+        written = []
+        for name in fields:
+            path = Path(output_dir) / cube_filename(results.stem, results.state.number, name)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                written.append(cf.write_cube_volume(path, volumes[name]))
+            except OSError as exc:
+                raise ValueError(f"Could not write {path}: {exc}") from exc
+        return written
+
     @staticmethod
     def write_report(results: ExcitationResults, output_dir: str, written: Sequence[str] = ()) -> str:
         """<stem>_state<n>_excitation.txt in ``output_dir``; OSError becomes ValueError."""

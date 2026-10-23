@@ -100,3 +100,24 @@ class TestColourBar:
         layer.set_items([], colour_bar=bar)
         layer.clear()
         assert layer.colour_bar() is None and layer.items() == ()
+
+
+class TestMarkers:
+    def test_sphere_vertices_lie_on_the_radius_with_outward_normals(self):
+        centre = np.array([1.0, -2.0, 0.5])
+        item = cr.sphere_item(centre, 0.4, (1.0, 0.0, 0.0))
+        bohr = item.vertices.astype(float) / vd.BOHR_RADIUS_ANGSTROM
+        assert np.allclose(np.linalg.norm(bohr - centre, axis=1), 0.4, atol=1e-6)
+        assert np.allclose(item.normals, (bohr - centre) / 0.4, atol=1e-5)
+        assert item.kind == "surface" and item.indices.size % 3 == 0 and item.opaque
+
+    def test_arrow_spans_start_to_end(self):
+        start, end = np.array([0.0, 0.0, 0.0]), np.array([0.0, 0.0, 4.0])
+        item = cr.arrow_item(start, end, 0.1, (1.0, 0.5, 0.0))
+        bohr = item.vertices.astype(float) / vd.BOHR_RADIUS_ANGSTROM
+        assert abs(bohr[:, 2].min()) < 1e-6 and abs(bohr[:, 2].max() - 4.0) < 1e-6
+        assert np.abs(bohr[:, :2]).max() <= 0.2 + 1e-6          # cone radius 2 x 0.1
+        assert np.allclose(np.linalg.norm(item.normals, axis=1), 1.0, atol=1e-5)
+
+    def test_zero_length_arrow_is_none(self):
+        assert cr.arrow_item(np.ones(3), np.ones(3), 0.1, (1.0, 1.0, 1.0)) is None
