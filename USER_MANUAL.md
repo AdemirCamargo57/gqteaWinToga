@@ -1600,10 +1600,11 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-**Window layout.** The controls are arranged as a fixed header, nine tabs, and a status line:
+**Window layout.** The controls are arranged as a fixed header, ten tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels. The atom styles are Line, CPK (ball and stick), vdW (space-filling) and **Design style**, which draws the molecule as the Molecular Design Canvas does: equal flat discs in the canvas colours with a thin outline, single bond lines, the element symbol centred on each disc and the atom number beside it, in colours that stay readable on the current background. The *Atom numbers* and *Atomic symbols* switches are independent (either, both or neither) and are the same settings as the QTAIM tab's *Atom labels*.
+- **Box** tab: periodic box settings and playback performance options.
 - **Dynamics** tab: frame navigation, trajectory playback, and per-frame bond recomputation.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
 - **Design** tab: draw, import and pre-optimize a molecule (see [Molecular Design](#molecular-design)).
@@ -1611,7 +1612,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **ESP** tab: the electrostatic potential mapped on electron-density isosurfaces of a Gaussian `.fchk`, its extrema, and ESP/density cube export (see [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)).
 - **QTAIM** tab: Bader's topology analysis of a Gaussian `.fchk` density — critical points, their properties, bond and ring paths, a text report and a 2D plane map (see [QTAIM Topology Analysis](#qtaim-topology-analysis)).
 - **NTO** tab: natural transition orbitals of a CIS/TDA/TD excited state from a Gaussian `.fchk` and its output — pair weights, hole and particle isosurfaces, cube and NTO `.fchk` export — and the GaussView-style UV-Vis spectrum of all the excited states (see [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)).
-- **Box & Performance** tab: periodic box settings and playback performance options.
+- **Excitation** tab: electron excitation analysis of a CIS/TDA/TD state from the same two files — hole-electron indices, MO/atom/fragment contributions, interfragment charge transfer, the Δr and Λ indices and a classification of the excitation, with hole/electron isosurfaces, cubes, heat maps and a report (see [Electron Excitation Analysis (Excitation tab)](#electron-excitation-analysis-excitation-tab)).
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
 **Loading a trajectory.** After **Browse**, the file is read in the background: a spinner turns beside the status line, which shows the frames read so far and the fraction of the file, and the window stays responsive. **Browse** is unavailable until loading ends. A 351 MB, 15 000-frame trajectory of 430 atoms loads in about 3 s (about 7 s with the earlier line-by-line reader, which read identical frames). Reading follows the same rules as before: blank or non-numeric lines where a frame should start are skipped, atom lines may have extra columns after x, y and z, and a frame cut short by the end of the file, with a line of fewer than four fields or with a coordinate that is not a number ends the reading, keeping the frames before it. Line endings may be `\n` or `\r\n`.
@@ -1649,7 +1650,7 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - Switching the type clears the marks from the previous mode, so numbers revealed under **None** disappear when you start a measurement, and a half-finished selection disappears when you go back to **None**.
 - The **Result** field gives the fully labelled measurement, for example `Measurement: d(1,2) = 1.5000 Å`. On the 3D canvas only the number is drawn (`1.5000`, `120.307`), so the value stays readable against the structure. Distances are in Å, angles and dihedrals in degrees.
 
-##### Box & Performance tab
+##### Box tab
 
 - **Box a, b, c**: orthorhombic periodic box edge lengths in Å. Fill in all three, then press Enter.
 - **Box center**: where the displayed box is placed (described below).
@@ -1772,11 +1773,11 @@ Selecting further atoms keeps working without any clearing step:
 
 Because a click always writes into the field, it will overwrite part of an entry you typed by hand. If you are working from typed labels, click **Measure** before clicking anywhere in the 3D window.
 
-Selections stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Note that **Reduce overlays during playback** (Box & Performance tab) hides all atom labels while it is on, including the index and pick-order labels.
+Selections stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Note that **Reduce overlays during playback** (Box tab) hides all atom labels while it is on, including the index and pick-order labels.
 
 The rotation controls on the **Display** tab let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees, then either press Enter in one of the angle fields or click **Apply angles** to add those increments to the current molecular orientation. Click **Reset rotation** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
 
-When the periodic box is shown, it rotates with the molecular system. The **Box center** selector on the **Box & Performance** tab controls where the displayed orthorhombic box is placed:
+When the periodic box is shown, it rotates with the molecular system. The **Box center** selector on the **Box** tab controls where the displayed orthorhombic box is placed:
 
 - **Geometric center**: centers the box on the molecular system's geometric center.
 - **Bottom at z=0**: centers the box in the a-b plane while placing the bottom face of the box at `z = 0`.

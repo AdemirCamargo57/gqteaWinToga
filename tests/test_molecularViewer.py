@@ -1064,8 +1064,7 @@ def test_the_cube_tab_follows_design_and_keeps_the_other_tabs_in_order():
     import inspect
     source = inspect.getsource(MolecularViewerUI.layout_main_window)
     order = [source.index(f'("{name}"') for name in
-             ("Display", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "NTO", "Excitation",
-              "Box & Performance")]
+             ("Display", "Box", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "NTO", "Excitation")]
     assert order == sorted(order)
 
 
