@@ -33,6 +33,7 @@ import espIntegrals as ei
 import excitationData as ed
 import gaussianWavefunction as gw
 import hirshfeldCharges as hc
+from indexRanges import parse_solute_index_ranges
 
 HARTREE_TO_EV = 27.211386245988   # CODATA 2018
 BOHR_RADIUS_ANGSTROM = cf.BOHR_RADIUS_ANGSTROM
@@ -377,6 +378,179 @@ def grid_indices(wfn, dm: DensityMatrices, grid, use_numba: Optional[bool] = Non
         sums += [w @ np.minimum(h, e), w @ np.sqrt(h * e), w @ (h * h), w @ (e * e), w @ hole, w @ electron]
     return GridIndices(float(sums[0]), float(sums[1]), 100.0 * float(np.sqrt(sums[2])),
                        100.0 * float(np.sqrt(sums[3])), float(sums[4]), float(sums[5]))
+
+
+# ----------------------------------------------------------------------
+# Atom and fragment contributions, IFCT
+# ----------------------------------------------------------------------
+PARTITION_MULLIKEN, PARTITION_HIRSHFELD = "mulliken", "hirshfeld"
+PARTITIONS = (PARTITION_MULLIKEN, PARTITION_HIRSHFELD)
+
+
+@dataclass
+class AtomContributions:
+    """Fractions of hole and electron on each atom (manual Theory 2), normalised to 1 as Multiwfn does."""
+    method: str
+    hole: np.ndarray
+    electron: np.ndarray
+    negative: bool          # a raw (Mulliken) contribution was negative
+
+    @property
+    def overlap(self) -> np.ndarray:
+        """sqrt(hole x electron) where both are positive, else 0 (Multiwfn)."""
+        both = (self.hole > 0) & (self.electron > 0)
+        return np.where(both, np.sqrt(np.where(both, self.hole * self.electron, 0.0)), 0.0)
+
+    @property
+    def difference(self) -> np.ndarray:
+        """Electron minus hole: the change of the atom's electron population."""
+        return self.electron - self.hole
+
+
+def basis_atoms(wfn) -> np.ndarray:
+    """0-based atom of every fchk basis function."""
+    return np.repeat([s.atom for s in wfn.shells], [s.n_functions for s in wfn.shells])
+
+
+def _screened_gram(m: np.ndarray, kind: str, screen: float) -> np.ndarray:
+    """sum over coefficient pairs sharing an orbital, keeping only |w_i w_j| >= screen (Multiwfn's 0.001)."""
+    if kind == "ele":
+        m = m.T  # electron: pairs share the occupied orbital, i.e. a row of X
+    out = np.zeros((m.shape[0], m.shape[0]))
+    for column in m.T:
+        nz = np.flatnonzero(column)
+        if nz.size == 0:
+            continue
+        outer = np.outer(column[nz], column[nz])
+        out[np.ix_(nz, nz)] += np.where(np.abs(outer) >= screen, outer, 0.0)
+    return out
+
+
+def _normalised(raw_hole: np.ndarray, raw_electron: np.ndarray, method: str) -> AtomContributions:
+    negative = bool((raw_hole < 0).any() or (raw_electron < 0).any())
+    return AtomContributions(method, raw_hole / raw_hole.sum(), raw_electron / raw_electron.sum(), negative)
+
+
+def mulliken_contributions(dm: DensityMatrices, overlap: np.ndarray, wfn, pair_screen: float = 0.0,
+                           coeffs: Optional[Dict[str, SpinCoefficients]] = None,
+                           factor: float = 2.0) -> AtomContributions:
+    """Mulliken-like partition: Theta_A = sum_{mu on A} (P S)_mu,mu, then renormalised.
+
+    ``pair_screen`` > 0 rebuilds P from ``coeffs`` dropping coefficient pairs with
+    |w_i w_j| below it, as Multiwfn's atmcontri_holeele_Mulliken (0.001) does.
+    """
+    hole, electron = dm.hole, dm.electron
+    if pair_screen > 0.0:
+        if coeffs is None:
+            raise ValueError("pair_screen needs the coefficient matrices.")
+        n = wfn.n_basis
+        hole, electron = np.zeros((n, n)), np.zeros((n, n))
+        for s in coeffs.values():
+            c = gw.mo_coefficients(wfn, s.spin)
+            co, cv = c[:, :s.n_occ], c[:, s.n_occ:]
+            hole += factor * co @ (_screened_gram(s.x, "hole", pair_screen)
+                                   - _screened_gram(s.y, "hole", pair_screen)) @ co.T
+            electron += factor * cv @ (_screened_gram(s.x, "ele", pair_screen)
+                                       - _screened_gram(s.y, "ele", pair_screen)) @ cv.T
+    atoms = basis_atoms(wfn)
+    raw_hole = np.bincount(atoms, weights=np.einsum("ij,ji->i", hole, overlap), minlength=wfn.n_atoms)
+    raw_electron = np.bincount(atoms, weights=np.einsum("ij,ji->i", electron, overlap), minlength=wfn.n_atoms)
+    return _normalised(raw_hole, raw_electron, PARTITION_MULLIKEN)
+
+
+def hirshfeld_contributions(wfn, dm: DensityMatrices, grid, use_numba: Optional[bool] = None) -> AtomContributions:
+    """Hirshfeld partition: Theta_A = integral of w_A(r) rho(r), then renormalised. H-Ar, no ECP."""
+    hc.check_hirshfeld_support(wfn)
+    symbols = wfn.atom_symbols()
+    raw = np.zeros((2, wfn.n_atoms))
+    for k in range(0, len(grid.points), hc.POINT_CHUNK):
+        pts = grid.points[k:k + hc.POINT_CHUNK]
+        share = hc.hirshfeld_shares(pts, wfn.coordinates, symbols)
+        hole, electron, _ = point_densities(wfn, dm, pts, use_numba)
+        w = grid.weights[k:k + hc.POINT_CHUNK]
+        raw[0] += (w * hole) @ share
+        raw[1] += (w * electron) @ share
+    return _normalised(raw[0], raw[1], PARTITION_HIRSHFELD)
+
+
+@dataclass(frozen=True)
+class Fragment:
+    name: str
+    atoms: Tuple[int, ...]   # 0-based
+    automatic: bool = False  # the 'Rest' fragment added for atoms left out
+
+
+def parse_fragments(text: str, n_atoms: int) -> Tuple[List[Fragment], List[str]]:
+    """'1-10; 11-13' -> fragments (';' separates them, ranges as allBondAnalysis); atoms left out form 'Rest'."""
+    text = (text or "").strip()
+    if not text:
+        return [], []
+    fragments, owner = [], {}
+    for n, part in enumerate([p for p in text.split(";") if p.strip()], 1):
+        atoms = parse_solute_index_ranges(part)
+        for a in atoms:
+            if a > n_atoms:
+                raise ValueError(f"Fragment {n}: atom {a} does not exist (the molecule has {n_atoms} atoms).")
+            if a in owner:
+                raise ValueError(f"Atom {a} is in fragments {owner[a]} and {n}.")
+            owner[a] = n
+        fragments.append(Fragment(f"Fragment {n}", tuple(a - 1 for a in atoms)))
+    notes = []
+    rest = tuple(a for a in range(n_atoms) if a + 1 not in owner)
+    if rest:
+        fragments.append(Fragment("Rest", rest, automatic=True))
+        notes.append(f"Atoms not in any fragment ({len(rest)}) form the fragment 'Rest'.")
+    return fragments, notes
+
+
+@dataclass
+class IFCTResult:
+    """Interfragment charge transfer (Multiwfn manual 3.21.8)."""
+    fragments: List[Fragment]
+    hole: np.ndarray                # fragment fractions, negatives set to 0
+    electron: np.ndarray
+    matrix: np.ndarray              # Q[R, S] = hole_R electron_S: electron moved from R to S
+    clamped: bool                   # a negative fragment contribution was set to 0
+
+    @property
+    def population_change(self) -> np.ndarray:
+        """Delta p_R = sum_S Q[S, R] - sum_S Q[R, S]."""
+        return self.matrix.sum(axis=0) - self.matrix.sum(axis=1)
+
+    @property
+    def intrinsic_ct(self) -> float:
+        return 100.0 * float(self.matrix.sum() - np.trace(self.matrix))
+
+    @property
+    def intrinsic_le(self) -> float:
+        return 100.0 * float(np.trace(self.matrix))
+
+    @property
+    def apparent_ct(self) -> Optional[float]:
+        """|Delta p| of either fragment, two fragments only."""
+        return 100.0 * abs(float(self.population_change[0])) if len(self.fragments) == 2 else None
+
+    def net_transfers(self) -> List[Tuple[int, int, float]]:
+        """(R, S, Q[R,S] - Q[S,R]) for R < S, largest net transfer first (0-based fragment indices)."""
+        out = []
+        for r in range(len(self.fragments)):
+            for s in range(r + 1, len(self.fragments)):
+                net = float(self.matrix[r, s] - self.matrix[s, r])
+                out.append((r, s, net) if net >= 0 else (s, r, -net))
+        return sorted(out, key=lambda item: -item[2])
+
+
+def ifct(atoms: AtomContributions, fragments: List[Fragment]) -> IFCTResult:
+    hole = np.array([atoms.hole[list(f.atoms)].sum() for f in fragments])
+    electron = np.array([atoms.electron[list(f.atoms)].sum() for f in fragments])
+    clamped = bool((hole < 0).any() or (electron < 0).any())
+    hole, electron = np.maximum(hole, 0.0), np.maximum(electron, 0.0)
+    return IFCTResult(list(fragments), hole, electron, np.outer(hole, electron), clamped)
+
+
+def atom_ct_matrix(atoms: AtomContributions) -> np.ndarray:
+    """Atom-atom charge-transfer matrix hole_A electron_B, negatives set to 0 (Multiwfn's atmCTmat.txt)."""
+    return np.maximum(np.outer(atoms.hole, atoms.electron), 0.0)
 
 
 def _mo_centroids(wfn, moments, spin: str, mos: List[int]) -> Dict[int, np.ndarray]:

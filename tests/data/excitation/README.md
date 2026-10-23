@@ -32,6 +32,15 @@ Regenerate (neither is run by the suite):
   automatic 15 x 170 points per atom differ from the 75 x 434 result by up to ~6e-3; on the
   same 75 x 434 size the two programs agree to <= 3.5e-4.
 
+* **Hirshfeld contributions**: Multiwfn integrates w_A rho on atom A's own single-centre grid,
+  dropping points beyond `radcut` = 10 bohr; this program uses the Becke molecular grid. Both give
+  the same shares to Multiwfn's printed 2 decimals (%) for D-pi-A S1, 4-nitroaniline S2 and H2CO
+  CIS S1 (the test reproduces Multiwfn's scheme). For the diffuse electron of N-phenylpyrrole S4
+  the shares still differ by up to 0.052 % with Multiwfn's own scheme: far from the molecule the
+  stockholder weight is a ratio of free-atom density tails, and Multiwfn's built-in densities and
+  `proatomDensities` (UB3LYP/cc-pVQZ, log-interpolated) need not have the same tails. Not resolved
+  further (it would need Multiwfn's internal density tables); the test allows 0.06 % for that case only.
+
 ## Tolerances
 
 Grid quantities carry Multiwfn's grid error. The largest difference between each
