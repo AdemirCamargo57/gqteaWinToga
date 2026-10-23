@@ -106,26 +106,36 @@ def molecular_grid(coordinates: np.ndarray, symbols: Sequence[str],
     return MolecularGrid(np.vstack(points), np.concatenate(weights))
 
 
-def hirshfeld_populations(wfn: gw.FchkWavefunction, grid: Optional[MolecularGrid] = None,
-                          normalize: bool = True, use_numba: Optional[bool] = None) -> np.ndarray:
-    """Electrons assigned to each atom. ValueError for elements without a free-atom density."""
-    symbols = wfn.atom_symbols()
-    missing = unsupported_elements(symbols)
+def check_hirshfeld_support(wfn: gw.FchkWavefunction) -> None:
+    """ValueError for elements without a free-atom density or for an ECP file."""
+    missing = unsupported_elements(wfn.atom_symbols())
     if missing:
         raise ValueError(f"No free-atom density for {', '.join(missing)}: Hirshfeld charges are "
                          f"available for {supported_elements()[0]}-{supported_elements()[-1]} only.")
     if not np.allclose(wfn.nuclear_charges, wfn.atomic_numbers):
         raise ValueError("The file uses effective core potentials: the density lacks the core "
                          "electrons, so Hirshfeld charges against all-electron free atoms would be wrong.")
+
+
+def hirshfeld_shares(points: np.ndarray, coordinates: np.ndarray, symbols: Sequence[str]) -> np.ndarray:
+    """(P, n_atoms) stockholder weights w_A(r) = rho_A^0 / sum_B rho_B^0 (0 where every pro-atom vanishes)."""
+    d = np.linalg.norm(points[:, None, :] - coordinates[None, :, :], axis=2)
+    pro = np.column_stack([proatom_density(s, d[:, a]) for a, s in enumerate(symbols)])
+    total = pro.sum(axis=1)
+    return np.where(total[:, None] > 0, pro / np.where(total > 0, total, 1.0)[:, None], 0.0)
+
+
+def hirshfeld_populations(wfn: gw.FchkWavefunction, grid: Optional[MolecularGrid] = None,
+                          normalize: bool = True, use_numba: Optional[bool] = None) -> np.ndarray:
+    """Electrons assigned to each atom. ValueError for elements without a free-atom density."""
+    check_hirshfeld_support(wfn)
+    symbols = wfn.atom_symbols()
     if grid is None:
         grid = molecular_grid(wfn.coordinates, symbols, use_numba=use_numba)
     populations = np.zeros(len(symbols))
     for k in range(0, len(grid.points), POINT_CHUNK):
         pts = grid.points[k:k + POINT_CHUNK]
-        d = np.linalg.norm(pts[:, None, :] - wfn.coordinates[None, :, :], axis=2)
-        pro = np.column_stack([proatom_density(s, d[:, a]) for a, s in enumerate(symbols)])
-        total = pro.sum(axis=1)
-        share = np.where(total[:, None] > 0, pro / np.where(total > 0, total, 1.0)[:, None], 0.0)
+        share = hirshfeld_shares(pts, wfn.coordinates, symbols)
         rho = gw.electron_density(wfn, pts, use_numba=use_numba)
         populations += (grid.weights[k:k + POINT_CHUNK] * rho) @ share
     if normalize and populations.sum() > 0:
