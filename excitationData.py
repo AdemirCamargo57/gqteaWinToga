@@ -20,9 +20,9 @@ convention: sum of squares 0.5, not 1.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -37,6 +37,8 @@ GAUSSIAN_STATE = re.compile(r"^\s*Excited State\s+(\d+):\s+(\S+)\s+([-+]?\d+\.\d
 TEXT_STATE = re.compile(r"^\s*Excited State\s+(\d+)\s+(-?\d+)\s+([-+]?\d*\.?\d+(?:[EeDd][-+]?\d+)?)\s*$")
 # "10 ->103  0.00017": Gaussian drops the space before a three-digit index.
 CONFIGURATION = re.compile(r"^\s*(\d+)([AB]?)\s*(->|<-)\s*(\d+)([AB]?)\s+([-+]?\d*\.\d+(?:[EeDd][-+]?\d+)?)\s*$")
+DIPOLE_TABLE = "Ground to excited state transition electric dipole moments (Au):"
+DIPOLE_ROW = re.compile(r"^\s*(\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)")
 NBASIS = re.compile(r"NBasis=\s*(\d+)")
 NBSUSE = re.compile(r"NBsUse=\s*(\d+)")
 ELECTRONS = re.compile(r"(\d+)\s+alpha electrons\s+(\d+)\s+beta electrons")
@@ -93,6 +95,7 @@ class ExcitationFile:
     n_beta: Optional[int] = None
     atomic_numbers: Optional[np.ndarray] = None
     coordinates_angstrom: Optional[np.ndarray] = None
+    transition_dipoles: Dict[int, Tuple[float, float, float]] = field(default_factory=dict)  # a.u., Gaussian only
 
     def state(self, number: int) -> ExcitedState:
         for s in self.states:
@@ -192,6 +195,19 @@ def _last_orientation(lines: List[str]):
     return None, None
 
 
+def _last_dipole_table(lines: List[str]) -> Dict[int, Tuple[float, float, float]]:
+    """{state: (X, Y, Z)} of the last ground-to-excited transition electric dipole table (a.u.)."""
+    starts = [k for k, line in enumerate(lines) if DIPOLE_TABLE in line]
+    table = {}
+    if starts:
+        for line in lines[starts[-1] + 2:]:  # title, column headings
+            match = DIPOLE_ROW.match(line)
+            if not match:
+                break
+            table[int(match.group(1))] = tuple(float(v) for v in match.groups()[1:])
+    return table
+
+
 def _last_int(pattern, text: str, group: int = 1) -> Optional[int]:
     found = pattern.findall(text)
     if not found:
@@ -226,6 +242,7 @@ def parse_excitation_text(text: str, name: str, path: str = "") -> ExcitationFil
         if electrons:
             data.n_alpha, data.n_beta = (int(v) for v in electrons[-1])
         data.atomic_numbers, data.coordinates_angstrom = _last_orientation(lines)
+        data.transition_dipoles = _last_dipole_table(lines)
     return data
 
 
@@ -247,8 +264,8 @@ def check_against_wavefunction(data: ExcitationFile, wfn) -> List[str]:
     if wfn.alpha_mo is None:
         raise ValueError(f"{fchk} has no MO coefficients; use the .fchk of the CIS/TD job.")
     if wfn.method.upper().startswith("RO"):
-        raise ValueError(f"{fchk} is a restricted open-shell ({wfn.method}) reference; NTOs are "
-                         "supported for restricted closed-shell and unrestricted references only.")
+        raise ValueError(f"{fchk} is a restricted open-shell ({wfn.method}) reference; excited-state analyses "
+                         "support restricted closed-shell and unrestricted references only.")
     if data.unrestricted != wfn.is_unrestricted:
         kinds = ("unrestricted (A/B labels)", "restricted") if data.unrestricted else ("restricted", "unrestricted")
         raise ValueError(f"{name} is {kinds[0]} but {fchk} is {kinds[1]}; use files of the same job.")

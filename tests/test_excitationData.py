@@ -221,6 +221,41 @@ def test_sibling_excitation_file(tmp_path):
     assert ed.sibling_excitation_file(fchk) == tmp_path / "mol.log"
 
 
+class TestTransitionDipoles:
+    HARTREE_TO_EV = 27.211386245988
+
+    def test_read_from_the_table(self):
+        data = ed.read_excitation_file(fixture("uracil")[1])
+        assert data.transition_dipoles == {1: (0.0, 0.0, 0.0307), 2: (0.9147, 0.3931, 0.0), 3: (0.0, 0.0, -0.0025)}
+
+    @pytest.mark.parametrize("name", list(FIXTURES))
+    def test_dipoles_reproduce_the_printed_oscillator_strengths(self, name):
+        data = ed.read_excitation_file(fixture(name)[1])
+        assert set(data.transition_dipoles) == {s.number for s in data.states}
+        for s in data.states:
+            mu = np.array(data.transition_dipoles[s.number])
+            f = 2.0 / 3.0 * s.energy_ev / self.HARTREE_TO_EV * (mu @ mu)
+            assert abs(f - s.oscillator) < 2e-4, (name, s.number)
+
+    def test_the_last_table_is_read(self):
+        table = (" Ground to excited state transition electric dipole moments (Au):\n"
+                 "       state          X           Y           Z        Dip. S.      Osc.\n"
+                 "         1         {x:.4f}      0.0000      0.0000      0.0000      0.0000\n")
+        text = table.format(x=1.0) + table.format(x=2.0) + gaussian_block([5.0])
+        assert ed.parse_excitation_text(text, "x.log").transition_dipoles == {1: (2.0, 0.0, 0.0)}
+
+    def test_plain_text_has_none(self):
+        assert ed.parse_excitation_text(RESTRICTED_TEXT, "x.txt").transition_dipoles == {}
+
+    def test_restricted_open_shell_message_is_not_nto_specific(self):
+        fchk, log = fixture("h2co_cis")
+        wfn = gw.read_fchk(fchk)
+        wfn.method = "ROB3LYP"
+        with pytest.raises(ValueError) as error:
+            ed.check_against_wavefunction(ed.read_excitation_file(log), wfn)
+        assert "NTO" not in str(error.value)
+
+
 def test_does_not_import_toga():
     code = "import sys, excitationData; print('toga' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)
