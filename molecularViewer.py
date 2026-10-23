@@ -2368,15 +2368,15 @@ class MolecularViewerUI(MolecularViewer):
         tabs = toga.OptionContainer(
             content=[
                 ("Display", self._tab_page(self._build_display_tab())),
+                ("Box", self._tab_page(self._build_box_performance_tab())),
                 ("Dynamics", self._tab_page(self._build_dynamics_tab())),
                 ("Measure", self._tab_page(self._build_measure_tab())),
                 ("Design", self._tab_page(self._build_design_tab())),
                 ("Cube", self._tab_page(self._build_cube_tab())),
                 ("ESP", self._tab_page(self._build_esp_tab())),
                 ("QTAIM", self._tab_page(self._build_qtaim_tab())),
-                ("NTO", self._tab_page(self._build_nto_tab())),
+                ("NTO", self._tab_page(self._build_nto_tab())),         
                 ("Excitation", self._tab_page(self._build_excitation_tab())),
-                ("Box & Performance", self._tab_page(self._build_box_performance_tab())),
             ],
             style=Pack(flex=1),
         )
