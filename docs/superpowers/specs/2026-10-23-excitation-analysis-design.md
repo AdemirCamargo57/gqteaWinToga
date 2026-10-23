@@ -188,7 +188,10 @@ results kept when writing the report fails. Sections:
    `<stem>.log`/`.out`), Excitation file, Output folder, **Load**.
 2. **Excited state and options** - state Selection, Partition (`Mulliken-like`,
    `Hirshfeld`), Fragments (TextInput, hint), Include hydrogens (switch, atom
-   table/heat map), Exact Coulomb (switch, off), **Run**, **Clear**, status,
+   table/heat map), exact Coulomb as two mutually exclusive checkboxes *fast*
+   and *precise* (added 2026-10-23 at the user's request; ticking one disables
+   the other, neither = off; fast = 40 × 110 grid + skipping points with
+   < 1e-6 of the hole, ~10× faster, ≤ 1.2e-4 relative), **Run**, **Clear**, status,
    progress bar.
 3. **Results** - classification label (bold), summary line, descriptor
    `toga.Table` (Quantity, Value, Unit), fragment `toga.Table` (Fragment, Hole %,

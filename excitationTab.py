@@ -123,8 +123,13 @@ class ExcitationTabController:
                                                   style=Pack(flex=1))
             self.hydrogens_switch = toga.Switch("Include hydrogens in atom tables and heat maps", value=False,
                                                 on_change=self.on_hydrogens_change, style=Pack(margin=(4, 0, 4, 0)))
-            self.exact_coulomb_switch = toga.Switch("Exact Coulomb attraction (slower)", value=False,
-                                                    style=Pack(margin=(4, 0, 4, 0)))
+            self.fast_coulomb_switch = toga.Switch("Exact Coulomb attraction - fast (about 10x faster, ~1e-4 "
+                                                   "relative error)", value=False,
+                                                   on_change=self.on_coulomb_mode_change,
+                                                   style=Pack(margin=(4, 0, 2, 0)))
+            self.precise_coulomb_switch = toga.Switch("Exact Coulomb attraction - precise (slower, full grid)",
+                                                      value=False, on_change=self.on_coulomb_mode_change,
+                                                      style=Pack(margin=(2, 0, 4, 0)))
             self.run_button = toga.Button("Run", on_press=self.workflow, style=Pack(width=110, margin=5))
             self.clear_button = toga.Button("Clear", on_press=self.clear_output, style=Pack(width=110, margin=5))
             self.status_label = toga.Label("Ready.", style=Pack(margin=6, flex=1))
@@ -191,7 +196,10 @@ class ExcitationTabController:
             self._row(self._label("Fragments (IFCT):"), self.fragments_input),
             self._hint("1-based atoms, ';' between fragments; atoms left out form the fragment 'Rest'."),
             self.hydrogens_switch,
-            self.exact_coulomb_switch,
+            self.fast_coulomb_switch,
+            self.precise_coulomb_switch,
+            self._hint("Tick one to also compute the Coulomb attraction of the hole and electron densities "
+                       "(the C-function value is always given)."),
             self._row(self.run_button, self.clear_button),
             self.status_label,
             self.progress_bar,
@@ -314,7 +322,20 @@ class ExcitationTabController:
         fragments = (self.fragments_input.value or "").strip()
         xa.parse_fragments(fragments, self.loaded[0].n_atoms)  # report a bad definition before running
         return {"fchk_path": fchk, "excitation_path": excitation, "state_number": number, "partition": partition,
-                "fragments_text": fragments, "exact_coulomb": bool(self.exact_coulomb_switch.value)}
+                "fragments_text": fragments, "coulomb_mode": self.coulomb_mode()}
+
+    def coulomb_mode(self) -> str:
+        """The exact-Coulomb mode chosen with the two mutually exclusive checkboxes."""
+        if self.fast_coulomb_switch.value:
+            return xa.COULOMB_FAST
+        if self.precise_coulomb_switch.value:
+            return xa.COULOMB_PRECISE
+        return xa.COULOMB_OFF
+
+    def on_coulomb_mode_change(self, widget, **kwargs):
+        """Ticking one Coulomb checkbox disables the other; unticking it enables the other again."""
+        other = self.precise_coulomb_switch if widget is self.fast_coulomb_switch else self.fast_coulomb_switch
+        other.enabled = not bool(widget.value)
 
     def _collect_display_inputs(self) -> Dict[str, object]:
         """The grid parameters of excitationAnalysis.field_volumes; isovalue None = each field's default."""
@@ -465,7 +486,7 @@ class ExcitationTabController:
             ("Coulomb attraction (C functions)", f"{r.coulomb.gaussian * ev:.3f}", "eV"),
         ]
         if r.coulomb.exact is not None:
-            rows.append(("Coulomb attraction (exact)", f"{r.coulomb.exact * ev:.3f}", "eV"))
+            rows.append((f"Coulomb attraction (exact, {r.coulomb.mode})", f"{r.coulomb.exact * ev:.3f}", "eV"))
         if r.has_diffuse:
             rows.append(("Electron on diffuse functions", f"{100 * r.diffuse_electron:.1f}", "%"))
         rows.append(("Integral of hole / electron", f"{m.hole_integral:.5f} / {m.electron_integral:.5f}", ""))

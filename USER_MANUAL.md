@@ -3045,8 +3045,11 @@ restricted vs unrestricted) exactly as in the NTO tab.
    (*Mulliken-like*, fast, or *Hirshfeld*, robust with diffuse functions);
    **Fragments** (e.g. `11-13; 1-10; 14-16`: 1-based atoms and ranges, `;`
    between fragments, atoms left out form the fragment *Rest*); *Include
-   hydrogens* in the atom table and heat maps; *Exact Coulomb attraction*
-   (slower); **Run**, **Clear**, status line and progress bar.
+   hydrogens* in the atom table and heat maps; two checkboxes for the exact
+   hole–electron Coulomb attraction, *fast* and *precise* (only one at a
+   time: ticking one disables the other, unticking it enables the other
+   again; neither = not computed); **Run**, **Clear**, status line and
+   progress bar.
 3. **Results** — the classification (bold), a one-line summary, the descriptor
    table (quantity, value, unit) and the atom or fragment table (hole %,
    electron %, overlap %, Δ %, and the intrinsic CT/LE percentages with
@@ -3079,8 +3082,12 @@ restricted vs unrestricted) exactly as in the NTO tab.
    diffuse functions (`+`, `aug-`), in which case choose *Hirshfeld*. To
    quantify charge transfer between groups, type fragments: e.g. donor, bridge
    and acceptor.
-4. **Run.** The state is analysed in a few seconds (more with *Exact Coulomb*);
-   the report is written automatically.
+4. **Run.** The state is analysed in a few seconds; the report is written
+   automatically. The exact Coulomb attraction adds the most time: tick
+   *fast* (about 10× faster than *precise*, relative error about 10⁻⁴ — e.g.
+   4-nitroaniline S2: 7.3 s instead of 76.6 s) unless you need the last
+   digits, then *precise*. The cost grows roughly with the cube of the
+   molecule's size.
 5. **Read the classification.** It names the rule that matched and lists the
    evidence (each value with its threshold and source), the independent Δr/Λ
    checks and a confidence. *Intermediate / undetermined* is a legitimate
@@ -3145,6 +3152,7 @@ Multiwfn 2026.7.15 run on a fine grid:
 | Mulliken-like atom contributions and IFCT | to the printed digits (0.01 %, 10⁻⁵ e) with Multiwfn's screening of tiny coefficient products |
 | Hirshfeld contributions | ≤ 0.01 % (one diffuse electron: 0.05 %, a difference in free-atom density tails) |
 | Coulomb attraction of C_hole and C_ele | ≤ 2 % (Multiwfn integrates it on a coarse grid) |
+| exact Coulomb attraction, *fast* vs *precise* (no Multiwfn counterpart) | ≤ 1.2 × 10⁻⁴ relative, about 10× faster |
 | transition dipole and *f* | within 1 % of the Gaussian log (limited by its 5-decimal coefficients); D-pi-A S2: *f* 0.6359 vs 0.6355 printed |
 
 Two things the comparison revealed: Multiwfn's default grid box (atoms ± 6 bohr)
@@ -6255,7 +6263,19 @@ built from the centroids and RMSDs. Both are given:
   dimensional integral.
 - **Exact** (option): the potential of $\rho^{\text{ele}}$ is evaluated
   analytically (as in the ESP tool) at the Becke grid points and integrated
-  against $\rho^{\text{hole}}$.
+  against $\rho^{\text{hole}}$. Each potential value is a sum over all pairs of
+  primitive Gaussians, so the cost is (grid points) × (primitive pairs),
+  roughly the cube of the molecule's size. Two modes:
+  - *precise*: the full 75 × 434 grid per atom;
+  - *fast*: a 40 × 110 grid per atom, and the points whose
+    $\lvert w\,\rho^{\text{hole}}\rvert$ together carry less than 10⁻⁶ of the
+    total are skipped before any potential is computed. Against *precise*:
+    about 10× faster, relative error ≤ 1.2 × 10⁻⁴ on the CIS, TD and diffuse
+    (Rydberg) test states (4-nitroaniline S2: 5.42770 vs 5.42706 eV).
+
+  Both differ from the C-function value by a few percent (4-nitroaniline S2:
+  5.43 eV exact, 5.70 eV from the C functions), because the C functions replace
+  the detailed densities by smooth Gaussians.
 
 ### 9. Classification
 

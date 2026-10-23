@@ -380,11 +380,25 @@ def grid_indices(wfn, dm: DensityMatrices, grid, use_numba: Optional[bool] = Non
 # ----------------------------------------------------------------------
 # Hole-electron Coulomb attraction
 # ----------------------------------------------------------------------
+COULOMB_OFF, COULOMB_FAST, COULOMB_PRECISE = "off", "fast", "precise"
+COULOMB_MODES = (COULOMB_OFF, COULOMB_FAST, COULOMB_PRECISE)
+# Fast mode: a coarser Becke grid (40 radial x 110 Lebedev points per atom instead of 75 x 434) and the
+# grid points whose |w rho_hole| together carry less than FAST_COULOMB_SCREEN of the total are skipped.
+# Measured against the precise mode: ~10x faster (4-nitroaniline 76.6 -> 7.3 s), relative error
+# <= 1.2e-4 on the CIS, TD and diffuse (Rydberg) fixtures.
+FAST_COULOMB_GRID = (40, 17)   # (radial points, Lebedev order 17 = 110 points)
+FAST_COULOMB_SCREEN = 1e-6
+COULOMB_MODE_TEXT = {COULOMB_FAST: "fast mode: Becke grid 40 x 110 points per atom, points carrying < 1e-6 of "
+                                   "the hole skipped; relative error ~1e-4",
+                     COULOMB_PRECISE: "precise mode: Becke grid 75 x 434 points per atom, every point"}
+
+
 @dataclass
 class CoulombEnergies:
     """Coulomb attraction between hole and electron (Hartree, given as a positive magnitude)."""
     gaussian: float              # between C_hole and C_ele, as Multiwfn's option 18 computes it
     exact: Optional[float]       # between rho_hole and rho_ele, the manual's definition (optional)
+    mode: str = COULOMB_OFF      # how ``exact`` was evaluated (COULOMB_FAST / COULOMB_PRECISE)
 
 
 def coulomb_gaussian(m: MomentIndices) -> float:
@@ -416,22 +430,44 @@ def _electronic_potential(batches, points: np.ndarray, use_numba: Optional[bool]
     return ei.electronic_potential(batches, points)
 
 
-def coulomb_exact(wfn, dm: DensityMatrices, grid, progress=None, use_numba: Optional[bool] = None) -> float:
+def coulomb_exact(wfn, dm: DensityMatrices, grid, progress=None, use_numba: Optional[bool] = None,
+                  screen: float = 0.0) -> float:
     """int int rho_hole(r1) rho_ele(r2) / |r1 - r2|: the electron's potential (analytic, espIntegrals) at
-    the Becke grid points, integrated against the hole density."""
+    the Becke grid points, integrated against the hole density.
+
+    The potential is the expensive part (every point costs a sum over all primitive pairs). With
+    ``screen`` > 0 the points whose |w rho_hole| together carry less than that fraction of the total
+    are skipped before any potential is evaluated.
+    """
+    points, weights = grid.points, grid.weights
+    hole = np.concatenate([point_densities(wfn, dm, points[k:k + hc.POINT_CHUNK], use_numba)[0]
+                           for k in range(0, len(points), hc.POINT_CHUNK)])
+    weighted = weights * hole
+    if screen > 0.0:
+        size = np.abs(weighted)
+        order = np.argsort(size)          # smallest first
+        dropped = np.cumsum(size[order]) <= screen * size.sum()
+        keep = np.sort(order[~dropped])
+        points, weighted = points[keep], weighted[keep]
     batches = ei.build_hermite_batches(wfn, density=dm.electron)
-    total, n = 0.0, len(grid.points)
+    total, n = 0.0, len(points)
     chunk = 5000
     for k in range(0, n, chunk):
-        pts = grid.points[k:k + chunk]
-        hole, _, _ = point_densities(wfn, dm, pts, use_numba)
-        total += float((grid.weights[k:k + chunk] * hole) @ _electronic_potential(batches, pts, use_numba))
+        total += float(weighted[k:k + chunk] @ _electronic_potential(batches, points[k:k + chunk], use_numba))
         if progress is not None:
             try:
                 progress(min(1.0, (k + chunk) / n))
             except Exception:
                 pass  # reporting must never abort the analysis
     return total
+
+
+def coulomb_fast(wfn, dm: DensityMatrices, progress=None, use_numba: Optional[bool] = None) -> float:
+    """The exact Coulomb attraction on a coarser grid with negligible points skipped (fast mode)."""
+    n_radial, lebedev_order = FAST_COULOMB_GRID
+    grid = hc.molecular_grid(wfn.coordinates, wfn.atom_symbols(), n_radial=n_radial, lebedev_order=lebedev_order,
+                             use_numba=use_numba)
+    return coulomb_exact(wfn, dm, grid, progress, use_numba, screen=FAST_COULOMB_SCREEN)
 
 
 # ----------------------------------------------------------------------
@@ -893,7 +929,7 @@ class ExcitationAnalyser:
         return self._geometry[1], self._geometry[2]
 
     def run(self, fchk_path, excitation_path, state_number: int, partition: str = "mulliken",
-            fragments_text: str = "", exact_coulomb: bool = False,
+            fragments_text: str = "", coulomb_mode: str = COULOMB_OFF,
             progress: Optional[Callable[[float, str], None]] = None) -> ExcitationResults:
         import excitationClassification as xc
 
@@ -908,6 +944,8 @@ class ExcitationAnalyser:
 
         if partition not in PARTITIONS:
             raise ValueError(f"The partition must be one of {PARTITIONS}, not '{partition}'.")
+        if coulomb_mode not in COULOMB_MODES:
+            raise ValueError(f"The Coulomb mode must be one of {COULOMB_MODES}, not '{coulomb_mode}'.")
         report(0.02, "Reading the files...")
         wfn, data, load_notes = self.load(fchk_path, excitation_path)
         state = data.state(int(state_number))
@@ -942,10 +980,13 @@ class ExcitationAnalyser:
         diffuse = diffuse_electron_fraction(dm, moments["s"], xc.diffuse_function_mask(wfn)) if has_diffuse else 0.0
         report(0.78, "Coulomb attraction...")
         exact = None
-        if exact_coulomb:
-            exact = coulomb_exact(wfn, dm, grid, lambda f: report(0.78 + 0.2 * f, "Exact Coulomb attraction..."),
-                                  self.use_numba)
-        coulomb = CoulombEnergies(coulomb_gaussian(m), exact)
+        if coulomb_mode == COULOMB_PRECISE:
+            exact = coulomb_exact(wfn, dm, grid, lambda f: report(0.78 + 0.2 * f, "Exact Coulomb attraction "
+                                                                  "(precise)..."), self.use_numba)
+        elif coulomb_mode == COULOMB_FAST:
+            exact = coulomb_fast(wfn, dm, lambda f: report(0.78 + 0.2 * f, "Exact Coulomb attraction (fast)..."),
+                                 self.use_numba)
+        coulomb = CoulombEnergies(coulomb_gaussian(m), exact, coulomb_mode)
         x2, y2 = state.norm_terms()
         expected = 0.5 if restricted else 1.0
         descriptors = xc.Descriptors(

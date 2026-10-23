@@ -160,9 +160,12 @@ def report_text(results, written: Sequence[str] = ()) -> str:
     co = r.coulomb
     lines += ["", "HOLE-ELECTRON COULOMB ATTRACTION",
               f"  between C_hole and C_ele (Multiwfn's option 18)   {co.gaussian:.6f} a.u. ({co.gaussian * EV:.4f} eV)"]
-    lines.append(f"  between rho_hole and rho_ele (manual definition)  {co.exact:.6f} a.u. ({co.exact * EV:.4f} eV)"
-                 if co.exact is not None else "  between rho_hole and rho_ele (manual definition)  not computed "
-                 "(switch 'Exact Coulomb attraction' on)")
+    if co.exact is not None:
+        lines.append(f"  between rho_hole and rho_ele (manual definition)  {co.exact:.6f} a.u. ({co.exact * EV:.4f} eV)"
+                     f"; {xa.COULOMB_MODE_TEXT[co.mode]}")
+    else:
+        lines.append("  between rho_hole and rho_ele (manual definition)  not computed (tick 'Exact Coulomb "
+                     "attraction - fast' or '- precise')")
 
     lines += ["", "CLASSIFICATION (descriptor-based)", f"  Verdict: {c.verdict}", f"  {c.rule}", "  Evidence:"]
     lines += [f"    - {e}" for e in c.evidence]

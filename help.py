@@ -2134,8 +2134,15 @@ OPTIONS
                    fragments; atoms left out form 'Rest'). Enables IFCT:
                    electrons transferred between fragments, CT% and LE%.
   Exact Coulomb    also the Coulomb attraction of the hole and electron
-                   densities themselves (slower); the C-function value
-                   (what Multiwfn's option 18 computes) is always given.
+                   densities themselves; the C-function value (what
+                   Multiwfn's option 18 computes) is always given. Two
+                   checkboxes, only one at a time (ticking one disables
+                   the other):
+                     fast     coarser grid (40 x 110 points per atom),
+                              negligible points skipped: about 10x faster,
+                              relative error about 1e-4;
+                     precise  the full 75 x 434 grid (slower).
+                   Neither ticked: the exact value is not computed.
 
 THE DESCRIPTORS (lengths in Angstrom)
   D index      distance between the hole and electron centroids (CT length).

@@ -277,6 +277,22 @@ class TestCoulomb:
         assert exact > 0 and abs(exact - gaussian) < 0.3 * gaussian
         assert calls and calls[-1] == 1.0
 
+    @pytest.mark.parametrize("name,state", [("h2co_cis", 1), ("h2co_ryd", 3), ("h2co_td5050", 6)])
+    def test_fast_mode_agrees_with_the_precise_one(self, name, state):
+        # measured <= 1.2e-4 relative (4-nitroaniline S2, 10x faster); the small fixtures keep the test quick
+        r = core(name, state)
+        precise = xa.coulomb_exact(r.wfn, r.dm, grid_of(name))
+        fast = xa.coulomb_fast(r.wfn, r.dm)
+        assert abs(fast - precise) < 2e-4 * precise
+
+    def test_screening_drops_points_but_keeps_the_value(self):
+        r = core("h2co_cis", 1)
+        g = grid_of("h2co_cis")
+        full = xa.coulomb_exact(r.wfn, r.dm, g)
+        assert xa.coulomb_exact(r.wfn, r.dm, g, screen=0.0) == pytest.approx(full, rel=1e-12)
+        screened = xa.coulomb_exact(r.wfn, r.dm, g, screen=1e-6)
+        assert abs(screened - full) < 1e-5 * full
+
     def test_exact_coulomb_numpy_and_numba_agree(self):
         pytest.importorskip("numba")
         r = core("h2co_cis", 1)

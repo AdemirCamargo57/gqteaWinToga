@@ -93,7 +93,8 @@ def make_controller(name="h2co_cis", output_dir=""):
         setattr(c, button, W(enabled=True))
     c.state_selection = W(items=[], value=None)
     c.partition_selection = W(value="Mulliken-like")
-    c.fragments_input, c.hydrogens_switch, c.exact_coulomb_switch = W(value=""), W(value=False), W(value=False)
+    c.fragments_input, c.hydrogens_switch = W(value=""), W(value=False)
+    c.fast_coulomb_switch, c.precise_coulomb_switch = W(value=False, enabled=True), W(value=False, enabled=True)
     c.status_label, c.progress_bar = W(text="Ready."), W(value=0)
     c.classification_label, c.summary_label = W(text="No results."), W(text="")
     c.descriptor_table, c.part_table = W(data=[]), W(data=[])
@@ -144,9 +145,43 @@ class TestInputs:
     def test_options_reach_the_run(self):
         c = make_controller()
         asyncio.run(c.load_files(None))
-        c.partition_selection.value, c.fragments_input.value, c.exact_coulomb_switch.value = "Hirshfeld", "1-2", True
+        c.partition_selection.value, c.fragments_input.value, c.precise_coulomb_switch.value = "Hirshfeld", "1-2", True
         params = c._collect_inputs()
-        assert (params["partition"], params["fragments_text"], params["exact_coulomb"]) == ("hirshfeld", "1-2", True)
+        assert (params["partition"], params["fragments_text"], params["coulomb_mode"]) == ("hirshfeld", "1-2",
+                                                                                           xa.COULOMB_PRECISE)
+
+
+class TestCoulombCheckboxes:
+    def tick(self, c, widget, value):
+        widget.value = value
+        c.on_coulomb_mode_change(widget)
+
+    def test_neither_ticked_means_no_exact_coulomb(self):
+        c = make_controller()
+        assert c.coulomb_mode() == xa.COULOMB_OFF
+        assert c.fast_coulomb_switch.enabled and c.precise_coulomb_switch.enabled
+
+    def test_ticking_fast_disables_precise_and_unticking_enables_it(self):
+        c = make_controller()
+        self.tick(c, c.fast_coulomb_switch, True)
+        assert c.coulomb_mode() == xa.COULOMB_FAST and c.precise_coulomb_switch.enabled is False
+        self.tick(c, c.fast_coulomb_switch, False)
+        assert c.coulomb_mode() == xa.COULOMB_OFF and c.precise_coulomb_switch.enabled is True
+
+    def test_ticking_precise_disables_fast_and_unticking_enables_it(self):
+        c = make_controller()
+        self.tick(c, c.precise_coulomb_switch, True)
+        assert c.coulomb_mode() == xa.COULOMB_PRECISE and c.fast_coulomb_switch.enabled is False
+        self.tick(c, c.precise_coulomb_switch, False)
+        assert c.coulomb_mode() == xa.COULOMB_OFF and c.fast_coulomb_switch.enabled is True
+
+    def test_the_chosen_mode_reaches_the_run(self, tmp_path):
+        c = make_controller(output_dir=tmp_path)
+        asyncio.run(c.load_files(None))
+        self.tick(c, c.fast_coulomb_switch, True)
+        asyncio.run(c.workflow(None))
+        assert c.results.coulomb.mode == xa.COULOMB_FAST and c.results.coulomb.exact > 0
+        assert any("exact, fast" in row[0] for row in c.descriptor_table.data)
 
     def test_a_bad_fragment_definition_is_reported_before_running(self):
         c = make_controller()

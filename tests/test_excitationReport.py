@@ -88,8 +88,22 @@ class TestRun:
         assert any("de-excitations" in n for n in run("h2co_td5050", 6).notes)
 
     def test_exact_coulomb_only_on_request(self):
-        assert run("h2co_cis", 1).coulomb.exact is None
-        assert run("h2co_cis", 1, exact_coulomb=True).coulomb.exact > 0
+        off = run("h2co_cis", 1)
+        assert off.coulomb.exact is None and off.coulomb.mode == xa.COULOMB_OFF
+        fast = run("h2co_cis", 1, coulomb_mode=xa.COULOMB_FAST)
+        precise = run("h2co_cis", 1, coulomb_mode=xa.COULOMB_PRECISE)
+        assert (fast.coulomb.mode, precise.coulomb.mode) == (xa.COULOMB_FAST, xa.COULOMB_PRECISE)
+        assert abs(fast.coulomb.exact - precise.coulomb.exact) < 2e-4 * precise.coulomb.exact
+
+    def test_unknown_coulomb_mode(self):
+        fchk, log = xf.fixture_paths("h2co_cis")
+        with pytest.raises(ValueError, match="Coulomb mode"):
+            xa.ExcitationAnalyser().run(fchk, log, 1, coulomb_mode="exact")
+
+    def test_report_names_the_coulomb_mode(self):
+        assert "not computed (tick" in xr.report_text(run("h2co_cis", 1))
+        assert "fast mode" in xr.report_text(run("h2co_cis", 1, coulomb_mode=xa.COULOMB_FAST))
+        assert "precise mode" in xr.report_text(run("h2co_cis", 1, coulomb_mode=xa.COULOMB_PRECISE))
 
 
 class TestReport:
