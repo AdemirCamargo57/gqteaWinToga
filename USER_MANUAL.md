@@ -19,6 +19,7 @@
   - [Analyze a Bond Length](#analyze-a-bond-length)
   - [Run a QTAIM Topology Analysis](#run-a-qtaim-topology-analysis)
   - [Generate Natural Transition Orbitals](#generate-natural-transition-orbitals)
+  - [Analyse an Electronic Excitation](#analyse-an-electronic-excitation)
   - [Build CPMD Input Files](#build-cpmd-input-files)
   - [Select Frames and Generate Gaussian Inputs](#select-frames-and-generate-gaussian-inputs)
   - [Plot CPMD Energy Data](#plot-cpmd-energy-data)
@@ -60,6 +61,7 @@
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
     - [QTAIM Topology Analysis](#qtaim-topology-analysis)
     - [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)
+    - [Electron Excitation Analysis (Excitation tab)](#electron-excitation-analysis-excitation-tab)
       - [UV-Vis spectrum (Plot Spectrum)](#uv-vis-spectrum-plot-spectrum)
     - [Analysis of Fukui Functions](#analysis-of-fukui-functions)
       - [Molecular Design](#molecular-design)
@@ -100,6 +102,7 @@
   - [Example 8: Read a Fukui Function Figure (phenol, f⁺)](#example-8-read-a-fukui-function-figure-phenol-f)
   - [Example 9: QTAIM Analysis of a Hydrogen Bond (water dimer)](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)
   - [Example 10: Natural Transition Orbitals of Uracil S3](#example-10-natural-transition-orbitals-of-uracil-s3)
+  - [Example 11: Classifying the Excited States of a Push-Pull Molecule (D-pi-A)](#example-11-classifying-the-excited-states-of-a-push-pull-molecule-d-pi-a)
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
@@ -108,6 +111,7 @@
 - [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules)
 - [Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab)
 - [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab)
+- [Formulas and Methods (Excitation tab)](#formulas-and-methods-excitation-tab)
 - [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
 - [Troubleshooting](#troubleshooting)
   - ["No file was selected!"](#no-file-was-selected)
@@ -126,6 +130,7 @@
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
   - [ESP tool messages](#esp-tool-messages)
   - [NTO tab messages](#nto-tab-messages)
+  - [Excitation tab messages](#excitation-tab-messages)
   - [Fukui input builder messages](#fukui-input-builder-messages)
   - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
 - [Version, Contributors, and License](#version-contributors-and-license)
@@ -134,7 +139,7 @@
 
 gqteaWinToga is a desktop molecular analysis toolkit developed by the gQTEA group. It helps users prepare, inspect, convert, visualize, and analyze molecular simulation data from CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping workflows, and related molecular dynamics tools.
 
-It also analyzes Gaussian electronic-structure results without running any external program. From a formatted checkpoint (`.fchk`) it maps the electrostatic surface potential, computes Fukui functions and QTAIM topology, and, with the output of a CIS/TDA/TD job, builds natural transition orbitals (NTOs) and the UV-Vis spectrum of the excited states.
+It also analyzes Gaussian electronic-structure results without running any external program. From a formatted checkpoint (`.fchk`) it maps the electrostatic surface potential, computes Fukui functions and QTAIM topology, and, with the output of a CIS/TDA/TD job, builds natural transition orbitals (NTOs) and the UV-Vis spectrum of the excited states, and characterises each excited state by hole-electron analysis (charge-transfer length, overlap, interfragment charge transfer) with a documented classification.
 
 The program is a graphical application built with Python and Toga. Most tools follow the same pattern: open a tool window from the main tabbed interface, browse to one or more input files, enter calculation parameters, then click the tool's action button to generate outputs.
 
@@ -407,6 +412,18 @@ The full procedure, with every option and what to do when points are missing, is
 7. **Plot Spectrum** draws all the excited states as a GaussView-style UV-Vis spectrum and saves it as `name_UVVis.json`.
 
 The details are in [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto), a worked example in [Example 10](#example-10-natural-transition-orbitals-of-uracil-s3), and the method in [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab).
+
+### Analyse an Electronic Excitation
+
+1. Run a Gaussian CIS, TDA or TD job with `IOp(9/40=4)` in the route (for example `# CAM-B3LYP/6-31G(d) TD(NStates=5) IOp(9/40=4)`) and convert its checkpoint: `formchk name.chk name.fchk`.
+2. Open **Tools > 3D Molecular Viewer** and choose the **Excitation** tab.
+3. Browse to `name.fchk`; `name.log` (or `name.out`) beside it is filled in. Click **Load**.
+4. Choose an excited state. Optionally choose the atom partition (Mulliken-like or Hirshfeld) and type fragments such as `11-13; 1-10; 14-16`.
+5. Click **Run**. Read the classification line and the descriptor table; the full report `name_state<n>_excitation.txt` is written to the output folder.
+6. Choose **Show** (hole and electron, Sr, charge density difference, transition density, C functions) and click **Display** to see the surfaces, the hole/electron centroids and the charge-transfer arrow.
+7. **Export cubes**, **Plot heat map** and **Export 3D image...** save the results.
+
+The details are in [Electron Excitation Analysis (Excitation tab)](#electron-excitation-analysis-excitation-tab), a worked example in [Example 11](#example-11-classifying-the-excited-states-of-a-push-pull-molecule-d-pi-a), and the definitions and criteria in [Formulas and Methods (Excitation tab)](#formulas-and-methods-excitation-tab).
 
 ### Build CPMD Input Files
 
@@ -2977,6 +2994,180 @@ to the electron density.
   to round-off, but with Gaussian's own `Pop=NTO` only to about 1e-4.
 - Basis functions up to g (as the other `.fchk` tools); no periodic systems.
 
+#### Electron Excitation Analysis (Excitation tab)
+
+Use the **Excitation** tab of the **3D Molecular Viewer** (Tools > 3D Molecular
+Viewer, the tab after **NTO**) to characterise one excited state of a CIS, TDA
+or TD (TD-DFT/TDHF) calculation: where the excited electron leaves from (the
+**hole**), where it goes (the **electron**), how far apart and how overlapped
+the two are, which MOs, atoms and fragments carry them, and what kind of
+excitation this is (local, charge transfer, Rydberg-like, ...). The analyses
+and their conventions are those of Multiwfn's main function 18 (manual §3.21):
+hole-electron analysis, MO/atom/fragment contributions, interfragment charge
+transfer (IFCT), the Δr and Λ indices, the ghost-hunter index and the hole–
+electron Coulomb attraction. **Multiwfn is not needed**: everything is computed
+by this program and was checked against Multiwfn 2026.7.15 (see *Validation*).
+The definitions, the classification rules and their sources are in
+[Formulas and Methods (Excitation tab)](#formulas-and-methods-excitation-tab).
+
+##### What you need
+
+The same two files as the NTO tab, **from one Gaussian 09 or 16 job**:
+
+- the formatted checkpoint (`formchk name.chk name.fchk`): basis set, MOs and
+  orbital energies;
+- the Gaussian output (`.log`/`.out`) of the CIS/TDA/TD job, which holds the
+  configuration coefficients and the transition dipoles. **Add `IOp(9/40=4)`**
+  to the route: without it Gaussian prints only the coefficients above 0.1 and
+  every index is distorted (the normalisation check in the report shows it, and
+  the classification is then refused).
+
+Multiwfn's plain-text `Excited State` format is accepted as the second file
+(no transition dipoles or oscillator strengths in that case). The files are
+checked against each other (atoms, geometry, basis functions, electron counts,
+restricted vs unrestricted) exactly as in the NTO tab.
+
+| Analysis | Needs | Notes |
+|---|---|---|
+| Hole/electron indices, MO contributions, Δr, Λ, ghost-hunter, Coulomb | `.fchk` + output | always available |
+| Transition dipole and *f* check | the Gaussian output (dipole table) | not with plain-text files |
+| Hirshfeld contributions | elements H–Ar, all-electron basis | otherwise Mulliken-like is used, with a note |
+| IFCT, fragment heat maps, fragment-based assignment | a fragment definition | typed in the tab |
+| Orbital character (π→π\*, n→π\*, MLCT, ...) | your inspection of the isosurfaces or NTOs | never assigned automatically |
+| Relaxed-density analyses (Multiwfn §3.21.3), magnetic transition moments, ECD/CPL *g* factors | other Gaussian keywords and data | not implemented |
+
+##### Tab layout
+
+1. **Input** — formatted checkpoint (Browse fills an empty excitation field
+   with `name.log`, else `name.out`), excitation file, output folder (blank =
+   the `.fchk` folder), **Load** (lists the excited states).
+2. **Excited state and options** — the state; **Atom partition**
+   (*Mulliken-like*, fast, or *Hirshfeld*, robust with diffuse functions);
+   **Fragments** (e.g. `11-13; 1-10; 14-16`: 1-based atoms and ranges, `;`
+   between fragments, atoms left out form the fragment *Rest*); *Include
+   hydrogens* in the atom table and heat maps; *Exact Coulomb attraction*
+   (slower); **Run**, **Clear**, status line and progress bar.
+3. **Results** — the classification (bold), a one-line summary, the descriptor
+   table (quantity, value, unit) and the atom or fragment table (hole %,
+   electron %, overlap %, Δ %, and the intrinsic CT/LE percentages with
+   fragments).
+4. **Display** — **Show** (*Hole and electron*, *Hole*, *Electron*, *Sr
+   overlap*, *Charge density difference*, *Transition density*, *C_hole and
+   C_ele*), isovalue (blank = 0.002 a.u., transition density 0.001, Multiwfn's
+   defaults), grid spacing (blank = 0.2 bohr), colours (hole Blue, electron
+   Green, Sr Orange, CDD + Green / − Blue, transition density + Cyan / −
+   Magenta; C_hole and C_ele take the hole/electron colours), opacity,
+   *Centroids and CT arrow* (spheres at the hole and electron centroids, an
+   orange arrow from hole to electron), **Display**.
+5. **Export** — **Export cubes** (the shown quantities), **Send to Cube tab**,
+   **Export 3D image...**, and **Plot heat map** (*Atom composition*, *Fragment
+   composition*, *IFCT matrix*, *Atom-atom CT matrix*).
+6. The report box (this help until a run).
+
+##### Step-by-step procedure
+
+1. **Gaussian job.** Optimise the ground state, then run the excitation
+   calculation with `IOp(9/40=4)`, for example
+   `# CAM-B3LYP/6-31G(d) TD(NStates=10) IOp(9/40=4)`. Use a range-separated
+   functional (CAM-B3LYP, ωB97XD) whenever charge transfer is possible: with
+   B3LYP or PBE0 long-range CT states come out far too low. Keep the checkpoint
+   and run `formchk name.chk name.fchk`.
+2. **Load.** Browse to the `.fchk`, check the excitation file and click
+   **Load**. A mismatch between the files is reported at this point.
+3. **Choose the state and the options.** Pick a bright state from the list (the
+   oscillator strength *f* is shown). Leave *Mulliken-like* unless the basis has
+   diffuse functions (`+`, `aug-`), in which case choose *Hirshfeld*. To
+   quantify charge transfer between groups, type fragments: e.g. donor, bridge
+   and acceptor.
+4. **Run.** The state is analysed in a few seconds (more with *Exact Coulomb*);
+   the report is written automatically.
+5. **Read the classification.** It names the rule that matched and lists the
+   evidence (each value with its threshold and source), the independent Δr/Λ
+   checks and a confidence. *Intermediate / undetermined* is a legitimate
+   answer: it means the descriptors do not fit one pattern, and the report says
+   which ones disagree.
+6. **Look at it.** Click **Display**: *Hole and electron* shows where the
+   electron leaves from (blue) and where it arrives (green); the arrow joins the
+   two centroids (its length is the D index). *Sr overlap* shows where they
+   coincide; *Charge density difference* shows the net density change.
+   Identify the orbital character (π→π\*, n→π\*, ...) from these surfaces — the
+   program does not assign it.
+7. **Export** what you need: cubes for other programs, heat maps of the atom or
+   fragment composition (Multiwfn's style), the 3D image.
+
+##### Output files
+
+| File | Content |
+|---|---|
+| `name_state<n>_excitation.txt` | the report: source files, normalisation, major MO transitions, MO contributions, every descriptor with definition and unit, Δr/Λ/ghost-hunter, transition dipole and *f* (calculated and from the log), atom and fragment contributions, IFCT matrix, Coulomb attraction, classification with evidence, limitations, references, notes |
+| `name_state<n>_hole.cube`, `_electron`, `_Sr`, `_CDD`, `_transdens`, `_Chole`, `_Cele` | the real-space functions on a uniform grid (bohr, a.u.), every value computed exactly |
+| `name_state<n>_atoms_heatmap.json`, `_fragments_`, `_ifct_`, `_atom_ct_` | heat maps, reopened with **Plotter** (*JSON plot file*) |
+
+##### Interpretation and cautions
+
+- **D** (Å) is the distance the excited electron's centre of charge moves; the
+  **t index** (Å) tells whether hole and electron are actually separated
+  (t > 0) or still overlap along that direction (t < 0). A large D with t < 0
+  means broad, overlapping distributions; a small D with t > 0, partial CT.
+- **Sr** (0–1) is the hole–electron overlap. It is small for Rydberg and
+  long-range CT states and medium to large for local excitations — but a
+  short-range CT state can keep a large Sr (D-pi-A S2 below: Sr = 0.65).
+- **Δσ** (Å) compares the sizes of electron and hole: a much larger electron
+  points to a Rydberg state (with diffuse basis functions) or to symmetric CT
+  away from the centre.
+- **Δr** and **Λ** are the orbital-pair versions of D and Sr (each pair counted
+  separately, without the coupling between pairs). Multiwfn's author regards D
+  and Sr as more reliable; when Δr/Λ disagree with the verdict, the report
+  lowers the confidence rather than overriding it.
+- **IFCT** percentages depend on the fragments: with the whole molecule as one
+  fragment the CT percentage is zero by construction. *Intrinsic* CT counts
+  every electron moved between fragments; *apparent* CT (two fragments only) is
+  the net transfer after the two directions cancel.
+- **Mulliken-like contributions** are unreliable with diffuse functions and can
+  turn slightly negative (the report says so); use Hirshfeld then.
+- The densities are the **unrelaxed** hole and electron of the configuration
+  coefficients (Multiwfn's definition), not relaxed excited-state densities.
+
+##### Validation
+
+Seven fixtures in `tests/data/excitation/` and `tests/data/nto/` (D-pi-A,
+N-phenylpyrrole and 4-nitroaniline from Multiwfn's own examples; formaldehyde
+CIS, TD singlets/triplets and aug-cc-pVDZ; the methyl radical) are compared with
+Multiwfn 2026.7.15 run on a fine grid:
+
+| Quantity | Agreement with Multiwfn |
+|---|---|
+| centroids, D, RMSD, H, t, Δμ (exact here, uniform grid there) | within Multiwfn's grid error: ≤ 2 × 10⁻⁴ Å for centroids, the printed 10⁻³ Å for the rest |
+| Sm, Sr, HDI, EDI | within Multiwfn's grid error (measured between two grids) |
+| Δr | to the 6 printed digits (≤ 2 × 10⁻⁶ Å) |
+| Λ | ≤ 3.5 × 10⁻⁴ on the same 75 × 434 grid (Multiwfn's automatic 15 × 170 grid differs by up to 10⁻²) |
+| MO contributions, major MO transitions | to the printed digits / identical text |
+| Mulliken-like atom contributions and IFCT | to the printed digits (0.01 %, 10⁻⁵ e) with Multiwfn's screening of tiny coefficient products |
+| Hirshfeld contributions | ≤ 0.01 % (one diffuse electron: 0.05 %, a difference in free-atom density tails) |
+| Coulomb attraction of C_hole and C_ele | ≤ 2 % (Multiwfn integrates it on a coarse grid) |
+| transition dipole and *f* | within 1 % of the Gaussian log (limited by its 5-decimal coefficients); D-pi-A S2: *f* 0.6359 vs 0.6355 printed |
+
+Two things the comparison revealed: Multiwfn's default grid box (atoms ± 6 bohr)
+**cuts off diffuse electrons** — N-phenylpyrrole S4's electron integrates to
+0.955 and a formaldehyde Rydberg state's to 0.80 there — while the moments here
+are exact; and Multiwfn's code computes the Coulomb attraction between the
+smoothed C functions, while its manual defines it between ρ_hole and ρ_ele; the
+report gives both, labelled.
+
+##### Limitations
+
+- Gaussian files only (no ORCA, CP2K, BDF, GAMESS/Firefly).
+- Single-reference methods only (CIS, TDA, TDHF, TD-DFT); no spin-flip TD, no
+  ROHF/ROKS references, no EOM-CC or CASSCF states.
+- Unrelaxed densities; no analyses that need relaxed densities, magnetic
+  transition moments or transitions between excited states.
+- Hirshfeld partition for H–Ar and all-electron bases only (as the Fukui tool).
+- The classification thresholds for Δσ (1.0 Å) and for the diffuse-electron
+  fraction (50 %) are heuristics of this program; D, Sr and t follow published
+  criteria. The classification summarises the descriptors; it does not replace
+  looking at the hole and electron.
+- Basis functions up to g; no periodic systems.
+
 #### Analysis of Fukui Functions
 
 **Tools > Analysis of Fukui Functions** shows where a molecule is most susceptible to nucleophilic (f⁺), electrophilic (f⁻) and radical (f⁰) attack, and the dual descriptor Δf = f⁺ − f⁻ (positive: nucleophilic attack; negative: electrophilic attack). The results indicate *likely* reactive regions. They are not predictions of reaction outcome: sterics, solvent and barriers are not included.
@@ -3729,6 +3920,89 @@ Press **Plot Spectrum** (the *Peak half-width* field left blank, i.e. 0.333 eV).
 - The spectrum is one band, peaking at 228.7 nm with ε = 5333 L mol⁻¹ cm⁻¹: the bright S2 alone gives 1.3062974 × 10⁸ × 0.1317 / 3226 cm⁻¹ = 5333.
 - S1 and S3, both A″, are essentially dark: their sticks are at, or almost at, zero height, so the n → π\* state analysed above (S3) does not appear in the absorption at all (run its NTOs to see what S1 is). A spectrum alone would never reveal it; the NTOs and the f values together tell which excitations are bright and what they are.
 - Reopen the file later with **Plotter** (*JSON plot file*), or change the half-width and press **Plot Spectrum** again to compare band widths.
+
+### Example 11: Classifying the Excited States of a Push-Pull Molecule (D-pi-A)
+
+The files are Multiwfn's own example `D-pi-A.fchk` / `D-pi-A.out`
+(`examples\excit` of the Multiwfn distribution, also in
+`tests/data/excitation/`): 4-amino-4'-nitrobiphenyl, CAM-B3LYP/6-31G(d),
+`TD(nstates=5) IOp(9/40=4)`. The amino group is a donor, the nitro group an
+acceptor and the biphenyl a π linker, so a charge-transfer state is expected
+among local ones. The numbers below are this program's (default exact settings);
+Multiwfn's manual §4.18.1 discusses the same states.
+
+#### 1. Run
+
+1. **Excitation** tab: browse to `D-pi-A.fchk` (`D-pi-A.out` is filled in),
+   **Load** (5 states).
+2. Fragments: `21-23; 11-20; 1-10; 24-26` — nitro (Fragment 1), the benzene
+   ring next to it (2), the ring next to the amino group (3), amino (4).
+3. Run each state; for S2, **Display** with *Hole and electron*.
+
+#### 2. The descriptors of the five states
+
+| State | E (eV) | f | D (Å) | t (Å) | Sr | Δσ (Å) | Δr (Å) | Λ | Verdict | Confidence |
+|---|---|---|---|---|---|---|---|---|---|---|
+| S1 | 3.907 | 0.0188 | 0.53 | −0.96 | 0.51 | 0.07 | 2.44 | 0.42 | LE | low |
+| S2 | 4.062 | 0.6355 | 3.47 | 0.55 | 0.65 | −0.21 | 5.00 | 0.47 | CT | consistent |
+| S3 | 4.417 | 0.0001 | 0.57 | −0.66 | 0.54 | 0.43 | 2.16 | 0.48 | LE | low |
+| S4 | 4.791 | 0.0135 | 0.98 | −1.54 | 0.86 | 0.28 | 2.09 | 0.52 | LE | low |
+| S5 | 4.887 | 0.0079 | 0.53 | −2.07 | 0.87 | 0.20 | 1.47 | 0.57 | LE | consistent |
+
+Major MO transitions: S1 `H-4 -> L 81.9%, H-4 -> L+2 12.1%`; S2
+`H -> L 86.0%, H-3 -> L 5.3%`; S4 `H-2 -> L 54.5%, H -> L+1 27.6%, H-3 -> L+1 6.4%`.
+
+#### 3. How to read it
+
+- **S2 is the charge-transfer state.** Its hole and electron centroids are
+  3.47 Å apart and t = +0.55 Å: the two distributions are separated along the
+  CT direction (rule 2). Δr = 5.00 Å agrees, so the confidence is "consistent".
+  The display shows the hole (blue) on the amino side and the electron (green)
+  on the nitro side, with the arrow pointing to the nitro group. It is also the
+  bright state (f = 0.6355; calculated 0.6359 from the transition dipole). Its
+  Sr stays at 0.65: the hole and electron overlap on the central biphenyl even
+  though their centres of charge are far apart — Sr alone does not identify CT.
+- **IFCT for S2**: intrinsic CT 77.2 %, largest net transfer Fragment 3 →
+  Fragment 1 (0.200 e, the amino-side ring to the nitro group), then Fragment 3
+  → Fragment 2 (0.188 e): the electron leaves the donor half and arrives on the
+  acceptor half. The fragment-based statement agrees with the verdict.
+- **S1, S3, S4, S5 are local excitations** (D ≤ 1 Å, t clearly negative,
+  Sr ≥ 0.5, small Δσ). Multiwfn's manual (§4.18.1) identifies S1 as the nitro
+  group's n → π\* state from the hole and electron isosurfaces (hole on the
+  oxygen lone pairs, electron in the NO₂ π\*), and S5 as a π → π\* excitation on
+  the amino-side ring; the program says LE and leaves that orbital character to
+  your inspection of the display.
+- **Why "low" confidence for S1, S3 and S4?** Their Δr (2.09–2.44 Å) is just
+  above 2.0 Å while every hole-electron index says local. Δr weights each MO
+  pair separately and ignores the coupling between pairs, which is large here
+  (several pairs with different MO centroids); D, computed from the actual
+  hole and electron densities, is 0.5–1.0 Å. The report flags the disagreement
+  instead of hiding it; Multiwfn's author recommends D and Sr in such cases.
+- **S4 and the fragment dependence of IFCT.** S4 is a π → π\* excitation of the
+  nitro-side ring (manual: "most electrons remain in fragment 2"), and the
+  descriptors say LE. With four fragments, however, its intrinsic CT is 53.6 %,
+  because the hole and electron each spread over the ring *and* its neighbours
+  (Fragment 2 → Fragment 1 is the largest term), so the fragment-based line
+  says "charge transfer between fragments" while the verdict says LE. Both are
+  correct for what they measure: intrinsic CT counts every electron that
+  crosses a fragment boundary, which grows as the fragments get smaller. This
+  is why the fragment-based statement is reported separately and labelled as
+  depending on the fragment definition.
+- **Ghost states**: every excitation energy is above the ghost-hunter index
+  (S2: 4.06 eV > 2.28 eV), and CAM-B3LYP is range-separated, so no ghost CT
+  state is suspected.
+
+#### 4. A Rydberg state for comparison
+
+Formaldehyde with a diffuse basis (`tests/data/excitation/h2co_td_augccpvdz`,
+B3LYP/aug-cc-pVDZ) has states whose electron is very diffuse. S3
+(7.320 eV) gives D = 1.57 Å, t = 0.27 Å, Sr = 0.25, Δσ = 2.49 Å, EDI = 2.6 (a very
+spread-out electron) and 76 % of the electron on diffuse basis functions:
+**Rydberg-like** (rule 3, confidence "tentative"). S4 (7.511 eV, D = 0.20 Å,
+Sr = 0.33, Δσ = 1.87 Å) is also Rydberg-like although its Sr is above 0.3 — which
+is why the rule uses the diffuse-electron fraction rather than Sr. With a basis
+without diffuse functions such states cannot be described at all, and the
+report says that Rydberg character cannot be assigned.
 
 ## Formulas and Methods (All Bond / Angle / Dihedral tools)
 
@@ -5850,6 +6124,183 @@ Gaussian prints.
 - T. Lu, F. Chen, *J. Comput. Chem.* **2012**, 33, 580, and the Multiwfn manual,
   §3.21 and §4.18.6.
 
+## Formulas and Methods (Excitation tab)
+
+The Excitation tab follows Multiwfn's definitions (manual §3.21; the formulas
+below were also read in its source, `excittrans.f90`, where the code and the
+manual differ the code's choice is stated). Lengths are in bohr inside the
+program and reported in Å; 1 Hartree = 27.211386245988 eV.
+
+### 1. Coefficients and the closed-shell factor
+
+For each spin, the excitation coefficients $w_i^a$ (`i -> a`) and de-excitation
+coefficients $w_i'^a$ (`i <- a`) form the occupied × virtual matrices $X$ and
+$Y$. Gaussian normalises a closed-shell state to
+$\sum (w_i^a)^2 - \sum (w_i'^a)^2 = 0.5$ (the α and β halves are identical), so
+every density below carries a factor $f = 2$ for a restricted reference and
+$f = 1$ per spin for an unrestricted one (α and β are then summed). The report
+prints Multiwfn's normalisation block; a deviation above 0.01 means coefficients
+are missing (`IOp(9/40=4)`).
+
+### 2. Hole, electron and transition densities
+
+$$
+\rho^{\text{hole}}(\mathbf r) = f\!\sum_{ij}\Big[\sum_a w_i^a w_j^a - \sum_a w_i'^a w_j'^a\Big]\varphi_i\varphi_j ,
+\qquad
+\rho^{\text{ele}}(\mathbf r) = f\!\sum_{ab}\Big[\sum_i w_i^a w_i^b - \sum_i w_i'^a w_i'^b\Big]\varphi_a\varphi_b ,
+$$
+
+i.e. the density matrices $P^{\text{hole}} = f\,C_{\text{occ}}(XX^{\mathsf T}-YY^{\mathsf T})C_{\text{occ}}^{\mathsf T}$
+and $P^{\text{ele}} = f\,C_{\text{vir}}(X^{\mathsf T}X-Y^{\mathsf T}Y)C_{\text{vir}}^{\mathsf T}$.
+The diagonal terms are Multiwfn's "local" part, the off-diagonal ones its
+"cross" part. Both integrate to 1 (one electron excited). The transition density
+is $T(\mathbf r) = f\sum_{ia}(w_i^a + w_i'^a)\varphi_i\varphi_a$ (integral 0), and
+the charge density difference is $\Delta\rho = \rho^{\text{ele}} - \rho^{\text{hole}}$
+(the unrelaxed density change). Multiwfn drops configurations with
+$|w| < 0.01$ from the cross terms and clips negative grid values to zero before
+integrating; here the matrices are exact (both choices were reproduced in the
+validation).
+
+### 3. Indices from moments (exact)
+
+With the dipole and second-moment integrals of the basis functions,
+$\langle\mu|x|\nu\rangle$ and $\langle\mu|x^2|\nu\rangle$ (McMurchie–Davidson),
+every quantity linear in the densities is exact:
+
+| Index | Definition |
+|---|---|
+| centroid | $\mathbf R_{\text{hole}} = \int \mathbf r\,\rho^{\text{hole}}\,d\mathbf r \big/ \int \rho^{\text{hole}}\,d\mathbf r$, same for the electron |
+| D index | $D = \lvert \mathbf R_{\text{ele}} - \mathbf R_{\text{hole}} \rvert$ (and its components $D_x, D_y, D_z$) |
+| dipole change | $\Delta\boldsymbol\mu = -(\mathbf R_{\text{ele}} - \mathbf R_{\text{hole}})\,\tfrac12(\int\rho^{\text{hole}}+\int\rho^{\text{ele}})$ (unrelaxed) |
+| RMSD | $\sigma_{\text{hole},x} = \big[\int (x - X_{\text{hole}})^2\rho^{\text{hole}}\,d\mathbf r / \int\rho^{\text{hole}}\big]^{1/2}$; $\lvert\boldsymbol\sigma\rvert$ its norm |
+| Δσ | $\Delta\sigma = \lvert\boldsymbol\sigma_{\text{ele}}\rvert - \lvert\boldsymbol\sigma_{\text{hole}}\rvert$ |
+| H | $H_\lambda = (\sigma_{\text{ele},\lambda} + \sigma_{\text{hole},\lambda})/2$, $H = (\lvert\boldsymbol\sigma_{\text{ele}}\rvert + \lvert\boldsymbol\sigma_{\text{hole}}\rvert)/2$ |
+| H_CT | $\lvert (H_x D_x, H_y D_y, H_z D_z)\rvert / D$ (Multiwfn's code; the manual writes $\lvert\mathbf H\cdot\mathbf u_{\text{CT}}\rvert$) |
+| t index | $t = D - H_{\text{CT}}$: > 0 means hole and electron are separated along the CT direction |
+| transition dipole | $\boldsymbol\mu_{0n} = -\int \mathbf r\,T(\mathbf r)\,d\mathbf r$, oscillator strength $f = \tfrac23 E\,\lvert\boldsymbol\mu_{0n}\rvert^2$ (a.u.) |
+
+### 4. Indices on the Becke grid
+
+The non-linear indices are integrated on a Becke multicentre grid (75 radial ×
+434 angular points per atom), with the densities clipped at zero as Multiwfn:
+
+$$
+S_m = \int \min(\rho^{\text{hole}},\rho^{\text{ele}})\,d\mathbf r,\quad
+S_r = \int \sqrt{\rho^{\text{hole}}\rho^{\text{ele}}}\,d\mathbf r,\quad
+\text{HDI} = 100\Big[\int (\rho^{\text{hole}})^2 d\mathbf r\Big]^{1/2},\quad
+\text{EDI} = 100\Big[\int (\rho^{\text{ele}})^2 d\mathbf r\Big]^{1/2}.
+$$
+
+$S_r$ runs from 0 (no overlap) to 1; smaller HDI/EDI mean a more delocalised
+hole/electron.
+
+### 5. Orbital-pair indices: Δr and Λ
+
+With $K_i^a = w_i^a + w_i'^a$ (the `<-` coefficient of the same pair) and the
+normaliser $N = \sum K^2$ (Multiwfn also adds $w'^2$ of every `<-` line),
+
+$$
+\Delta r = \sum_{i\to a}\frac{(K_i^a)^2}{N}\,\big\lvert\langle\varphi_a|\mathbf r|\varphi_a\rangle - \langle\varphi_i|\mathbf r|\varphi_i\rangle\big\rvert ,
+\qquad
+\Lambda = \sum_{i\to a}\frac{(K_i^a)^2}{N}\int\lvert\varphi_i\rvert\,\lvert\varphi_a\rvert\,d\mathbf r .
+$$
+
+For one orbital pair, $\Delta r = D$ and $\Lambda = S_r$ (Multiwfn manual §3.21.4,
+§3.21.14). Λ converges slowly with the grid because $\lvert\varphi\rvert$ has
+cusps at the nodes.
+
+### 6. MO and atom contributions, IFCT
+
+- MO contributions: $\Theta_i^{\text{hole}} = f\sum_a[(w_i^a)^2-(w_i'^a)^2]$,
+  $\Theta_a^{\text{ele}} = f\sum_i[(w_i^a)^2-(w_i'^a)^2]$; each sums to 1.
+- Mulliken-like atom contributions: $\Theta_A = \sum_{\mu\in A}(PS)_{\mu\mu}$ for
+  $P^{\text{hole}}$ and $P^{\text{ele}}$, renormalised to 1 as Multiwfn does.
+- Hirshfeld contributions: $\Theta_A = \int w_A(\mathbf r)\rho(\mathbf r)\,d\mathbf r$
+  with the stockholder weight $w_A = \rho_A^0/\sum_B\rho_B^0$ of free-atom
+  densities (UB3LYP/cc-pVQZ, H–Ar), renormalised.
+- Overlap in an atom or fragment: $\sqrt{\Theta^{\text{hole}}\Theta^{\text{ele}}}$
+  (0 if either is negative); difference $\Theta^{\text{ele}} - \Theta^{\text{hole}}$
+  = the change of its electron population.
+- IFCT (Multiwfn §3.21.8): fragment contributions are sums over their atoms
+  (negative values set to 0); $Q_{R,S} = \Theta_R^{\text{hole}}\Theta_S^{\text{ele}}$
+  is the charge moved from R to S, $\Delta p_R = \sum_S (Q_{S,R} - Q_{R,S})$,
+  intrinsic CT % $= 100\sum_{R\ne S}Q_{R,S}$, LE % $= 100\sum_R Q_{R,R}$, and for
+  two fragments the apparent CT % $= 100\lvert\Delta p_1\rvert$.
+
+### 7. Ghost-hunter index
+
+$$
+M_{\text{AC}} = \sum_{i\to a}\frac{(w_i^a)^2}{\sum (w_i^a)^2}(\varepsilon_a - \varepsilon_i) - \frac{1}{D}
+$$
+
+(Campetella et al. 2017, with the corrected form of 2021; de-excitations are
+ignored). An excitation energy below $M_{\text{AC}}$ is a necessary — not a
+sufficient — sign of a spurious "ghost" CT state, meaningful only for
+one-dimensional CT; with range-separated or high-exchange functionals ghost
+states are not expected.
+
+### 8. Hole–electron Coulomb attraction
+
+The manual defines $E_C = \iint \rho^{\text{hole}}(\mathbf r_1)\rho^{\text{ele}}(\mathbf r_2)/\lvert\mathbf r_1-\mathbf r_2\rvert$.
+Multiwfn's code (option 18) evaluates it between the smooth functions
+$C(\mathbf r) = A\exp\big[-\sum_\lambda(\lambda-\Lambda_c)^2/(2\sigma_\lambda^2)\big]$
+built from the centroids and RMSDs. Both are given:
+
+- **C functions**: using $1/r = \frac{2}{\sqrt\pi}\int_0^\infty e^{-s^2r^2}ds$
+  and the convolution of the two Gaussians,
+  $E_C = \frac{2}{\sqrt\pi}\int_0^\infty\prod_\lambda(1+2s^2\Sigma_\lambda)^{-1/2}
+  \exp\!\big[-\sum_\lambda s^2 d_\lambda^2/(1+2s^2\Sigma_\lambda)\big]ds$ with
+  $\Sigma_\lambda = \sigma_{\text{ele},\lambda}^2+\sigma_{\text{hole},\lambda}^2$
+  and $\mathbf d = \mathbf R_{\text{ele}} - \mathbf R_{\text{hole}}$ — a one-
+  dimensional integral.
+- **Exact** (option): the potential of $\rho^{\text{ele}}$ is evaluated
+  analytically (as in the ESP tool) at the Becke grid points and integrated
+  against $\rho^{\text{hole}}$.
+
+### 9. Classification
+
+First matching rule (all lengths in Å):
+
+| Rule | Verdict | Condition |
+|---|---|---|
+| 1 | Undetermined (incomplete data) | normalisation deviation or $\lvert\int\rho - 1\rvert$ above 0.01 |
+| 2 | Single-direction charge transfer | $D \ge 2.0$ and $t > 0$ |
+| 3 | Rydberg-like | $\Delta\sigma \ge 1.0$, $D < 2.0$ and ≥ 50 % of the electron (Mulliken population) on diffuse basis functions (smallest exponent < 0.05 bohr⁻², H < 0.03) |
+| 4 | Possible centrosymmetric / multidirectional CT | $D < 2.0$, $t \le 0$, $\Delta\sigma \ge 1.0$, $S_r \ge 0.3$ — confirm with fragments |
+| 5 | Local excitation | $D < 2.0$, $t \le 0$, $\lvert\Delta\sigma\rvert < 1.0$, $S_r \ge 0.3$ |
+| 6 | Intermediate / undetermined | anything else; the disagreeing indicators are named |
+
+Sources: 2.0 Å is the Δr boundary between local and CT excitations of Guido et
+al. (2013), applied to D because the two coincide for one orbital pair; 0.3 is
+the Λ value of Peach et al. (2008), applied to $S_r$ for the same reason; the
+sign of t is Multiwfn's criterion (manual §3.21.1.1, whose qualitative table of
+LE / single-direction CT / centrosymmetric CT / Rydberg the rules follow). The
+Δσ threshold (1.0 Å) and the diffuse-electron fraction (50 %) are **heuristics
+of this program**, calibrated on the fixtures (formaldehyde Rydberg states put
+71–143 % of the Mulliken electron population on diffuse functions, valence
+states 7–19 %); rule 3 implements the manual's description of a Rydberg state
+("the electron mainly consists of very diffuse MOs"). Δr ≥ 2.0 Å and Λ < 0.3 are
+reported as independent checks; a disagreement lowers the confidence. With
+fragments, an IFCT statement is added (CT if the intrinsic CT % is at least 50 %),
+labelled as dependent on the fragments. The orbital character of the
+transition is never assigned.
+
+### 10. References
+
+- T. Lu, F. Chen, *J. Comput. Chem.* **2012**, 33, 580; T. Lu, *J. Chem. Phys.*
+  **2024**, 161, 082503 (Multiwfn); Multiwfn manual §3.21 and §4.18.
+- Z. Liu, T. Lu, Q. Chen, *Carbon* **2020**, 165, 461 (hole–electron analysis).
+- T. Le Bahers, C. Adamo, I. Ciofini, *J. Chem. Theory Comput.* **2011**, 7, 2498
+  (D, RMSD, H, t, C functions).
+- C. A. Guido, P. Cortona, B. Mennucci, C. Adamo, *J. Chem. Theory Comput.*
+  **2013**, 9, 3118 (Δr).
+- M. J. G. Peach, P. Benfield, T. Helgaker, D. J. Tozer, *J. Chem. Phys.* **2008**,
+  128, 044118 (Λ).
+- M. Campetella et al., *J. Comput. Chem.* **2017**, 38, 2151; *J. Chem. Phys.*
+  **2021**, 154, 204102 (ghost-hunter index).
+- F. L. Hirshfeld, *Theor. Chim. Acta* **1977**, 44, 129; A. D. Becke, *J. Chem.
+  Phys.* **1988**, 88, 2547; R. S. Mulliken, *J. Chem. Phys.* **1955**, 23, 1833.
+
 ## Formulas and Methods (Solvation box builders)
 
 This section documents the equations used by the three solvation-box builders
@@ -6247,6 +6698,28 @@ report `name_state<n>_NTO.txt`.
 | `The excitation file gives no oscillator strengths …` (Plot Spectrum) | A plain-text excitation file was loaded; it has no f values. | Load the Gaussian output instead. |
 | `The peak half-width must be a positive …` (Plot Spectrum) | The half-width field holds zero, a negative number or text. | Type a positive value in eV, or leave it blank for 0.333 eV. |
 | `The plot viewer could not be started. The spectrum was saved as …` | The interactive viewer could not open (see [Plot windows do not appear](#plot-windows-do-not-appear)). | The spectrum is saved; reopen it with **Plotter** (*JSON plot file*). |
+
+### Excitation tab messages
+
+Errors appear in a dialog; notes appear under `NOTES` in the report
+`name_state<n>_excitation.txt`. The file-consistency messages are those of the
+[NTO tab](#nto-tab-messages).
+
+| Message | Cause | What to do |
+| --- | --- | --- |
+| `Press Load to read these files and list their excited states.` | The file fields changed since the last **Load**. | Press **Load** (or **Run**). |
+| `Atom n is in fragments 1 and 2.` / `Fragment k: atom n does not exist …` / `Invalid index range …` | The fragment definition overlaps, names a missing atom or is malformed. | Correct it: `11-13; 1-10; 14-16` (1-based, `;` between fragments). |
+| `Atoms not in any fragment (n) form the fragment 'Rest'.` (note) | Some atoms were left out of the fragments. | Nothing, or list them explicitly. |
+| `The configuration coefficients sum to … instead of 0.5 … Rerun Gaussian with IOp(9/40=4)` | Gaussian printed only the coefficients above 0.1. | Rerun the job with `IOp(9/40=4)`; the classification is *Undetermined* until then. |
+| `TDHF/TD-DFT state: de-excitations enter the hole and electron with a minus sign …` (note) | Normal for full TD. | Nothing. |
+| `Mulliken-like contributions are unreliable here (…); the Hirshfeld partition is recommended` (note) | Diffuse basis functions or a negative atomic contribution. | Choose *Hirshfeld* and run again. |
+| `Hirshfeld partition not possible (…); the Mulliken-like partition is used.` (note) | An element beyond Ar or an ECP basis. | Read the Mulliken-like values with care (see the note above). |
+| `A negative fragment contribution was set to zero in the IFCT matrix …` (note) | Mulliken-like partition with a negative fragment value. | Use the Hirshfeld partition. |
+| `Triplet state of a singlet reference: …` (note) | TD(50-50) or triplet states: the transition density is of the spatial part only. | Nothing; the transition dipole is zero by spin symmetry. |
+| `Define fragments (e.g. 1-10; 11-13) and run the analysis first.` | A fragment heat map was requested without fragments. | Type fragments and press **Run**. |
+| `A grid at … bohr would have … million points. Use a grid spacing of at least … bohr.` | The display/cube grid is too fine for the molecule. | Use the suggested spacing (or larger). |
+| `The … surface reaches the edge of the grid; raise the isovalue.` (status line) | Very diffuse electron (Rydberg). | Raise the isovalue. |
+| `The plot viewer could not be started. The heat map was saved as …` | The interactive viewer could not open. | Reopen the JSON file with **Plotter**. |
 
 ### Fukui input builder messages
 
