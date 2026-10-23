@@ -2102,7 +2102,97 @@ LIMITATIONS
   Gaussian files only (no ORCA, CP2K, GAMESS); no spin-flip TD; no
   restricted open-shell (ROHF/ROKS) references; single-reference methods only
   (not EOM-CC, CASSCF); no X+Y transition density; no excited-to-excited
-  state NTOs; no hole-electron analysis; basis functions up to g.
+  state NTOs; basis functions up to g. Hole-electron analysis is in the
+  Excitation tab.
+"""
+
+    help_excitation = """ELECTRON EXCITATION ANALYSIS (Excitation tab)
+
+Characterises one excited state of a CIS, TDA or TD (TD-DFT/TDHF) calculation
+with Multiwfn's electron excitation analyses (main function 18; manual 3.21):
+where the excited electron comes from (the hole) and where it goes (the
+electron), how far apart and how overlapped they are, which MOs, atoms and
+fragments carry them, and a classification of the excitation. Multiwfn itself
+is not needed: everything is computed here and was checked against it.
+
+INPUT (two files of the same Gaussian 09/16 job, as in the NTO tab)
+  Formatted checkpoint   the .fchk / .fch (formchk name.chk name.fchk).
+  Excitation file        the Gaussian output (.log / .out) of the CIS/TDA/TD
+                         job, run with IOp(9/40=4), e.g.
+                           # CAM-B3LYP/6-31G(d) TD(NStates=5) IOp(9/40=4)
+                         Without it Gaussian prints only coefficients above
+                         0.1 and the indices are wrong (the normalisation
+                         check in the report shows it). Multiwfn's plain-text
+                         "Excited State" format is accepted too.
+  Load lists the states; choose one and press Run. The report
+  <name>_state<n>_excitation.txt is written to the output folder.
+
+OPTIONS
+  Atom partition   Mulliken-like (fast; unreliable with diffuse functions)
+                   or Hirshfeld (robust; elements H-Ar, all-electron bases).
+  Fragments        e.g. "11-13; 1-10; 14-16" (1-based atoms, ';' between
+                   fragments; atoms left out form 'Rest'). Enables IFCT:
+                   electrons transferred between fragments, CT% and LE%.
+  Exact Coulomb    also the Coulomb attraction of the hole and electron
+                   densities themselves (slower); the C-function value
+                   (what Multiwfn's option 18 computes) is always given.
+
+THE DESCRIPTORS (lengths in Angstrom)
+  D index      distance between the hole and electron centroids (CT length).
+  t index      D - H_CT: positive when hole and electron are separated along
+               the CT direction, negative when they overlap.
+  Sr, Sm       overlap of hole and electron (integral of sqrt(hole x electron)
+               and of min(hole, electron)); Sr runs from 0 to 1.
+  sigma, H     RMSD (spatial extent) of hole and electron and their mean.
+  Delta sigma  RMSD of the electron minus that of the hole: large for
+               Rydberg and centrosymmetric CT excitations.
+  HDI, EDI     hole / electron delocalization indices: smaller = more spread.
+  Delta_r      K^2-weighted distance between the MO centroids of each pair
+               (Guido et al. 2013); CT-like above 2.0 A.
+  Lambda       K^2-weighted overlap of |phi_i| and |phi_a| (Peach et al.
+               2008); low values (< 0.3) flag CT / low-overlap excitations.
+  Ghost-hunter index  lower bound of a CT excitation energy (Campetella et
+               al. 2017); E below it is a necessary sign of a ghost state.
+  Transition dipole and f, checked against the values in the Gaussian log.
+
+CLASSIFICATION (first matching rule)
+  1 Undetermined   normalisation or integrals off by more than 0.01.
+  2 CT             D >= 2.0 A and t > 0.
+  3 Rydberg-like   Delta sigma >= 1.0 A, D < 2.0 A and >= 50 % of the
+                   electron on diffuse basis functions.
+  4 Possible centrosymmetric / multidirectional CT
+                   D < 2.0 A, t <= 0, Delta sigma >= 1.0 A, Sr >= 0.3
+                   (confirm with fragments).
+  5 LE             D < 2.0 A, t <= 0, |Delta sigma| < 1.0 A, Sr >= 0.3.
+  6 Intermediate   anything else; the conflicting indicators are named.
+  The 2.0 A (Guido), 0.3 (Peach) and t sign (Multiwfn) come from the
+  literature; the Delta sigma and diffuse-electron thresholds are heuristics
+  of this program. Delta_r and Lambda are reported as independent checks.
+  With fragments, an IFCT-based assignment is added (it depends on the
+  fragments). The orbital character (pi->pi*, n->pi*, MLCT...) is never
+  assigned: look at the hole/electron isosurfaces or the NTOs.
+
+DISPLAY
+  Show         hole and electron, hole, electron, Sr overlap, charge density
+               difference (electron - hole), transition density, or the
+               smooth C_hole / C_ele functions; spheres mark the hole and
+               electron centroids and an arrow the CT direction.
+  Isovalue     blank = 0.002 a.u. (transition density 0.001), as Multiwfn.
+  Grid spacing blank = 0.2 bohr; every grid value is computed exactly.
+
+EXPORT
+  Export cubes      the shown quantities as cube files.
+  Send to Cube tab  the shown quantities as unsaved Cube-tab entries.
+  Export 3D image   the 3D window exactly as shown.
+  Plot heat map     atom or fragment composition (hole/electron/overlap),
+                    the IFCT matrix or the atom-atom CT matrix, opened in the
+                    plot viewer (also saved as JSON for the Plotter).
+
+LIMITATIONS
+  Unrelaxed densities from the configuration coefficients (Multiwfn's
+  definition); Gaussian files only; no spin-flip TD, ROHF/ROKS references or
+  multi-reference methods; no magnetic transition properties; basis
+  functions up to g.
 """
 
     help_esp_surface = """ELECTROSTATIC SURFACE POTENTIAL (ESP)

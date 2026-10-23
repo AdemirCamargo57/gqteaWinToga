@@ -7,6 +7,7 @@ GL context (and no GUI) is required — matching the headless test convention in
 tests/conftest.py.
 """
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -1063,8 +1064,15 @@ def test_the_cube_tab_follows_design_and_keeps_the_other_tabs_in_order():
     import inspect
     source = inspect.getsource(MolecularViewerUI.layout_main_window)
     order = [source.index(f'("{name}"') for name in
-             ("Display", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "NTO", "Box & Performance")]
+             ("Display", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "NTO", "Excitation",
+              "Box & Performance")]
     assert order == sorted(order)
+
+
+def test_the_excitation_tab_comes_right_after_the_nto_tab():
+    import inspect
+    names = re.findall(r'\("([^"]+)", self\._tab_page', inspect.getsource(MolecularViewerUI.layout_main_window))
+    assert names[names.index("NTO") + 1] == "Excitation"
 
 
 def test_ui_draws_the_nto_layer_and_frames_it():
@@ -1081,6 +1089,23 @@ def test_ui_draws_the_nto_layer_and_frames_it():
     assert drawn == [True] and ui.get_scene_radius() == pytest.approx(plain)
     ui.nto_layer = CubeSceneLayer()
     ui.nto_layer.set_items([_cube_item()])
+    assert ui.get_scene_radius() > 10.0 * 0.529 > plain
+
+
+def test_ui_draws_the_excitation_layer_and_frames_it():
+    from cubeRender import CubeSceneLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.frames = []
+    ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
+    plain = ui.get_scene_radius()
+    ui.excitation_layer = CubeSceneLayer()
+    drawn = []
+    ui.excitation_layer.draw = lambda: drawn.append(True)
+    ui.render_scene_extras()
+    assert drawn == [True] and ui.get_scene_radius() == pytest.approx(plain)
+    ui.excitation_layer = CubeSceneLayer()
+    ui.excitation_layer.set_items([_cube_item()])
     assert ui.get_scene_radius() > 10.0 * 0.529 > plain
 
 
