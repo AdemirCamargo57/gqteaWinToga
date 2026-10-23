@@ -137,6 +137,7 @@ Thresholds (constants in the module, quoted in the report):
 | `LOW_OVERLAP` | 0.3 | Peach et al. JCP 128, 044118 (2008) Λ value; the manual shows Sr = Λ for one orbital pair. |
 | `t` sign | 0 | Manual: t < 0 = hole and electron not separated; clearly positive = separated. |
 | `DIFFUSE_SPREAD` | 1.0 Å (Δσ) | No literature value; **our heuristic**, labelled as such, calibrated on the H₂CO/aug-cc-pVDZ Rydberg fixture. |
+| `DIFFUSE_ELECTRON` | 50 % | Fraction of the electron on diffuse basis functions; **our heuristic** (rule 3). |
 | `NORMALIZATION_TOLERANCE` | 0.01 | As the NTO tab; plus |∫hole − 1|, |∫ele − 1| > 0.01 on the grid. |
 | `IFCT_CT_MAJORITY` | 50 % | Intrinsic CT% above half of the excited electron. |
 
@@ -144,9 +145,15 @@ Rules, first match wins:
 1. **Undetermined - incomplete data** if the normalisation or an integral fails the
    tolerance.
 2. **Single-direction charge transfer (CT)**: D ≥ 2.0 Å and t > 0.
-3. **Rydberg-like**: Sr < 0.3, Δσ ≥ 1.0 Å, D < 2.0 Å - only if the basis has
-   diffuse functions (shell exponent < `DIFFUSE_EXPONENT` = 0.05 bohr⁻² on a
-   non-H atom or < 0.03 on H); without them: NOTE "cannot be assigned in this basis".
+3. **Rydberg-like**: Δσ ≥ 1.0 Å, D < 2.0 Å and at least `DIFFUSE_ELECTRON` = 50 %
+   of the electron (Mulliken population) on diffuse basis functions (shell exponent
+   < `DIFFUSE_EXPONENT` = 0.05 bohr⁻² on a non-H atom or < 0.03 on H) - the manual's
+   definition ("the electron mainly consists of very diffuse MOs"); 50 % is our
+   heuristic. Without diffuse functions: NOTE "cannot be assigned in this basis".
+   *Revised during implementation (2026-10-23)*: the first draft required Sr < 0.3,
+   but H₂CO/aug-cc-pVDZ S4 (B₂, n→3p Rydberg) has Sr = 0.33 and would have been
+   called centrosymmetric CT; the diffuse fraction separates the fixtures cleanly
+   (Rydberg states 71-143 %, valence states 7-19 %). Sr stays in the evidence.
 4. **Possible centrosymmetric / multidirectional CT**: D < 2.0, t < 0,
    Δσ ≥ 1.0, Sr ≥ 0.3 - needs fragment confirmation (IFCT CT% ≥ 50 %).
 5. **Local excitation (LE)**: D < 2.0, t < 0, |Δσ| < 1.0, Sr ≥ 0.3.
