@@ -37,6 +37,10 @@ class StubViewer:
         self.invalidated = 0
         self.projection_requests = 0
         self.status = []
+        self.claims = []
+
+    def show_analysis_layer(self, name):
+        self.claims.append(name)
 
     def load_designed_molecule(self, frame, bonds=None):
         self.loaded.append(frame)
@@ -846,3 +850,20 @@ class TestDensityPartner:
         c = loading_controller([write(tmp_path, "orb.cube", p_orbital_volume())])
         asyncio.run(c.on_load(None))
         assert c.names() == ["orb"] and c.entry("orb").colour_by is None and c.entry("orb").visible
+
+
+class TestCanvasOwnership:
+    """Cubes on screen replace whatever another tab left on the canvas; an empty scene does not."""
+
+    def test_showing_cubes_claims_the_canvas(self, tmp_path):
+        c = loaded(tmp_path, p_orbital_volume())
+        c.entries[0].isovalue = 0.1
+        asyncio.run(c.refresh_scene())
+        assert c.viewer.cube_layer.items() and c.viewer.claims == ["cube_layer"]
+
+    def test_nothing_ticked_claims_nothing(self, tmp_path):
+        c = loaded(tmp_path, p_orbital_volume())
+        c.entries[0].visible = False
+        c.viewer.claims.clear()
+        asyncio.run(c.refresh_scene())
+        assert not c.viewer.cube_layer.items() and c.viewer.claims == []

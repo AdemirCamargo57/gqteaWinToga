@@ -689,6 +689,10 @@ class ESPTabController:
         surface = self.selected_surface()
         if surface is None or self.viewer is None:
             return
+        # Replace another tab's result (NTOs, hole/electron, CPs, cubes).
+        claim = getattr(self.viewer, "show_analysis_layer", None)
+        if claim is not None:
+            claim("esp_layer")
         layer = self.viewer.esp_layer
         layer.set_display_options(unit=self.unit_selection.value or UNIT_AU,
                                   opacity=OPACITY_LABELS.get(self.opacity_selection.value, 1.0),

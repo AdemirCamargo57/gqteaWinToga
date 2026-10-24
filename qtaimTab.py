@@ -506,6 +506,10 @@ class QTAIMTabController:
         self.viewer.request_projection_update()
 
     def _push_to_viewer(self):
+        # Replace another tab's result (an opaque ESP surface would hide the CPs).
+        claim = getattr(self.viewer, "show_analysis_layer", None)
+        if claim is not None:
+            claim("qtaim_layer")
         layer = self.viewer.qtaim_layer
         layer.set_display_options(**self.display_options())
         layer.set_scene(scene_from_results(self.results, centre=self.viewer.get_system_center()))

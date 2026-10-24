@@ -3073,6 +3073,29 @@ class MolecularViewerUI(MolecularViewer):
         self.excitation_controller = ExcitationTabController(viewer=self)
         return self.excitation_controller.build_tab()
 
+    # The analysis tabs' result layers (all drawn by render_scene_extras).
+    ANALYSIS_LAYERS = ("cube_layer", "esp_layer", "qtaim_layer", "nto_layer", "excitation_layer")
+
+    def show_analysis_layer(self, name: str):
+        """A tab is about to show its result in ``name``: clear every other analysis layer.
+
+        The canvas shows the most recently displayed result. Each tab used to
+        write only its own layer, so an earlier result stayed drawn -- an
+        opaque ESP surface (the rho envelope round the molecule) then hid the
+        Excitation tab's hole and electron completely. A tab whose layer is
+        cleared here sees its result as no longer displayed (its
+        ``_surface_is_displayed``/``_scene_is_displayed`` read the layer), so it
+        stops pushing display changes until it is displayed again.
+        """
+        if name not in self.ANALYSIS_LAYERS:
+            raise ValueError(f"Unknown analysis layer: {name!r}")
+        for other in self.ANALYSIS_LAYERS:
+            layer = getattr(self, other, None)
+            if other != name and layer is not None:
+                layer.clear()
+        self.invalidate_scene_cache()
+        self.request_projection_update()
+
     # The hooks below draw the Cube tab's volume, the ESP tab's surface, the
     # QTAIM tab's critical points and paths, the NTO tab's orbitals and the
     # Excitation tab's surfaces.

@@ -1135,6 +1135,58 @@ def test_the_tools_menu_no_longer_opens_a_separate_esp_window():
     assert "Electrostatic Surface Potential" not in source
 
 
+def _ui_with_every_analysis_layer_filled():
+    import qtaimTopology as qt
+    from cubeRender import CubeSceneLayer
+    from espSurfaceLayer import ESPSurfaceLayer
+    from qtaimLayer import QTAIMScene, QTAIMSceneLayer, SceneCP
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.frames = []
+    ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
+    ui.cube_layer, ui.nto_layer, ui.excitation_layer = CubeSceneLayer(), CubeSceneLayer(), CubeSceneLayer()
+    ui.esp_layer, ui.qtaim_layer = ESPSurfaceLayer(), QTAIMSceneLayer()
+    for layer in (ui.cube_layer, ui.nto_layer, ui.excitation_layer):
+        layer.set_items([_cube_item()], colour_bar=("-1", "1", "caption"))
+    vertices = np.array([[8.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    ui.esp_layer.set_surface(vertices, np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.001)
+    ui.qtaim_layer.set_scene(QTAIMScene((SceneCP(1, qt.NCP, (0.0, 0.0, 0.0)),), (), ()))
+    return ui
+
+
+def _filled_layers(ui):
+    return sorted(name for name in MolecularViewerUI.ANALYSIS_LAYERS
+                  if (getattr(ui, name).items() if hasattr(getattr(ui, name), "items") else getattr(ui, name).get()))
+
+
+def test_showing_one_analysis_result_clears_every_other_tab_s_layer():
+    # Regression: an ESP surface stayed on the canvas (an opaque envelope round
+    # the molecule) after the Excitation tab displayed its hole and electron.
+    ui = _ui_with_every_analysis_layer_filled()
+    assert _filled_layers(ui) == sorted(MolecularViewerUI.ANALYSIS_LAYERS)
+    ui.invalidate_scene_cache()
+    ui.consume_projection_update_request()
+
+    ui.show_analysis_layer("excitation_layer")
+
+    assert _filled_layers(ui) == ["excitation_layer"]
+    assert ui.esp_layer.colour_bar_text() is None and ui.cube_layer.colour_bar() is None
+    assert ui.consume_projection_update_request() is True  # re-framed without the old surfaces
+
+
+@pytest.mark.parametrize("name", MolecularViewerUI.ANALYSIS_LAYERS)
+def test_every_analysis_layer_can_take_over_the_canvas(name):
+    ui = _ui_with_every_analysis_layer_filled()
+    ui.show_analysis_layer(name)
+    assert _filled_layers(ui) == [name]
+
+
+def test_the_analysis_layer_list_names_every_layer_the_canvas_draws():
+    import inspect
+    drawn = set(re.findall(r'getattr\(self, "(\w+_layer)"', inspect.getsource(MolecularViewerUI.render_scene_extras)))
+    assert drawn == set(MolecularViewerUI.ANALYSIS_LAYERS)
+
+
 def test_ui_overlay_draws_both_colour_bars():
     from cubeRender import CubeSceneLayer
     from espSurfaceLayer import ESPSurfaceLayer

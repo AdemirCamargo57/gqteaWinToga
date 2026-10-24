@@ -60,6 +60,10 @@ class StubViewer:
         self.frames, self.loaded, self.refreshed, self.opened = [], [], 0, 0
         self.main_window = StubWindow()
         self.window_open, self.frame = True, np.zeros((4, 6, 3), dtype=np.uint8)
+        self.claims = []
+
+    def show_analysis_layer(self, name):
+        self.claims.append(name)
 
     def viewer_window_is_open(self):
         return self.window_open
@@ -398,3 +402,11 @@ def test_tab_does_not_import_the_viewer_at_module_level():
     code = "import sys, ntoTab; print('molecularViewer' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], cwd=SRC, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "False"
+
+
+class TestCanvasOwnership:
+    """Displaying replaces whatever another tab left on the canvas (ESP surface, hole/electron, ...)."""
+
+    def test_displaying_claims_the_canvas(self, shown):
+        assert shown.viewer.claims and set(shown.viewer.claims) == {"nto_layer"}
+        assert shown.viewer.nto_layer.items()

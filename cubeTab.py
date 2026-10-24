@@ -551,6 +551,11 @@ class CubeTabController:
         return colours, (gaussview_label(-half), gaussview_label(half), caption)
 
     def apply_scene(self, items, colour_bar=None):
+        if items:
+            # Replace another tab's result (an opaque ESP surface would hide these).
+            claim = getattr(self.viewer, "show_analysis_layer", None)
+            if claim is not None:
+                claim("cube_layer")
         self.viewer.cube_layer.set_items(items, colour_bar=colour_bar)
         self.viewer.invalidate_scene_cache()
         self.viewer.request_projection_update()

@@ -600,6 +600,11 @@ class ExcitationTabController:
             while True:
                 self._refresh_pending = False
                 items, notes = await asyncio.to_thread(self.compute_scene_items)
+                if items:
+                    # Replace another tab's result (an opaque ESP surface would hide these).
+                    claim = getattr(self.viewer, "show_analysis_layer", None)
+                    if claim is not None:
+                        claim("excitation_layer")
                 self.viewer.excitation_layer.set_items(items)
                 self.viewer.invalidate_scene_cache()
                 self.viewer.request_projection_update()

@@ -136,6 +136,10 @@ class StubViewer:
         self.atom_display_style, self.show_atom_symbols, self.show_atom_numbers = "Line style", False, False
         self.atom_scale_factor = 1.0
         self.window_open, self.frame = True, np.zeros((4, 6, 3), dtype=np.uint8)
+        self.claims = []
+
+    def show_analysis_layer(self, name):
+        self.claims.append(name)
 
     def set_background_color(self, rgb):
         self.background_color = tuple(rgb)
@@ -664,3 +668,12 @@ class TestFlatAtoms:
         monkeypatch.setattr(mv, "glGetDoublev", lambda what: np.eye(4))
         right, up, toward = v.current_screen_axes()
         assert np.allclose(right, [1, 0, 0]) and np.allclose(up, [0, 1, 0])
+
+
+class TestCanvasOwnership:
+    """Displaying replaces whatever another tab left on the canvas (an opaque ESP surface hid the CPs)."""
+
+    def test_displaying_claims_the_canvas(self, ran):
+        asyncio.run(ran.display_results(None))
+        assert ran.viewer.claims == ["qtaim_layer"]
+        assert ran.viewer.qtaim_layer.get() is not None

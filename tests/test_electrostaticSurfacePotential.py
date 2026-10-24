@@ -240,6 +240,10 @@ class StubViewer:
         self.esp_layer = ESPSurfaceLayer()
         self.frame = list(frame or [])
         self.loaded = []
+        self.claims = []
+
+    def show_analysis_layer(self, name):
+        self.claims.append(name)
 
     @property
     def frames(self):
@@ -582,3 +586,13 @@ def test_the_module_does_not_import_the_viewer():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=str(Path(esp.__file__).parent), check=True)
     assert out.stdout.strip() == "False False"
+
+
+class TestCanvasOwnership:
+    """Showing the surface replaces whatever another tab left on the canvas."""
+
+    def test_showing_the_surface_claims_the_canvas(self, water_ui):
+        water_ui.viewer = StubViewer()
+        asyncio.run(water_ui.show_surface(None))
+        assert water_ui.viewer.claims == ["esp_layer"]
+        assert water_ui.viewer.esp_layer.get() is not None
