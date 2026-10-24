@@ -8,7 +8,7 @@ import threading
 import time
 from operator import itemgetter
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import glfw
 import numpy as np
@@ -26,6 +26,9 @@ from cubeTab import CubeTabController
 from electrostaticSurfacePotential import ESPTabController
 from espSurfaceLayer import ESPSurfaceLayer
 from help import AtomicData
+from indexRanges import format_index_ranges, parse_solute_index_ranges
+from viewerSelection import (connected_atoms, expand_to_molecules, selection_comment, selection_export_problem,
+                             selection_summary, visible_atoms_and_bonds, write_xyz_frames)
 from cubeTab import _assign  # write-only-on-change: every widget write re-lays out the window
 from molecularDesign import (ATOM_CANVAS_COLORS, ATOM_LABEL_COLOR, DEFAULT_ATOM_COLOR, MolecularDesignController,
                              canvas_palette, parse_hex_color)
@@ -51,6 +54,8 @@ DESIGN_OUTLINE_SCALE = 1.12    # the outline is a back-face sphere this much lar
 DESIGN_SYMBOL_FONT = ogl_glut.GLUT_BITMAP_HELVETICA_12
 DESIGN_NUMBER_FONT = ogl_glut.GLUT_BITMAP_HELVETICA_10
 DESIGN_SYMBOL_DROP = 4.0       # pixels: centres a 12 px cap height on the disc
+SELECTION_COLOR = (1.0, 0.55, 0.0)  # orange: distinct from measurement yellow and pick cyan
+SELECTION_OUTLINE_SCALE = 1.3       # selected atoms' rim: a back-face sphere this much larger
 
 
 def hex_to_rgb(text: str) -> Tuple[float, float, float]:
@@ -340,6 +345,15 @@ class MolecularViewer:
         self.label_only_mode = True
         self.identified_atoms: List[int] = []
 
+        # Atom/molecule selection (Ctrl+click = atom, Shift+click = molecule):
+        # 0-based atom identities, kept unchanged through every frame. A
+        # molecule is resolved once, from the bonds drawn when it was clicked.
+        self.selected_atoms: Set[int] = set()
+        self._selection_version = 0
+        self.show_selected_only = False
+        self.export_selected_only = False
+        self._left_press_mods = 0
+
         self.pick_label_color = (0.2, 1.0, 1.0)
         self.pick_pixel_threshold = 15.0
         # Snapshot of (modelview, projection, viewport) captured each render so
@@ -579,6 +593,7 @@ class MolecularViewer:
         self.invalidate_scene_cache()
         self.request_projection_update()
         self.calculate_bonds(0)
+        self.clear_selection()  # its indices belonged to the old structure
 
     def _drawn_bonds_fit_defaults(self, frame_data: Frame, bonds: List[Tuple[int, int]]) -> bool:
         """True when every drawn bond is within its element-pair default."""
@@ -972,16 +987,19 @@ class MolecularViewer:
                 self.last_mouse_pos = press_pos
                 self._left_press_pos = press_pos
                 self._left_dragged = False
+                # The modifiers held at the press decide what the click does.
+                self._left_press_mods = mods
             elif action == glfw.RELEASE:
                 self.mouse_down = False
                 if not self._left_dragged and self._left_press_pos is not None:
                     px, py = self._left_press_pos
                     picked_index = self._pick_atom_at(px, py)
                     if picked_index is not None:
-                        self._handle_atom_click(picked_index)
+                        self._route_atom_click(picked_index, self._left_press_mods)
                 self.last_mouse_pos = None
                 self._left_press_pos = None
                 self._left_dragged = False
+                self._left_press_mods = 0
         elif button == glfw.MOUSE_BUTTON_RIGHT:
             if action == glfw.PRESS:
                 self.right_mouse_down = True
@@ -1073,22 +1091,32 @@ class MolecularViewer:
         click_x = px
         click_y = (vy + vh) - py
 
-        candidates = []
-        for index, (_, position) in enumerate(frame_data):
-            projected = self._project_atom(position, modelview, projection, viewport)
-            if projected is None:
-                continue
-            sx, sy, sz = projected
-            if sz < 0.0 or sz > 1.0:
-                continue  # clipped by near/far planes
-            distance = float(np.hypot(sx - click_x, sy - click_y))
-            if distance <= self.pick_pixel_threshold:
-                candidates.append((sz, index))
-
-        if not candidates:
+        # Every shown atom projected in one product: the _project_atom maths,
+        # vectorised. The per-atom loop cost ~20 ms per click at 3000 atoms
+        # (~100 ms at 15 000) on the render thread.
+        indices, _ = self.visible_atoms_and_bonds(len(frame_data), ())
+        indices = np.fromiter(indices, dtype=np.intp)
+        if indices.size == 0:
             return None
-        candidates.sort()
-        return candidates[0][1]
+        obj = np.ones((indices.size, 4), dtype=float)
+        obj[:, :3] = [frame_data[i][1] for i in indices]
+        clip = (obj @ modelview) @ projection
+        w = clip[:, 3]
+        valid = w != 0.0
+        ndc = np.zeros((indices.size, 3), dtype=float)
+        ndc[valid] = clip[valid, :3] / w[valid, None]
+        win_x = vx + vw * (ndc[:, 0] + 1.0) / 2.0
+        win_y = vy + vh * (ndc[:, 1] + 1.0) / 2.0
+        win_z = (ndc[:, 2] + 1.0) / 2.0
+        distance = np.hypot(win_x - click_x, win_y - click_y)
+        # Clipped by the near/far planes or too far from the cursor: no hit.
+        hit = valid & (win_z >= 0.0) & (win_z <= 1.0) & (distance <= self.pick_pixel_threshold)
+        if not hit.any():
+            return None
+        # Nearest to the camera wins; equal depth -> lowest index (the old sort).
+        candidates = np.flatnonzero(hit)
+        best = candidates[np.lexsort((indices[candidates], win_z[candidates]))[0]]
+        return int(indices[best])
 
     def measurement_atom_count(self, measure_type: Optional[str]) -> Optional[int]:
         """Atoms consumed by ``measure_type``, or None if it is not a known type."""
@@ -1206,12 +1234,138 @@ class MolecularViewer:
         """
         return None
 
+    # ------------------------------------------------------------------
+    # Atom/molecule selection (Display tab "Selection")
+    # ------------------------------------------------------------------
+    def _route_atom_click(self, atom_index: int, mods: int = 0):
+        """Ctrl+click selects one atom, Shift+click its molecule (Ctrl wins);
+        a plain click keeps the label/measure behaviour of _handle_atom_click."""
+        if mods & glfw.MOD_CONTROL:
+            self.toggle_selected_atom(atom_index)
+        elif mods & glfw.MOD_SHIFT:
+            self.toggle_selected_molecule(atom_index)
+        else:
+            self._handle_atom_click(atom_index)
+
+    def get_selected_atoms(self) -> List[int]:
+        """Sorted snapshot of the selected 0-based atom indices."""
+        with self._state_lock:
+            return sorted(self.selected_atoms)
+
+    def _change_selection(self, change: Callable[[Set[int]], Set[int]]) -> bool:
+        """Apply ``change`` to a copy of the selection under the lock; True if it changed."""
+        with self._state_lock:
+            new = set(change(set(self.selected_atoms)))
+            if new == self.selected_atoms:
+                return False
+            self.selected_atoms = new
+            self._selection_version += 1
+            refocus = self.show_selected_only
+        if refocus:
+            self._refocus_camera()
+        self._notify_selection_changed()
+        return True
+
+    def set_selected_atoms(self, atoms) -> bool:
+        wanted = {int(i) for i in atoms}
+        return self._change_selection(lambda current: wanted)
+
+    def toggle_selected_atom(self, atom_index: int) -> bool:
+        return self._change_selection(lambda current: current ^ {int(atom_index)})
+
+    def molecule_atoms(self, atom_index: int) -> List[int]:
+        """The molecule of ``atom_index`` in the bonds drawn for the displayed frame."""
+        with self._state_lock:
+            bonds = list(self.bonds)
+            natoms = len(self.get_current_frame_data())
+        return connected_atoms(int(atom_index), bonds, natoms)
+
+    def toggle_selected_molecule(self, atom_index: int) -> bool:
+        """Select the clicked atom's molecule; remove it if it is already wholly selected."""
+        molecule = set(self.molecule_atoms(atom_index))
+        return self._change_selection(
+            lambda current: current - molecule if molecule <= current else current | molecule
+        )
+
+    def expand_selection_to_molecules(self) -> bool:
+        with self._state_lock:
+            bonds = list(self.bonds)
+            natoms = len(self.get_current_frame_data())
+            selected = sorted(self.selected_atoms)
+        expanded = set(expand_to_molecules(selected, bonds, natoms))
+        return self._change_selection(lambda current: current | expanded)
+
+    def clear_selection(self) -> bool:
+        return self._change_selection(lambda current: set())
+
+    def parse_selection_text(self, text: str) -> List[int]:
+        """1-based ranges ("1-3, 295-297") -> 0-based indices, checked against the frame."""
+        numbers = parse_solute_index_ranges(text or "")
+        if not numbers:
+            return []
+        natoms = len(self.get_current_frame_data())
+        if natoms == 0:
+            raise ValueError("No molecular data loaded.")
+        too_large = [n for n in numbers if n > natoms]
+        if too_large:
+            raise ValueError(
+                f"Atom {too_large[0]} does not exist: the displayed frame has {natoms} atoms."
+            )
+        return [n - 1 for n in numbers]
+
+    def _refocus_camera(self):
+        """Re-frame the view after the set of shown atoms changed."""
+        self.invalidate_scene_cache()
+        self.request_projection_update()
+
+    def set_show_selected_only(self, enabled: bool):
+        """Draw (and frame, and pick) only the selected atoms while a selection exists."""
+        with self._state_lock:
+            self.show_selected_only = bool(enabled)
+        self._refocus_camera()
+
+    def _shown_selection(self) -> Optional[Set[int]]:
+        """The selection when only it is shown, else None (every atom is shown)."""
+        with self._state_lock:
+            if self.show_selected_only and self.selected_atoms:
+                return set(self.selected_atoms)
+        return None
+
+    def visible_atoms_and_bonds(self, natoms: int, bonds):
+        """Atom indices and bonds to draw for a frame of ``natoms`` atoms."""
+        return visible_atoms_and_bonds(natoms, bonds, self._shown_selection())
+
+    def selection_outline_atoms(self, natoms: int) -> Set[int]:
+        """Atoms drawn with the orange rim: the selection, unless only it is shown."""
+        with self._state_lock:
+            if self.show_selected_only:
+                return set()
+            return {i for i in self.selected_atoms if 0 <= i < natoms}
+
+    def camera_focus_frame(self, frame_data: Optional[Frame] = None) -> Optional[Frame]:
+        """The atoms the camera frames: the shown selection, or None for every atom."""
+        selection = self._shown_selection()
+        if selection is None:
+            return None
+        if frame_data is None:
+            frame_data = self.get_current_frame_data()
+        focus = [frame_data[i] for i in sorted(selection) if i < len(frame_data)]
+        return focus or None
+
+    def _notify_selection_changed(self):
+        """Hook fired whenever the selection changes (possibly on the render thread).
+
+        No-op here so the base viewer stays headless; MolecularViewerUI
+        overrides it to update the Display tab from the Toga loop.
+        """
+        return None
+
     def set_projection(self):
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
 
         aspect_ratio = max(1, self.display[0]) / max(1, self.display[1])
-        radius = self.get_scene_radius()
+        radius = self.get_scene_radius(self.camera_focus_frame())
         camera_distance = self.get_camera_distance(radius)
         near_plane, far_plane = self.get_clipping_planes(radius, camera_distance)
         ortho_half_height = self.get_ortho_half_height(radius)
@@ -1242,6 +1396,23 @@ class MolecularViewer:
             gluSphere(quad, radius, 24, 24)
         finally:
             gluDeleteQuadric(quad)
+
+    def _draw_selection_outline(self, position, radius: float):
+        """Orange rim round a selected atom: the back half of a larger sphere,
+        unlit (Design style's outline technique), so it reads as a ring from any side."""
+        glDisable(GL_LIGHTING)
+        glEnable(GL_CULL_FACE)
+        glCullFace(GL_FRONT)
+        glColor3f(*SELECTION_COLOR)
+        glPushMatrix()
+        try:
+            glTranslatef(*position)
+            self.draw_sphere(radius * SELECTION_OUTLINE_SCALE)
+        finally:
+            glPopMatrix()
+            glCullFace(GL_BACK)
+            glDisable(GL_CULL_FACE)
+            glEnable(GL_LIGHTING)
 
     def create_cylinder(self, start, end, radius=None, slices=24):
         if radius is None:
@@ -1853,6 +2024,13 @@ class MolecularViewer:
     def render_frame(self, frame_data: Frame, bonds: List[Tuple[int, int]]):
         measure_type, measure_indices = self.get_measurement_overlay()
         picked = [i for i in self.get_picked_atoms() if 0 <= i < len(frame_data)]
+        # Show only selected: draw the selected atoms and the bonds between
+        # them; indices stay the original ones, so labels/measurements hold.
+        atom_indices, bonds = self.visible_atoms_and_bonds(len(frame_data), bonds)
+        outlined = self.selection_outline_atoms(len(frame_data))
+        shown = None if isinstance(atom_indices, range) else set(atom_indices)
+        if shown is not None:
+            picked = [i for i in picked if i in shown]
         # Picked atoms highlight like measured ones so a click gives immediate
         # feedback, before (or without) a measurement being run.
         highlighted_atoms = set(i for i in measure_indices if 0 <= i < len(frame_data))
@@ -1862,7 +2040,7 @@ class MolecularViewer:
         )
 
         if self.atom_display_style == DESIGN_STYLE:
-            self._render_design(frame_data, bonds, highlighted_atoms)
+            self._render_design(frame_data, bonds, highlighted_atoms, atom_indices, outlined)
         else:
             if self.show_bonds_as_lines():
                 for i, j in bonds:
@@ -1872,8 +2050,9 @@ class MolecularViewer:
                     end_color = self.atom_colors.get(end_element, (0.6, 0.6, 0.6))
                     self.draw_bond_line(start, end, start_color, end_color)
 
-            for idx, (element, position) in enumerate(frame_data, start=1):
-                atom_index = idx - 1
+            for atom_index in atom_indices:
+                element, position = frame_data[atom_index]
+                idx = atom_index + 1
                 color = (
                     self.measurement_highlight_color
                     if atom_index in highlighted_atoms
@@ -1889,6 +2068,9 @@ class MolecularViewer:
                         highlight_radius = max(highlight_radius, radius * 1.15)
                     self.draw_sphere(highlight_radius)
                     glPopMatrix()
+                if atom_index in outlined:
+                    sphere = radius if self.show_atoms_as_spheres() else max(radius, 0.18)
+                    self._draw_selection_outline(position, sphere)
 
                 if not self.fast_playback_mode:
                     label_parts = []
@@ -1948,6 +2130,8 @@ class MolecularViewer:
             for atom_index in self.get_identified_atoms():
                 if not 0 <= atom_index < len(frame_data):
                     continue
+                if shown is not None and atom_index not in shown:
+                    continue
                 element, position = frame_data[atom_index]
                 radius = self.get_atom_radius(element) * self.atom_scale_factor
                 label_pos = (
@@ -1995,8 +2179,15 @@ class MolecularViewer:
         for ch in text_value:
             glutBitmapCharacter(font, ord(ch))
 
-    def _render_design(self, frame_data: Frame, bonds: List[Tuple[int, int]], highlighted_atoms):
-        """The Molecular Design Canvas look (see DESIGN_STYLE), unlit."""
+    def _render_design(self, frame_data: Frame, bonds: List[Tuple[int, int]], highlighted_atoms,
+                       atom_indices=None, outlined=frozenset()):
+        """The Molecular Design Canvas look (see DESIGN_STYLE), unlit.
+
+        ``atom_indices`` are the atoms to draw (default all); atoms in
+        ``outlined`` get the orange selection rim instead of the palette outline.
+        """
+        if atom_indices is None:
+            atom_indices = range(len(frame_data))
         palette = design_palette(self.background_color)
         radius = DESIGN_ATOM_RADIUS * self.atom_scale_factor
         glDisable(GL_LIGHTING)
@@ -2012,14 +2203,16 @@ class MolecularViewer:
             # The outline is the back half of a slightly larger sphere: it shows
             # only as a ring round the disc, from any direction.
             glEnable(GL_CULL_FACE)
-            for index, (element, position) in enumerate(frame_data):
+            for index in atom_indices:
+                element, position = frame_data[index]
                 fill = (self.measurement_highlight_color if index in highlighted_atoms
                         else design_atom_colour(element))
+                selected = index in outlined
                 glPushMatrix()
                 glTranslatef(*position)
                 glCullFace(GL_FRONT)
-                glColor3f(*palette["outline"])
-                self.draw_sphere(radius * DESIGN_OUTLINE_SCALE)
+                glColor3f(*(SELECTION_COLOR if selected else palette["outline"]))
+                self.draw_sphere(radius * (SELECTION_OUTLINE_SCALE if selected else DESIGN_OUTLINE_SCALE))
                 glCullFace(GL_BACK)
                 glColor3f(*fill)
                 self.draw_sphere(radius)
@@ -2030,7 +2223,9 @@ class MolecularViewer:
                         np.asarray(glGetDoublev(GL_PROJECTION_MATRIX), dtype=float),
                         glGetIntegerv(GL_VIEWPORT))
                 right, up, toward = screen_axes(view[0])
-                for number, (element, position) in enumerate(frame_data, start=1):
+                for index in atom_indices:
+                    element, position = frame_data[index]
+                    number = index + 1
                     symbol_at, number_at = self.design_label_positions(position, radius, right, up, toward)
                     if self.show_atom_symbols:
                         self._draw_text_window(symbol_at, element, palette["symbol"], DESIGN_SYMBOL_FONT,
@@ -2099,8 +2294,12 @@ class MolecularViewer:
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
                 glLoadIdentity()
 
-                scene_center = self.get_system_center(frame_data)
-                scene_radius = self.get_active_scene_radius(frame_data)
+                # Showing only the selection: frame those atoms, so the view
+                # follows them as they move through the trajectory.
+                focus = self.camera_focus_frame(frame_data)
+                camera_frame = frame_data if focus is None else focus
+                scene_center = self.get_system_center(camera_frame)
+                scene_radius = self.get_active_scene_radius(camera_frame)
                 camera_distance = self.get_camera_distance(scene_radius)
 
                 glTranslatef(0.0, 0.0, -camera_distance)
@@ -2182,6 +2381,7 @@ class MolecularViewer:
             self.active_measurement_indices = []
         self.invalidate_bond_cache()
         self.invalidate_scene_cache()
+        self.clear_selection()  # its indices belonged to the old trajectory
         # The previous trajectory (now released) was frozen out of cycle
         # collection by its load; this load freezes the heap again at its end.
         gc.unfreeze()
@@ -2256,6 +2456,13 @@ class MolecularViewerUI(MolecularViewer):
         self.measure_indices_input = None
         self.measure_type_selection = None
         self.measurement_label = None
+
+        # Display tab "Selection" section
+        self.selection_input = None
+        self.selection_summary_label = None
+        self.show_selected_switch = None
+        self.export_selected_switch = None
+        self.save_trajectory_button = None
 
         # Box sizes UI
         self.box_a_input = None
@@ -2571,8 +2778,11 @@ class MolecularViewerUI(MolecularViewer):
             style=Pack(margin=(0, 16, 0, 0)),
         )
         self.atom_symbols_switch.value = False
+        # Clears clicked numbers and measurement picks (the Measure tab's
+        # Clear); named "Clear labels" so it is not mistaken for the atom
+        # selection's own Clear below.
         clear_labels_button = toga.Button(
-            "Clear selection",
+            "Clear labels",
             on_press=self.clear_atom_labels,
             style=Pack(width=150),
         )
@@ -2582,7 +2792,63 @@ class MolecularViewerUI(MolecularViewer):
             )
         )
 
+        self._build_selection_section(tab_box)
         return tab_box
+
+    def _build_selection_section(self, tab_box: toga.Box):
+        """Atom/molecule selection: which atoms are focused on and exported."""
+        tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
+        tab_box.add(self._section_heading("Selection"))
+        tab_box.add(
+            self._hint(
+                "In the 3D window, Ctrl+click selects or deselects an atom and Shift+click "
+                "its whole molecule (the bonds drawn now). Selected atoms keep their identity "
+                "in every frame. Or type 1-based atoms and ranges, e.g. 1-3, 295-297, and "
+                "press Enter."
+            )
+        )
+        self.selection_input = toga.TextInput(
+            placeholder="e.g. 1-3, 295-297",
+            style=Pack(flex=1, margin=(0, 8, 0, 0)),
+            on_confirm=self.apply_selection_field,
+        )
+        tab_box.add(self._form_row(self._form_label("Selected atoms:"), self.selection_input))
+        self.selection_summary_label = toga.Label(
+            "No atoms selected.", style=Pack(margin=(0, 0, 6, 0))
+        )
+        tab_box.add(self.selection_summary_label)
+        tab_box.add(
+            self._form_row(
+                toga.Button("Clear", on_press=self.clear_atom_selection,
+                            style=Pack(width=90, margin=(0, 8, 0, 0))),
+                toga.Button("Expand to molecules", on_press=self.expand_selection,
+                            style=Pack(width=170)),
+            )
+        )
+        # value goes to the constructor so building the tab fires no on_change.
+        self.show_selected_switch = toga.Switch(
+            "Show only selected atoms/molecules",
+            value=self.show_selected_only,
+            on_change=self.toggle_show_selected_only,
+        )
+        tab_box.add(self._form_row(self.show_selected_switch))
+        self.export_selected_switch = toga.Switch(
+            "Export only selected atoms/molecules",
+            value=self.export_selected_only,
+            on_change=self.toggle_export_selected_only,
+        )
+        self.save_trajectory_button = toga.Button(
+            "Save Trajectory XYZ...",
+            on_press=self.save_trajectory_xyz,
+            style=Pack(width=170, margin=(0, 0, 0, 16)),
+        )
+        tab_box.add(self._form_row(self.export_selected_switch, self.save_trajectory_button))
+        tab_box.add(
+            self._hint(
+                "The checkbox applies to Save Current Frame XYZ and Save Trajectory XYZ. "
+                "Atoms are written in their original order; the trajectory file is not changed."
+            )
+        )
 
     def _build_dynamics_tab(self) -> toga.Box:
         tab_box = toga.Box(style=Pack(direction=COLUMN, margin=12))
@@ -3395,6 +3661,118 @@ class MolecularViewerUI(MolecularViewer):
         shown = ",".join(str(i + 1) for i in sorted(labelled))
         self.set_status_message(f"Showing atom numbers: {shown}.")
 
+    # ------------------------------------------------------------------
+    # Atom/molecule selection (Display tab)
+    # ------------------------------------------------------------------
+    def _notify_selection_changed(self):
+        """Marshal a selection change onto the Toga loop (render thread -> UI)."""
+        loop = getattr(self, "loop", None)
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._sync_selection_widgets)
+
+    def _sync_selection_widgets(self):
+        """Selection field and summary from the selection (written only on change)."""
+        if getattr(self, "selection_input", None) is None:
+            return
+        atoms = self.get_selected_atoms()
+        elements = [element for element, _ in self.get_current_frame_data()]
+        summary = selection_summary(elements, atoms)
+        _assign(self.selection_input, "value", format_index_ranges(i + 1 for i in atoms))
+        _assign(self.selection_summary_label, "text", summary)
+        self.set_status_message(f"Selection: {summary}")
+
+    async def apply_selection_field(self, widget):
+        try:
+            atoms = self.parse_selection_text(self.selection_input.value or "")
+        except ValueError as exc:
+            await self._show_error("Selection Error", str(exc))
+            return
+        self.set_selected_atoms(atoms)
+        self._sync_selection_widgets()  # normalise the typed text even if unchanged
+
+    def clear_atom_selection(self, widget):
+        self.clear_selection()
+        self._sync_selection_widgets()
+
+    def expand_selection(self, widget):
+        if not self.get_selected_atoms():
+            self.set_status_message("Select atoms first, then expand them to whole molecules.")
+            return
+        self.expand_selection_to_molecules()
+        self._sync_selection_widgets()
+
+    def toggle_show_selected_only(self, widget):
+        self.set_show_selected_only(bool(self.show_selected_switch.value))
+        if self.show_selected_only and not self.get_selected_atoms():
+            self.set_status_message("Show only selected is on; select atoms to apply it.")
+
+    def toggle_export_selected_only(self, widget):
+        self.export_selected_only = bool(self.export_selected_switch.value)
+
+    def _export_source(self) -> Tuple[str, str]:
+        """(loaded file path or "", base name for suggested file names)."""
+        source = (self.textInput_file.value or "").strip() if self.textInput_file else ""
+        base = os.path.splitext(os.path.basename(source))[0] if source else ""
+        return source, base or "frame"
+
+    async def save_trajectory_xyz(self, widget):
+        """Every loaded frame as XYZ: all atoms, or only the selected ones."""
+        with self._state_lock:
+            frames = self.frames  # replaced, never mutated, by a load: a free snapshot
+        if not frames:
+            await self._show_error("No Data", "Load a trajectory or structure before saving it.")
+            return
+        indices = self.get_selected_atoms() if self.export_selected_only else None
+        if indices is not None:
+            problem = selection_export_problem(frames, indices)
+            if problem:
+                await self._show_error("Selection Error", problem)
+                return
+
+        source, base = self._export_source()
+        suffix = "_selected" if indices is not None else "_trajectory"
+        selected = await self.main_window.dialog(
+            toga.SaveFileDialog(title="Save Trajectory as XYZ", suggested_filename=f"{base}{suffix}.xyz")
+        )
+        if not selected:
+            return
+        output_path = str(selected)
+        if source and os.path.normcase(os.path.abspath(output_path)) == os.path.normcase(
+            os.path.abspath(source)
+        ):
+            await self._show_error(
+                "Save Error", "Choose another file name: this is the trajectory being viewed."
+            )
+            return
+
+        source_name = os.path.basename(source) or "molecularViewer"
+        if indices is None:
+            comment_for = lambda k: f"Frame {k} of {source_name} exported from molecularViewer"
+        else:
+            comment_for = lambda k: selection_comment(k, source_name, indices)
+
+        def report(done: int, total: int):
+            self.set_status_message(f"Saving trajectory... {done} / {total} frames")
+
+        if self.save_trajectory_button is not None:
+            self.save_trajectory_button.enabled = False
+        try:
+            count = await asyncio.to_thread(
+                write_xyz_frames, output_path, frames, indices, comment_for, 0, report
+            )
+        except OSError as exc:
+            await self._show_error("Save Error", str(exc))
+            return
+        finally:
+            if self.save_trajectory_button is not None:
+                self.save_trajectory_button.enabled = True
+        what = f"{len(indices)} selected atoms" if indices is not None else "all atoms"
+        self.set_status_message(f"Saved {count} frames ({what}) to {output_path}")
+        await self.main_window.dialog(
+            toga.InfoDialog("Trajectory Saved", f"{count} frames ({what}) saved to:\n{output_path}")
+        )
+
     def _sync_measure_field_from_picks(self):
         """Write the pick list into the Measure field, measuring when complete."""
         if not getattr(self, "measure_indices_input", None):
@@ -3538,11 +3916,17 @@ class MolecularViewerUI(MolecularViewer):
                 await self._show_error("No Data", "No frame is available to save.")
                 return
 
-            base_name = "frame"
-            input_path = (self.textInput_file.value or "").strip()
-            if input_path:
-                base_name = os.path.splitext(os.path.basename(input_path))[0] or "frame"
-            suggested = f"{base_name}_frame_{self.current_frame:04d}.xyz"
+            # "Export only selected atoms/molecules" (Display tab) applies here too.
+            indices = self.get_selected_atoms() if self.export_selected_only else None
+            if indices is not None:
+                problem = selection_export_problem([frame_data], indices, self.current_frame)
+                if problem:
+                    await self._show_error("Selection Error", problem)
+                    return
+
+            source, base_name = self._export_source()
+            suffix = "_selected" if indices is not None else ""
+            suggested = f"{base_name}_frame_{self.current_frame:04d}{suffix}.xyz"
 
             selected = await self.main_window.dialog(
                 toga.SaveFileDialog(title="Save Current Frame as XYZ", suggested_filename=suggested)
@@ -3551,11 +3935,12 @@ class MolecularViewerUI(MolecularViewer):
                 return
 
             output_path = str(selected)
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(f"{len(frame_data)}\n")
-                f.write(f"Frame {self.current_frame} exported from molecularViewer\n")
-                for element, (x, y, z) in frame_data:
-                    f.write(f"{element:<3s} {x: .8f} {y: .8f} {z: .8f}\n")
+            if indices is None:
+                comment_for = lambda k: f"Frame {k} exported from molecularViewer"
+            else:
+                source_name = os.path.basename(source) or "molecularViewer"
+                comment_for = lambda k: selection_comment(k, source_name, indices)
+            write_xyz_frames(output_path, [frame_data], indices, comment_for, self.current_frame)
 
             await self.main_window.dialog(
                 toga.InfoDialog("Frame Saved", f"Current frame saved to:\n{output_path}")

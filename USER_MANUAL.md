@@ -1629,7 +1629,8 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded. Type a value and press Enter to apply it to every atom pair. Leave it blank (and press Enter to clear a previous value) to use the default, which depends on the two elements: the sum of their covalent radii plus 0.45 Å (for example 1.97 Å for C–C, 1.42 Å for O–H), or 1.5 Å for an element with no known radius. Two atoms farther apart than the applicable limit are never drawn as bonded.
 - **Rotation**: rotate the displayed system about X, Y, and Z (described below).
 - **Atom numbers** and **Atomic symbols**: label every atom in the 3D view. Both are **off by default**, so the view starts uncluttered — click individual atoms to read their numbers (see the **Measure** tab's **None** type), or turn **Atom numbers** on to label the whole structure at once.
-- **Clear selection**: deselect every atom you have clicked, remove any atom numbers you revealed by clicking, and clear the **Measure** tab's field and result.
+- **Clear labels**: deselect every atom you have clicked for a measurement, remove any atom numbers you revealed by clicking, and clear the **Measure** tab's field and result. (This button was called *Clear selection* before the **Selection** section below existed; it does not touch that selection.)
+- **Selection** section: choose atoms or whole molecules to focus on and to export (described below under *Selecting atoms and molecules*).
 
 ##### Dynamics tab
 
@@ -1769,11 +1770,33 @@ Selecting further atoms keeps working without any clearing step:
 - Left-click a selected atom to deselect it.
 - Left-click a new atom when the selection is already full and the **oldest** pick drops off. For a bond length, this lets you walk a measurement along a chain of atoms one click at a time, getting a new value at every click.
 - Switching the measurement type to one that needs fewer atoms keeps your most recent picks.
-- **Clear** (Measure tab) or **Clear selection** (Display tab) deselects everything.
+- **Clear** (Measure tab) or **Clear labels** (Display tab) deselects everything.
 
 Because a click always writes into the field, it will overwrite part of an entry you typed by hand. If you are working from typed labels, click **Measure** before clicking anywhere in the 3D window.
 
 Selections stay attached to the same atoms as you step through or play the trajectory, because atom ordering is constant across frames. Note that **Reduce overlays during playback** (Box tab) hides all atom labels while it is on, including the index and pick-order labels.
+
+##### Selecting atoms and molecules
+
+To follow a few molecules through a trajectory, for example a hydrogen-bonded pair, select them and show or export only them. The trajectory itself is never changed.
+
+- **Ctrl+click** an atom in the 3D window to select it, and Ctrl+click it again to deselect it.
+- **Shift+click** an atom to select its whole molecule: every atom connected to it by the bonds currently drawn (so the **Max bond length** and the Dynamics tab's **Recompute bonds for every frame** setting decide what a molecule is). Shift+click a molecule that is already fully selected to deselect it. If both keys are held, Ctrl wins.
+- A plain left-click still does what it did before (show an atom's number, or pick it for a measurement), so selection and measurement can be used together.
+- Selected atoms keep their element colour and get an **orange rim** (an orange dot in Line style).
+- **The selection is a fixed set of atoms.** A molecule is turned into its atoms at the moment you click it, and those same atoms are followed in every frame. If a proton later moves to another molecule, it stays selected; nothing is recalculated from positions during playback. The selection is cleared when another file or a designed molecule is loaded.
+- **Bonds across the periodic boundary are not detected**, so a molecule split by the box edge in wrapped coordinates is selected in parts: Shift+click each part.
+
+The **Selection** section of the **Display** tab shows and controls the selection:
+
+- **Selected atoms**: the selection as 1-based atom numbers and ranges, for example `1-3, 295-297`. You can also type numbers here and press Enter to replace the selection.
+- The line below it summarises the selection, for example `6 atoms: H4 O2`.
+- **Clear** empties the selection. **Expand to molecules** adds the rest of every molecule that has at least one selected atom, which is handy after typing atom numbers.
+- **Show only selected atoms/molecules**: draws only the selected atoms and the bonds between them, and centres and zooms the view on them, so they stay in view as they move during playback. Hidden atoms cannot be clicked. With nothing selected, everything is shown.
+- **Export only selected atoms/molecules**: when ticked, **Save Current Frame XYZ** (header) and **Save Trajectory XYZ...** write only the selected atoms. Unticked, both write every atom (the current-frame file is exactly as before).
+- **Save Trajectory XYZ...** writes every loaded frame, in order, to one XYZ file (a single structure gives one frame). It runs in the background with progress in the status line.
+
+In an exported file each frame has the right atom count on its first line, the atoms appear in their original order, the coordinates are written with 8 decimals, and the comment line names the frame, the source file and the original atom numbers, for example `Frame 7 of TRAJEC.xyz: 6 selected atoms (source atoms 1-3,295-297)`. Nothing is written, and a message explains why, when **Export only selected** is ticked but no atoms are selected, when a frame has fewer atoms than the selection needs (an atom count that changes along the trajectory), or when you choose the loaded trajectory itself as the output file.
 
 The rotation controls on the **Display** tab let you rotate the displayed molecular system around the X, Y, and Z axes without changing the coordinates stored in the loaded structure or trajectory. Enter rotation increments in degrees, then either press Enter in one of the angle fields or click **Apply angles** to add those increments to the current molecular orientation. Click **Reset rotation** to return the displayed molecular orientation to zero rotation. The `<` and `>` buttons beside each axis start continuous rotation in the negative or positive direction; click the same arrow again to stop it, or click another arrow to switch to that axis and direction.
 

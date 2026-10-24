@@ -3,7 +3,7 @@
 Toga-free, so numerical modules can use it; allBondAnalysis re-exports it.
 """
 
-from typing import List
+from typing import Iterable, List
 
 
 def parse_solute_index_ranges(text: str, sort_unique: bool = True) -> List[int]:
@@ -45,3 +45,24 @@ def parse_solute_index_ranges(text: str, sort_unique: bool = True) -> List[int]:
             ordered.append(value)
 
     return sorted(set(ordered)) if sort_unique else ordered
+
+
+def format_index_ranges(indices: Iterable[int], sep: str = ", ") -> str:
+    """Inverse of parse_solute_index_ranges: [1, 2, 3, 7, 9, 10] -> "1-3, 7, 9-10".
+
+    Sorted and de-duplicated; ``sep`` joins the parts (", " for a text field,
+    "," for a compact XYZ comment line). Empty input gives "".
+    """
+    parts: List[str] = []
+    start = previous = None
+    for value in sorted(set(int(v) for v in indices)):
+        if start is None:
+            start = previous = value
+        elif value == previous + 1:
+            previous = value
+        else:
+            parts.append(str(start) if start == previous else f"{start}-{previous}")
+            start = previous = value
+    if start is not None:
+        parts.append(str(start) if start == previous else f"{start}-{previous}")
+    return sep.join(parts)
