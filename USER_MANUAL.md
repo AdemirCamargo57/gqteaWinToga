@@ -146,7 +146,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-1.0.0 Molecular Analysis Toolkit
+gQTEA-1.5.0 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -6793,8 +6793,19 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-1.0.0 Molecular Analysis Toolkit
+gQTEA-1.5.0 Molecular Analysis Toolkit
 ```
+
+Version 1.5.0 (October 2026) adds the [Excitation tab](#electron-excitation-analysis-excitation-tab) to the 3D Molecular Viewer, atom and molecule selection, and a fix for the 3D canvas:
+
+- electron excitation analysis of any CIS, TDA or TD excited state from the same `.fchk` and output pair as the NTO tab, computed without Multiwfn: hole–electron indices (D, Sr, Sm, Δσ, H, t, HDI, EDI and more), MO, atom and fragment contributions (Mulliken-like or Hirshfeld), interfragment charge transfer, the Δr and Λ indices, the hole–electron Coulomb attraction (optional exact value in a fast or a precise mode), and a classification of the excitation (local, charge transfer, Rydberg-like and others) with the evidence behind it;
+- validated against Multiwfn 2026.7.15 on the D-π-A, N-phenylpyrrole, 4-nitroaniline and formaldehyde examples;
+- hole, electron, charge-density-difference and transition-density isosurfaces, centroids and the charge-transfer arrow in the 3D window; cube export, *Send to Cube tab*, 3D image export, composition and charge-transfer heat maps, and the `<name>_state<n>_excitation.txt` report;
+- **atom and molecule selection** in the 3D window: Ctrl+click selects an atom and Shift+click its whole molecule; the selected atoms are followed through every frame, can be shown alone (the view follows them during playback) and exported alone, for the current frame or with the new **Save Trajectory XYZ...** (see [Selecting atoms and molecules](#selecting-atoms-and-molecules));
+- the viewer's **Box** tab now comes right after **Display**, and clicking an atom is faster in large systems;
+- [Example 11](#example-11-classifying-the-excited-states-of-a-push-pull-molecule-d-pi-a) and [the method](#formulas-and-methods-excitation-tab) in this manual.
+
+It also fixes the 3D canvas keeping an earlier analysis result on screen: displaying a result in the Cube, ESP, QTAIM, NTO or Excitation tab now replaces what another of these tabs was showing (an ESP surface used to hide the hole and electron of a later excitation analysis completely).
 
 Version 1.0.0 (October 2026) adds the [NTO tab](#natural-transition-orbitals-nto) to the 3D Molecular Viewer:
 
