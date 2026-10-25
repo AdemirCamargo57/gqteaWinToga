@@ -7,8 +7,10 @@ phases (or |phi|^2) as isosurfaces in the viewer's own 3D window through
 ``viewer.orbital_layer`` (a ``cubeRender.CubeSceneLayer``). The numerical
 work is ``molecularOrbitals`` (headless). Each computed orbital is a Cube-tab
 ``CubeEntry`` (meshes cached per isovalue and sign), the last few grids are
-kept so stepping back and forth is instant, and colour, opacity and style
-never re-mesh. Widget writes go through ``cubeTab._assign`` (every write
+kept so stepping back and forth is instant, and colours never re-mesh. The
+Style and Transparency controls mirror the viewer's canvas-wide surface style
+(its Display tab), which the layer applies when it draws. Widget writes go
+through ``cubeTab._assign`` (every write
 re-lays out the viewer window) and the change handlers are synchronous and
 ``_syncing``-guarded, as in the Cube, QTAIM and NTO tabs.
 """
@@ -28,7 +30,7 @@ from toga.style.pack import COLUMN, ROW
 
 import molecularOrbitals as mo
 import volumeData as vd
-from cubeRender import line_item, surface_item
+from cubeRender import surface_item
 from cubeTab import CubeEntry, _assign, _item_names, canonical_colour
 from help import HelpGqteaWin
 from qtaimTab import fit_table_columns, parse_optional_float
@@ -38,8 +40,8 @@ SURFACE_DENSITY = "Orbital density |φ|²"
 SURFACES = (SURFACE_PHASES, SURFACE_DENSITY)
 ISOVALUE_LABELS = {SURFACE_PHASES: "Isovalue (a.u.):", SURFACE_DENSITY: "|φ|² isovalue (a.u.):"}
 DEFAULT_ISOVALUES = {SURFACE_PHASES: mo.ORBITAL_ISOVALUE, SURFACE_DENSITY: mo.DENSITY_ISOVALUE}
-STYLE_SOLID, STYLE_TRANSPARENT, STYLE_MESH = "Solid", "Transparent", "Mesh"
-STYLES = (STYLE_SOLID, STYLE_TRANSPARENT, STYLE_MESH)
+STYLE_SOLID, STYLE_TRANSPARENT, STYLE_MESH = vd.SURFACE_SOLID, vd.SURFACE_TRANSPARENT, vd.SURFACE_MESH
+STYLES = vd.SURFACE_STYLES
 GRID_CUSTOM = "Custom"
 GRID_ITEMS = [*mo.GRID_PRESETS, GRID_CUSTOM]
 SIGNS = (1, -1)
@@ -51,9 +53,7 @@ TABLE_HEADINGS = ["MO", "Label", "Occ.", "Energy (Ha)", "Energy (eV)"]
 TABLE_ACCESSORS = ["mo", "label", "occupancy", "energy_ha", "energy_ev"]
 TABLE_COLUMN_FRACTIONS = (0.13, 0.24, 0.13, 0.24, 0.24)   # 0.98: room for the vertical scroll bar
 IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]
-TRANSPARENT_OPACITY = 0.5
-MIN_OPACITY = 0.1
-MESH_LINE_SPACING = 0.4  # bohr between the Mesh style's contour planes (GaussView-like line density)
+MAX_TRANSPARENCY = vd.MAX_TRANSPARENCY
 GRID_CACHE_SIZE = 3      # amplitude grids kept (about 45 MB each for benzene at Medium)
 
 
@@ -89,9 +89,10 @@ class OrbitalTabController:
         self.number: Optional[int] = None          # the selected MO (1-based)
         self.surface = SURFACE_PHASES
         self.surface_isovalue = mo.ORBITAL_ISOVALUE  # as typed: phi for phases, |phi|^2 for density
-        self.style = STYLE_SOLID
+        # Mirrors of the viewer's canvas surface style (set in the Display tab or here).
+        self.style = getattr(viewer, "canvas_surface_style", STYLE_SOLID)
+        self.transparency = float(getattr(viewer, "canvas_transparency", vd.DEFAULT_TRANSPARENCY))
         self.colours: Dict[int, str] = dict(DEFAULT_COLOURS)
-        self.opacity = TRANSPARENT_OPACITY          # the Transparent style's opacity
         self.use_numba: Optional[bool] = None       # None = if installed
         self._isovalue_text = {surface: "" for surface in SURFACES}
         self._grids: "OrderedDict[tuple, Dict[str, CubeEntry]]" = OrderedDict()  # LRU of computed orbitals
@@ -156,12 +157,13 @@ class OrbitalTabController:
             self.spacing_input = toga.TextInput(placeholder=f"{mo.preset_spacing(mo.DEFAULT_GRID):.4g} bohr",
                                                 on_confirm=self.on_grid_confirm, style=Pack(width=110, margin_left=10))
             self.spacing_input.enabled = False
+            # Mirrors of the canvas surface style (the Display tab's): changing either changes both.
             self.style_selection = toga.Selection(items=list(STYLES), on_change=self.on_style_change,
                                                   style=Pack(width=120))
             self.style_selection.value = self.style
-            self.opacity_slider = toga.Slider(min=MIN_OPACITY, max=1.0, value=TRANSPARENT_OPACITY,
-                                              on_change=self.on_opacity_change, style=Pack(width=200))
-            self.opacity_slider.enabled = False
+            self.transparency_slider = toga.Slider(min=0.0, max=MAX_TRANSPARENCY, value=self.transparency,
+                                                   on_change=self.on_transparency_change, style=Pack(width=200))
+            self.transparency_slider.enabled = self.style == STYLE_TRANSPARENT
             self.colour_inputs = {sign: toga.TextInput(value=DEFAULT_COLOURS[sign], on_confirm=self.on_colour_confirm,
                                                        style=Pack(width=120)) for sign in SIGNS}
             self.display_button = self._button("Display", self.display_orbital)
@@ -205,7 +207,9 @@ class OrbitalTabController:
             self._hint("Coarse, Medium, Fine = 3, 6, 12 points per bohr (cubegen's grids); Custom uses the typed "
                        "spacing in bohr. Enter applies a typed value."),
             self._row(self._label("Style:"), self.style_selection),
-            self._row(self._label("Opacity (Transparent):"), self.opacity_slider),
+            self._row(self._label("Transparency:"), self.transparency_slider),
+            self._hint("Style and Transparency are the canvas-wide settings of the Display tab: they apply to "
+                       "every surface drawn."),
             self._row(self._label(f"{COLOUR_LABELS[1]} / {COLOUR_LABELS[-1]}:"), self.colour_inputs[1],
                       toga.Label("  ", style=Pack(width=10)), self.colour_inputs[-1]),
             self._hint("Colours: Red, Green, Blue, Yellow, Orange, Cyan, Magenta, Purple, White, Grey or #rrggbb "
@@ -521,20 +525,36 @@ class OrbitalTabController:
             return
         self._start(self._display())
 
+    # Style and Transparency set the viewer's canvas-wide surface style, which
+    # the layers apply when they draw: nothing here is recomputed.
     def on_style_change(self, widget, **kwargs):
-        if self._syncing:
+        if self._syncing or widget.value not in STYLES:
             return
-        self.style = widget.value if widget.value in STYLES else STYLE_SOLID
-        _assign(self.opacity_slider, "enabled", self.style == STYLE_TRANSPARENT)
-        if self._scene_is_displayed():
-            self._start(self.refresh_scene())
+        self._apply_canvas_style(style=widget.value)
 
-    def on_opacity_change(self, widget, **kwargs):
+    def on_transparency_change(self, widget, **kwargs):
         if self._syncing:
             return
-        self.opacity = max(MIN_OPACITY, min(1.0, float(widget.value)))
-        if self.style == STYLE_TRANSPARENT and self._scene_is_displayed():
-            self._start(self.refresh_scene())
+        self._apply_canvas_style(transparency=float(widget.value))
+
+    def _apply_canvas_style(self, style=None, transparency=None):
+        apply = getattr(self.viewer, "apply_surface_style", None)
+        if apply is not None:
+            apply(style=style, transparency=transparency)  # calls sync_surface_widgets back
+        else:
+            self.sync_surface_widgets(self.style if style is None else style,
+                                      self.transparency if transparency is None else transparency)
+
+    def sync_surface_widgets(self, style: str, transparency: float):
+        """Show the canvas surface style (set here or in the Display tab) in this tab's widgets."""
+        self.style, self.transparency = style, float(transparency)
+        self._syncing = True
+        try:
+            _assign(self.style_selection, "value", style)
+            _assign(self.transparency_slider, "value", float(transparency))
+            _assign(self.transparency_slider, "enabled", style == STYLE_TRANSPARENT)
+        finally:
+            self._syncing = False
 
     def on_colour_confirm(self, widget, **kwargs):
         if self._syncing:
@@ -616,11 +636,12 @@ class OrbitalTabController:
         entry.isovalue = self.surface_isovalue
         return entry
 
-    def _style_opacity(self) -> float:
-        return self.opacity if self.style == STYLE_TRANSPARENT else 1.0
-
     def compute_scene_items(self):
-        """(render items, notes) of the current orbital, Surface, style and colours. Runs in a worker thread."""
+        """(render items, notes) of the current orbital, Surface and colours. Runs in a worker thread.
+
+        The items are plain opaque isosurfaces: the canvas surface style
+        (Solid/Transparent/Mesh) is applied by the layer when it draws.
+        """
         entry = self.surface_entry()
         if entry is None:
             return [], []
@@ -633,11 +654,7 @@ class OrbitalTabController:
                 continue
             if mesh.clipped:
                 notes.append("The surface reaches the edge of the grid; raise the isovalue.")
-            rgb = vd.parse_colour(self.colours[sign])
-            if self.style == STYLE_MESH:
-                items.append(line_item(vd.contour_lines(mesh, entry.volume.origin, MESH_LINE_SPACING), rgb))
-            else:
-                items.append(surface_item(mesh, rgb, self._style_opacity()))
+            items.append(surface_item(mesh, vd.parse_colour(self.colours[sign]), 1.0))
         return items, notes
 
     async def refresh_scene(self):

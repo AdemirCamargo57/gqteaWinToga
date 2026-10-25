@@ -34,6 +34,8 @@ import numpy as np
 from OpenGL.GL import *  # noqa: F401,F403 - same style as molecularViewer
 
 from espIntegrals import HARTREE_TO_KCAL_MOL
+from volumeData import (BOHR_RADIUS_ANGSTROM, MESH_LINE_SPACING_BOHR, SURFACE_SOLID, SURFACE_TRANSPARENT, IsoMesh,
+                        checked_surface_style, contour_lines)
 
 UNIT_AU = "a.u."
 UNIT_KCAL = "kcal/mol"
@@ -130,6 +132,11 @@ class ESPSurfaceLayer:
         self.colour_unit = UNIT_AU
         self.surface_opacity = 1.0
         self.show_extrema = True
+        # The 3D viewer's canvas surface style; None (the Fukui tool's own
+        # window) draws with surface_opacity alone, as before.
+        self._style: Optional[Tuple[str, float]] = None
+        self._mesh = None       # (surface data, (vertices, rgba)) of the Mesh style
+        self._restyled = None   # (source rgba, alpha, rgba) of the Solid/Transparent styles
 
     # --- state (Toga thread) -------------------------------------------
     def set_surface(self, vertices_angstrom, triangles, normals, values_au, isovalue,
@@ -179,6 +186,52 @@ class ESPSurfaceLayer:
                 if self._surface is not None:
                     self._surface.rgba = self._rgba(self._surface.values, self._surface.half_range)
 
+    def set_surface_style(self, style: Optional[str], transparency: float = 0.5):
+        """The canvas surface style (None: surface_opacity alone)."""
+        checked = None if style is None else checked_surface_style(style, transparency)
+        with self._lock:
+            self._style = checked
+
+    def surface_style(self) -> Optional[Tuple[str, float]]:
+        with self._lock:
+            return self._style
+
+    def styled_rgba(self, s: SurfaceDrawData) -> Optional[np.ndarray]:
+        """The surface colours under the canvas style; None for the Mesh style (drawn as lines)."""
+        style = self.surface_style()
+        if style is None:
+            return s.rgba
+        name, transparency = style
+        if name == SURFACE_SOLID:
+            alpha = 1.0
+        elif name == SURFACE_TRANSPARENT:
+            alpha = max(MIN_OPACITY, self.surface_opacity * (1.0 - transparency))
+        else:
+            return None
+        if not len(s.rgba) or abs(float(s.rgba[0, 3]) - alpha) < 1e-6:
+            return s.rgba
+        cached = self._restyled
+        if cached is not None and cached[0] is s.rgba and cached[1] == alpha:
+            return cached[2]   # drawn every frame: copy once per surface, colours and alpha
+        rgba = np.array(s.rgba, copy=True)
+        rgba[:, 3] = alpha
+        self._restyled = (s.rgba, alpha, rgba)
+        return rgba
+
+    def mesh_lines(self, s: SurfaceDrawData) -> Tuple[np.ndarray, np.ndarray]:
+        """(vertices (2S, 3) Angstrom, rgba (2S, 4)) of the Mesh style, cached per surface."""
+        cached = self._mesh
+        if cached is not None and cached[0] is s:
+            return cached[1]
+        mesh = IsoMesh(np.asarray(s.vertices, dtype=float), s.indices.reshape(-1, 3), None)
+        segments, colours = contour_lines(mesh, np.zeros(3), MESH_LINE_SPACING_BOHR * BOHR_RADIUS_ANGSTROM,
+                                          values=s.rgba[:, :3])
+        vertices = np.ascontiguousarray(segments.reshape(-1, 3), dtype=np.float32)
+        rgba = np.ascontiguousarray(np.hstack([colours.reshape(-1, 3), np.ones((len(vertices), 1))]),
+                                    dtype=np.float32)
+        self._mesh = (s, (vertices, rgba))
+        return vertices, rgba
+
     def _rgba(self, values, half_range) -> np.ndarray:
         rgb = esp_colours(values, half_range)
         alpha = np.full((len(rgb), 1), self.surface_opacity)
@@ -197,12 +250,34 @@ class ESPSurfaceLayer:
         s = self.get()
         if s is None:
             return
-        self._draw_surface(s)
+        rgba = self.styled_rgba(s)
+        if rgba is None:
+            self._draw_lines(*self.mesh_lines(s))
+        else:
+            self._draw_surface(s, rgba)
         if self.show_extrema:
             self._draw_markers(viewer, s)
 
-    def _draw_surface(self, s: SurfaceDrawData):
-        translucent = self.surface_opacity < 0.999
+    @staticmethod
+    def _draw_lines(vertices: np.ndarray, rgba: np.ndarray):
+        glDisable(GL_LIGHTING)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        try:
+            glVertexPointer(3, GL_FLOAT, 0, vertices)
+            glColorPointer(4, GL_FLOAT, 0, rgba)
+            glDrawArrays(GL_LINES, 0, int(len(vertices)))
+        finally:
+            glDisableClientState(GL_COLOR_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
+            glEnable(GL_LIGHTING)
+
+    def _draw_surface(self, s: SurfaceDrawData, rgba: Optional[np.ndarray] = None):
+        rgba = s.rgba if rgba is None else rgba
+        if self.surface_style() is None:
+            translucent = self.surface_opacity < 0.999  # unchanged rule for the Fukui tool's window
+        else:
+            translucent = bool(len(rgba)) and float(rgba[:, 3].min()) < 0.999
         glEnable(GL_COLOR_MATERIAL)
         glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
         glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.6, 0.6, 0.6, 1.0))
@@ -218,7 +293,7 @@ class ESPSurfaceLayer:
         try:
             glVertexPointer(3, GL_FLOAT, 0, s.vertices)
             glNormalPointer(GL_FLOAT, 0, s.normals)
-            glColorPointer(4, GL_FLOAT, 0, s.rgba)
+            glColorPointer(4, GL_FLOAT, 0, rgba)
             glDrawElements(GL_TRIANGLES, int(s.indices.size), GL_UNSIGNED_INT, s.indices)
         finally:
             glDisableClientState(GL_COLOR_ARRAY)

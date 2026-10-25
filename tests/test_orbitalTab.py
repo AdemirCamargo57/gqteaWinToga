@@ -65,6 +65,19 @@ class StubViewer:
         self.main_window = StubWindow()
         self.window_open, self.frame = True, np.zeros((4, 6, 3), dtype=np.uint8)
         self.claims = []
+        # The canvas surface style, as MolecularViewerUI keeps it (Solid on every layer at start).
+        self.canvas_surface_style, self.canvas_transparency = vd.SURFACE_SOLID, vd.DEFAULT_TRANSPARENCY
+        self.orbital_layer.set_surface_style(vd.SURFACE_SOLID, vd.DEFAULT_TRANSPARENCY)
+        self.orbital_controller = None
+        self.style_calls = []
+
+    def apply_surface_style(self, style=None, transparency=None):
+        self.style_calls.append({"style": style, "transparency": transparency})
+        self.canvas_surface_style = style or self.canvas_surface_style
+        self.canvas_transparency = self.canvas_transparency if transparency is None else transparency
+        self.orbital_layer.set_surface_style(self.canvas_surface_style, self.canvas_transparency)
+        if self.orbital_controller is not None:
+            self.orbital_controller.sync_surface_widgets(self.canvas_surface_style, self.canvas_transparency)
 
     def show_analysis_layer(self, name):
         self.claims.append(name)
@@ -114,7 +127,8 @@ def make_controller(path=WATER, output_dir=""):
     c.grid_selection = W(value="Coarse")   # fast tests
     c.spacing_input = W(value="", enabled=False)
     c.style_selection = W(value=orbitalTab.STYLE_SOLID)
-    c.opacity_slider = W(value=orbitalTab.TRANSPARENT_OPACITY, enabled=False)
+    c.transparency_slider = W(value=vd.DEFAULT_TRANSPARENCY, enabled=False)
+    c.viewer.orbital_controller = c
     c.colour_inputs = {sign: W(value=colour) for sign, colour in orbitalTab.DEFAULT_COLOURS.items()}
     c.range_input = W(value="")
     c.report_output = W(value="")
@@ -296,22 +310,43 @@ class TestDisplay:
         assert shown.number == 9 and shown._current[2] == 9
         assert computed[-1] == 9 and len(computed) <= 2   # the first request, then the latest one
 
-    def test_style_colour_and_opacity_never_recompute_the_grid(self, shown):
+    def test_style_goes_to_the_canvas_and_never_recomputes(self, shown):
         entry = shown._grids[shown._current]["phases"]
+        built = shown.viewer.orbital_layer.items()
         act(shown, shown.on_style_change, W(value=orbitalTab.STYLE_MESH))
-        lines = shown.viewer.orbital_layer.items()
+        assert shown.viewer.style_calls == [{"style": orbitalTab.STYLE_MESH, "transparency": None}]
+        assert shown.viewer.orbital_layer.items() is built                # the tab built nothing new
+        lines = shown.viewer.orbital_layer.drawn_items()                  # the layer draws contour lines
         assert [i.kind for i in lines] == ["lines", "lines"] and all(i.indices.size > 0 for i in lines)
         assert np.allclose([i.rgba[0, :3] for i in lines], [vd.parse_colour("Red"), vd.parse_colour("Green")])
-        assert shown.opacity_slider.enabled is False
+        assert shown.transparency_slider.enabled is False and shown.style_selection.value == orbitalTab.STYLE_MESH
         act(shown, shown.on_style_change, W(value=orbitalTab.STYLE_TRANSPARENT))
-        assert shown.opacity_slider.enabled is True
-        assert all(i.rgba[0, 3] == pytest.approx(0.5) for i in shown.viewer.orbital_layer.items())
-        act(shown, shown.on_opacity_change, W(value=0.3))
-        assert all(i.rgba[0, 3] == pytest.approx(0.3) for i in shown.viewer.orbital_layer.items())
+        assert shown.transparency_slider.enabled is True
+        assert all(i.rgba[0, 3] == pytest.approx(0.5) for i in shown.viewer.orbital_layer.drawn_items())
+        act(shown, shown.on_transparency_change, W(value=0.7))
+        assert shown.transparency_slider.value == pytest.approx(0.7)
+        assert all(i.rgba[0, 3] == pytest.approx(0.3) for i in shown.viewer.orbital_layer.drawn_items())
+        assert all(i.rgba[0, 3] == pytest.approx(1.0) for i in shown.viewer.orbital_layer.items())
         shown.colour_inputs[1].value = "blue"
         act(shown, shown.on_colour_confirm, shown.colour_inputs[1])
         assert np.allclose(shown.viewer.orbital_layer.items()[0].rgba[0, :3], vd.parse_colour("Blue"))
         assert shown._grids[shown._current]["phases"] is entry and len(shown._grids) == 1
+
+    def test_the_display_tab_s_style_shows_here(self, loaded):
+        loaded.sync_surface_widgets(orbitalTab.STYLE_TRANSPARENT, 0.25)
+        assert loaded.style_selection.value == orbitalTab.STYLE_TRANSPARENT
+        assert loaded.transparency_slider.value == 0.25 and loaded.transparency_slider.enabled is True
+        assert loaded.viewer.style_calls == []        # showing it is not a change: nothing is sent back
+        loaded._syncing = True
+        loaded.on_style_change(W(value=orbitalTab.STYLE_MESH))   # the tab's own write: ignored
+        loaded._syncing = False
+        assert loaded.viewer.style_calls == []
+
+    def test_without_a_canvas_style_the_tab_keeps_its_own(self):
+        c = make_controller()
+        c.viewer.apply_surface_style = None        # e.g. a viewer without the Display-tab setting
+        c.on_style_change(W(value=orbitalTab.STYLE_TRANSPARENT))
+        assert c.style == orbitalTab.STYLE_TRANSPARENT and c.transparency_slider.enabled is True
 
     def test_a_bad_colour_is_refused_and_put_back(self, shown):
         shown.colour_inputs[-1].value = "nonsense"

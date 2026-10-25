@@ -17,14 +17,16 @@ against each other.
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field, replace
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from OpenGL.GL import *  # noqa: F401,F403 - same style as molecularViewer/espViewer
 
 from espSurfaceLayer import draw_colour_bar
-from volumeData import BOHR_RADIUS_ANGSTROM, IsoMesh, slice_triangles
+from volumeData import (BOHR_RADIUS_ANGSTROM, DEFAULT_TRANSPARENCY, MESH_LINE_SPACING_BOHR, SURFACE_SOLID,  # noqa: F401
+                        SURFACE_STYLES, SURFACE_TRANSPARENT, IsoMesh, checked_surface_style, contour_lines,
+                        slice_triangles)
 
 MIN_OPACITY = 0.05
 OPAQUE_ALPHA = 0.999
@@ -38,6 +40,7 @@ class RenderItem:
     rgba: np.ndarray         # (V, 4) float32
     normals: Optional[np.ndarray] = None  # (V, 3) float32, surfaces only
     bounds: Tuple[np.ndarray, np.ndarray] = field(default=None)
+    isosurface: bool = False  # an isosurface (surface_item): follows the canvas surface style; markers do not
 
     @property
     def opaque(self) -> bool:
@@ -70,14 +73,9 @@ def _item(kind, vertices_bohr, triangles, rgba, normals=None) -> RenderItem:
 
 def surface_item(mesh: IsoMesh, rgb, opacity: float) -> RenderItem:
     """One isosurface in a single colour."""
-    return _item("surface", mesh.vertices, mesh.triangles, _rgba(rgb, len(mesh.vertices), opacity),
+    item = _item("surface", mesh.vertices, mesh.triangles, _rgba(rgb, len(mesh.vertices), opacity),
                  mesh.normals)
-
-
-def line_item(segments_bohr: np.ndarray, rgb, opacity: float = 1.0) -> RenderItem:
-    """Unlit line segments (S, 2, 3) bohr in one colour, e.g. ``volumeData.contour_lines`` of a surface."""
-    segments = np.asarray(segments_bohr, dtype=float).reshape(-1, 3)
-    return _item("lines", segments, np.arange(len(segments)), _rgba(rgb, len(segments), opacity))
+    return replace(item, isosurface=True)
 
 
 def slice_item(points_bohr: np.ndarray, colours: np.ndarray, opacity: float) -> RenderItem:
@@ -158,6 +156,51 @@ def draw_order(items: Iterable[RenderItem]) -> List[RenderItem]:
     return [i for i in items if i.opaque] + [i for i in items if not i.opaque]
 
 
+def mesh_lines_item(item: RenderItem) -> RenderItem:
+    """The Mesh style of one isosurface: its contour lines (planes MESH_LINE_SPACING_BOHR apart), in its colours."""
+    mesh = IsoMesh(np.asarray(item.vertices, dtype=float), item.indices.reshape(-1, 3), None)
+    segments, colours = contour_lines(mesh, np.zeros(3), MESH_LINE_SPACING_BOHR * BOHR_RADIUS_ANGSTROM,
+                                      values=item.rgba[:, :3])
+    vertices = np.ascontiguousarray(segments.reshape(-1, 3), dtype=np.float32)        # already Angstrom
+    rgba = np.ascontiguousarray(np.hstack([colours.reshape(-1, 3), np.ones((len(vertices), 1))]), dtype=np.float32)
+    bounds = ((vertices.min(axis=0), vertices.max(axis=0)) if len(vertices)
+              else (np.zeros(3, np.float32), np.zeros(3, np.float32)))
+    return RenderItem("lines", vertices, np.arange(len(vertices), dtype=np.uint32), rgba, None, bounds)
+
+
+def styled_items(items: Sequence[RenderItem], style: str, transparency: float,
+                 mesh_cache: Optional[Dict[int, Tuple[RenderItem, RenderItem]]] = None) -> List[RenderItem]:
+    """The items as the canvas surface style draws them; only isosurfaces change, markers never.
+
+    Solid: fully opaque. Transparent: alpha x (1 - transparency), so the
+    tab's own opacity still scales its surfaces. Mesh: contour lines
+    (``mesh_lines_item``), cached in ``mesh_cache`` by item identity.
+    """
+    out = []
+    for item in items:
+        if not item.isosurface:
+            out.append(item)
+        elif style == SURFACE_SOLID:
+            out.append(item if item.opaque else replace(item, rgba=_with_alpha(item.rgba, 1.0)))
+        elif style == SURFACE_TRANSPARENT:
+            out.append(item if transparency <= 0.0 else
+                       replace(item, rgba=_with_alpha(item.rgba, item.rgba[:, 3] * (1.0 - transparency))))
+        else:
+            cached = mesh_cache.get(id(item)) if mesh_cache is not None else None
+            if cached is None or cached[0] is not item:
+                cached = (item, mesh_lines_item(item))
+                if mesh_cache is not None:
+                    mesh_cache[id(item)] = cached
+            out.append(cached[1])
+    return out
+
+
+def _with_alpha(rgba: np.ndarray, alpha) -> np.ndarray:
+    out = np.array(rgba, dtype=np.float32, copy=True)
+    out[:, 3] = np.maximum(MIN_OPACITY, alpha)
+    return out
+
+
 class CubeSceneLayer:
     """What the Cube tab wants drawn, shared between the Toga and render threads."""
 
@@ -165,6 +208,9 @@ class CubeSceneLayer:
         self._lock = threading.Lock()
         self._items: Tuple[RenderItem, ...] = ()
         self._colour_bar: Optional[Tuple[str, str, str]] = None
+        self._style: Optional[Tuple[str, float]] = None   # None: draw items as built (the layer's old behaviour)
+        self._styled = None                               # (items, style, styled items) cache
+        self._mesh_cache: Dict[int, Tuple[RenderItem, RenderItem]] = {}
 
     # --- Toga thread ---------------------------------------------------
     def set_items(self, items: Sequence[RenderItem], colour_bar: Optional[Tuple[str, str, str]] = None):
@@ -172,6 +218,19 @@ class CubeSceneLayer:
         with self._lock:
             self._items = tuple(items)
             self._colour_bar = tuple(colour_bar) if colour_bar else None
+            self._styled = None
+            self._mesh_cache = {}
+
+    def set_surface_style(self, style: Optional[str], transparency: float = DEFAULT_TRANSPARENCY):
+        """The canvas surface style for this layer's isosurfaces (None: as built)."""
+        checked = None if style is None else checked_surface_style(style, transparency)
+        with self._lock:
+            self._style = checked
+            self._styled = None
+
+    def surface_style(self) -> Optional[Tuple[str, float]]:
+        with self._lock:
+            return self._style
 
     def clear(self):
         self.set_items(())
@@ -201,8 +260,22 @@ class CubeSceneLayer:
         if bar is not None:
             draw_colour_bar(viewer, *bar, at_top=False)
 
+    def drawn_items(self) -> Tuple[RenderItem, ...]:
+        """The items with the surface style applied (computed once per items/style pair)."""
+        with self._lock:
+            items, style, styled, mesh_cache = self._items, self._style, self._styled, self._mesh_cache
+        if style is None or not items:
+            return items
+        if styled is not None and styled[0] is items and styled[1] == style:
+            return styled[2]
+        result = tuple(styled_items(items, style[0], style[1], mesh_cache))
+        with self._lock:
+            if self._items is items and self._style == style:
+                self._styled = (items, style, result)
+        return result
+
     def draw(self):
-        items = self.items()
+        items = self.drawn_items()
         if not items:
             return
         for item in draw_order(items):

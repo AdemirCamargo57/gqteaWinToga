@@ -908,8 +908,12 @@ class CubeTabController:
 
     # --- canvas background (a view setting: no cube is re-meshed or hidden) ---
     def apply_background(self, rgb):
-        hex_colour = rgb_to_hex(rgb)
         self.viewer.set_background_color(tuple(float(c) for c in rgb))
+        self.show_background(rgb)
+
+    def show_background(self, rgb):
+        """Show ``rgb`` in this tab's field and swatch (the viewer calls it when another tab sets it)."""
+        hex_colour = rgb_to_hex(rgb)
         if self.background_input is not None:
             _assign(self.background_input, "value", hex_colour)
         if self.background_swatch is not None and hex_colour != self._swatch_hex:

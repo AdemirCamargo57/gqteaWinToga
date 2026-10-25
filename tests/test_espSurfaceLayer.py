@@ -8,6 +8,7 @@ import pytest
 
 import espSurfaceLayer as el
 import espViewer as ev
+import volumeData as vd
 
 TRIANGLE = np.array([[0, 1, 2]])
 
@@ -64,6 +65,72 @@ class TestLayer:
         layer = el.ESPSurfaceLayer()
         layer.draw_scene(None)  # nothing to draw: the viewer is never touched
         layer.draw_overlay(None)
+
+
+GL_NAMES = ("glEnable", "glDisable", "glColorMaterial", "glMaterialfv", "glMaterialf", "glLightModeli",
+            "glEnableClientState", "glDisableClientState", "glVertexPointer", "glNormalPointer",
+            "glColorPointer", "glDrawElements", "glDrawArrays", "glBlendFunc", "glDepthMask")
+
+
+@pytest.fixture
+def gl_calls(monkeypatch):
+    calls = []
+    for name in GL_NAMES:
+        monkeypatch.setattr(el, name, lambda *args, _n=name: calls.append((_n, args)))
+    return calls
+
+
+def sphere_surface(layer, radius=3.0):
+    """An icosphere surface (Angstrom) with a value gradient, large enough for contour lines."""
+    from cubeRender import _icosphere
+    unit, triangles = _icosphere(3)
+    layer.set_surface(radius * unit, triangles, unit, unit[:, 0] * 0.02, 0.0004)
+
+
+class TestCanvasSurfaceStyle:
+    """The 3D viewer's Display-tab surface style, applied when the layer draws."""
+
+    def test_no_style_draws_as_before(self, gl_calls):
+        layer = el.ESPSurfaceLayer()
+        sphere_surface(layer)
+        layer.set_display_options(opacity=0.5)
+        assert layer.surface_style() is None and layer.styled_rgba(layer.get()) is layer.get().rgba
+        layer.draw_scene(None)
+        assert ("glDepthMask", (el.GL_FALSE,)) in gl_calls      # translucent, as surface_opacity says
+
+    def test_solid_is_opaque_and_transparent_scales_the_tab_opacity(self):
+        layer = el.ESPSurfaceLayer()
+        sphere_surface(layer)
+        layer.set_display_options(opacity=0.5)
+        layer.set_surface_style(vd.SURFACE_SOLID)
+        solid = layer.styled_rgba(layer.get())
+        assert np.allclose(solid[:, 3], 1.0) and np.allclose(solid[:, :3], layer.get().rgba[:, :3])
+        assert layer.styled_rgba(layer.get()) is solid                # computed once, not every frame
+        layer.set_surface_style(vd.SURFACE_TRANSPARENT, 0.5)
+        assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 0.25)   # tab opacity 0.5 x (1 - 0.5)
+        layer.set_display_options(opacity=1.0)
+        assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 0.5)
+        layer.set_surface_style(vd.SURFACE_TRANSPARENT, 0.0)
+        assert layer.styled_rgba(layer.get()) is layer.get().rgba      # nothing to change: no copy
+
+    def test_mesh_draws_coloured_contour_lines(self, gl_calls):
+        layer = el.ESPSurfaceLayer()
+        sphere_surface(layer)
+        layer.set_surface_style(vd.SURFACE_MESH)
+        assert layer.styled_rgba(layer.get()) is None
+        vertices, rgba = layer.mesh_lines(layer.get())
+        assert len(vertices) > 50 and len(vertices) % 2 == 0 and rgba.shape == (len(vertices), 4)
+        assert np.allclose(np.linalg.norm(vertices, axis=1), 3.0, atol=0.1)
+        assert np.allclose(rgba[:, 3], 1.0) and rgba[:, 0].max() > 0.5 and rgba[:, 2].max() > 0.5  # red..blue
+        assert layer.mesh_lines(layer.get())[0] is vertices           # cached per surface
+        layer.draw_scene(None)
+        draws = [args for name, args in gl_calls if name == "glDrawArrays"]
+        assert draws == [(el.GL_LINES, 0, len(vertices))]
+        assert not [name for name, _ in gl_calls if name == "glDrawElements"]
+
+    def test_unknown_style(self):
+        with pytest.raises(ValueError, match="surface style"):
+            el.ESPSurfaceLayer().set_surface_style("Wire")
 
 
 class TestEspViewerReExports:

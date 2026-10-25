@@ -22,7 +22,10 @@ from toga.style import Pack
 from toga.style.pack import CENTER, COLUMN, LEFT, ROW
 
 from cubeRender import CubeSceneLayer
-from cubeTab import CubeTabController
+from cubeTab import CubeTabController, pick_colour
+from cubeTab import rgb_to_hex as colour_field_text  # '#RRGGBB', as the Cube tab's field shows it
+from volumeData import (DEFAULT_TRANSPARENCY, MAX_TRANSPARENCY, SURFACE_SOLID, SURFACE_STYLES, SURFACE_TRANSPARENT,
+                        checked_surface_style, parse_colour)
 from electrostaticSurfacePotential import ESPTabController
 from espSurfaceLayer import ESPSurfaceLayer
 from help import AtomicData
@@ -2501,6 +2504,13 @@ class MolecularViewerUI(MolecularViewer):
         self.excitation_layer = CubeSceneLayer()
         self.excitation_controller = None
 
+        # Display tab: one surface style for every isosurface on the canvas,
+        # applied by the layers when they draw (markers are never affected).
+        self.canvas_surface_style = SURFACE_SOLID
+        self.canvas_transparency = DEFAULT_TRANSPARENCY
+        self._surface_syncing = False
+        self._push_surface_style()
+
         self.layout_main_window()
 
     # ------------------------------------------------------------------
@@ -2696,6 +2706,7 @@ class MolecularViewerUI(MolecularViewer):
                 f"{self.bond_tolerance:.2f} Å). Atoms farther apart are not bonded."
             )
         )
+        self._build_canvas_rows(tab_box)
 
         tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
         tab_box.add(self._section_heading("Rotation"))
@@ -2800,6 +2811,56 @@ class MolecularViewerUI(MolecularViewer):
 
         self._build_selection_section(tab_box)
         return tab_box
+
+    def _build_canvas_rows(self, tab_box: toga.Box):
+        """Background colour and the surface style of every isosurface on the canvas (two rows)."""
+        current = colour_field_text(self.background_color)
+        self._display_swatch_hex = current
+        self.background_swatch = toga.Box(
+            style=Pack(width=24, height=18, margin=(0, 8, 0, 0), background_color=current)
+        )
+        self.background_input = toga.TextInput(
+            value=current,
+            style=Pack(width=self.FIELD_WIDTH, margin=(0, 8, 0, 0)),
+            on_confirm=self.on_background_confirm,
+        )
+        tab_box.add(
+            self._form_row(
+                self._form_label("Background:"),
+                self.background_swatch,
+                self.background_input,
+                toga.Button("Choose...", on_press=self.on_background_pick, style=Pack(width=90)),
+            )
+        )
+        # Values go to the constructors so building the tab fires no on_change.
+        self.surface_style_selection = toga.Selection(
+            items=list(SURFACE_STYLES),
+            value=self.canvas_surface_style,
+            style=Pack(width=130),
+            on_change=self.on_surface_style_change,
+        )
+        self.transparency_slider = toga.Slider(
+            min=0.0,
+            max=MAX_TRANSPARENCY,
+            value=self.canvas_transparency,
+            style=Pack(width=160),
+            on_change=self.on_transparency_change,
+        )
+        self.transparency_slider.enabled = self.canvas_surface_style == SURFACE_TRANSPARENT
+        tab_box.add(
+            self._form_row(
+                self._form_label("Surfaces:"),
+                self.surface_style_selection,
+                self._form_label("  Transparency:", width=96),
+                self.transparency_slider,
+            )
+        )
+        tab_box.add(
+            self._hint(
+                "Applies to the Cube, Orbitals, ESP, NTO and Excitation surfaces; their own opacity "
+                "settings scale them in Transparent."
+            )
+        )
 
     def _build_selection_section(self, tab_box: toga.Box):
         """Atom/molecule selection: which atoms are focused on and exported."""
@@ -3407,6 +3468,106 @@ class MolecularViewerUI(MolecularViewer):
         controller = getattr(self, "qtaim_controller", None)
         if controller is not None:
             controller.sync_canvas_widgets()
+
+    # --- Canvas background and surface style (Display tab) -----------------
+    def set_background_color(self, rgb):
+        """Also show the colour in the Display and Cube tabs' fields, whichever tab set it."""
+        super().set_background_color(rgb)
+        self._sync_background_widgets()
+
+    def _sync_background_widgets(self):
+        hex_colour = colour_field_text(self.background_color)
+        if getattr(self, "background_input", None) is not None:
+            _assign(self.background_input, "value", hex_colour)
+        swatch = getattr(self, "background_swatch", None)
+        if swatch is not None and getattr(self, "_display_swatch_hex", None) != hex_colour:
+            swatch.style.background_color = hex_colour
+            self._display_swatch_hex = hex_colour
+        cube = getattr(self, "cube_controller", None)
+        if cube is not None and hasattr(cube, "show_background"):
+            cube.show_background(self.background_color)
+
+    def on_background_confirm(self, widget, **kwargs):
+        """A colour typed in the Display tab (name or #rrggbb) and Enter."""
+        try:
+            rgb = parse_colour(widget.value)
+        except ValueError as exc:
+            self._sync_background_widgets()  # show the colour in use again
+            self._start_task(self._show_error("Background colour", str(exc)))
+            return
+        self.set_background_color(rgb)
+        self.set_status_message(f"Background set to {colour_field_text(rgb)}.")
+
+    def on_background_pick(self, widget, **kwargs):
+        """The Windows colour picker (the Cube tab's), opened on the colour in use."""
+        try:
+            owner = self.main_window._impl.native
+        except Exception:
+            owner = None
+        try:
+            rgb = pick_colour(self.background_color, owner)
+        except RuntimeError as exc:
+            self._start_task(self._show_error("Background colour", str(exc)))
+            return
+        if rgb is not None:
+            self.set_background_color(rgb)
+            self.set_status_message(f"Background set to {colour_field_text(rgb)}.")
+
+    def surface_layers(self):
+        """The layers whose isosurfaces follow the canvas surface style (markers never do)."""
+        names = ("cube_layer", "orbital_layer", "esp_layer", "nto_layer", "excitation_layer")
+        return [layer for layer in (getattr(self, n, None) for n in names) if layer is not None]
+
+    def _push_surface_style(self):
+        style = getattr(self, "canvas_surface_style", SURFACE_SOLID)
+        transparency = getattr(self, "canvas_transparency", DEFAULT_TRANSPARENCY)
+        for layer in self.surface_layers():
+            layer.set_surface_style(style, transparency)
+
+    def apply_surface_style(self, style: Optional[str] = None, transparency: Optional[float] = None):
+        """Set the canvas surface style and/or transparency; the Display and Orbitals tabs follow.
+
+        Applied by the layers when they draw, so no tab recomputes a surface.
+        """
+        style, transparency = checked_surface_style(
+            getattr(self, "canvas_surface_style", SURFACE_SOLID) if style is None else style,
+            getattr(self, "canvas_transparency", DEFAULT_TRANSPARENCY) if transparency is None else transparency,
+        )
+        self.canvas_surface_style, self.canvas_transparency = style, transparency
+        self._push_surface_style()
+        self._sync_surface_widgets()
+
+    def _sync_surface_widgets(self):
+        style = self.canvas_surface_style
+        self._surface_syncing = True
+        try:
+            if getattr(self, "surface_style_selection", None) is not None:
+                _assign(self.surface_style_selection, "value", style)
+            if getattr(self, "transparency_slider", None) is not None:
+                _assign(self.transparency_slider, "value", float(self.canvas_transparency))
+                _assign(self.transparency_slider, "enabled", style == SURFACE_TRANSPARENT)
+        finally:
+            self._surface_syncing = False
+        orbitals = getattr(self, "orbital_controller", None)
+        if orbitals is not None and hasattr(orbitals, "sync_surface_widgets"):
+            orbitals.sync_surface_widgets(style, self.canvas_transparency)
+
+    # Synchronous, guarded handlers (the Cube tab's rule): an async handler
+    # would run after the guard is cleared and replay the tab's own writes.
+    def on_surface_style_change(self, widget, **kwargs):
+        if getattr(self, "_surface_syncing", False) or widget.value not in SURFACE_STYLES:
+            return
+        self.apply_surface_style(style=widget.value)
+        self.set_status_message(f"Surfaces: {widget.value}.")
+
+    def on_transparency_change(self, widget, **kwargs):
+        if getattr(self, "_surface_syncing", False):
+            return
+        self.apply_surface_style(transparency=float(widget.value))
+
+    def _start_task(self, coroutine):
+        loop = getattr(self, "loop", None) or asyncio.get_event_loop()
+        return loop.create_task(coroutine)
 
     def set_atom_display_style(self, widget):
         self.apply_view_settings(style=self.atom_display_style_selection.value or "Line style")

@@ -74,10 +74,27 @@ def vertex_normals(vertices: np.ndarray, triangles: np.ndarray) -> np.ndarray:
     return normals / np.where(length > 0, length, 1.0)[:, None]
 
 
+# The 3D viewer's canvas-wide surface style (its Display tab). It is applied
+# when a layer draws (cubeRender, espSurfaceLayer), so no tab recomputes
+# anything when it changes; Mesh draws contour_lines instead of triangles.
+SURFACE_SOLID, SURFACE_TRANSPARENT, SURFACE_MESH = "Solid", "Transparent", "Mesh"
+SURFACE_STYLES = (SURFACE_SOLID, SURFACE_TRANSPARENT, SURFACE_MESH)
+DEFAULT_TRANSPARENCY = 0.5
+MAX_TRANSPARENCY = 0.9
+MESH_LINE_SPACING_BOHR = 0.4   # between the Mesh style's contour planes (GaussView-like line density)
+
+
+def checked_surface_style(style: str, transparency: float) -> Tuple[str, float]:
+    """(style, transparency) validated: one of SURFACE_STYLES, transparency clamped to [0, MAX_TRANSPARENCY]."""
+    if style not in SURFACE_STYLES:
+        raise ValueError(f"Unknown surface style '{style}': choose {', '.join(SURFACE_STYLES)}.")
+    return style, float(min(MAX_TRANSPARENCY, max(0.0, float(transparency))))
+
+
 _TRIANGLE_EDGES = ((0, 1), (1, 2), (2, 0))
 
 
-def contour_lines(mesh: IsoMesh, origin, spacing: float) -> np.ndarray:
+def contour_lines(mesh: IsoMesh, origin, spacing: float, values: Optional[np.ndarray] = None):
     """Where the planes x, y, z = origin + m * spacing cut the surface: (S, 2, 3) segments, bohr.
 
     GaussView's "mesh" look: evenly spaced lines on the surface instead of
@@ -85,11 +102,20 @@ def contour_lines(mesh: IsoMesh, origin, spacing: float) -> np.ndarray:
     surface. Each triangle is cut by every plane strictly between its lowest
     and highest vertex; a vertex lying exactly on a plane counts as above it,
     so neighbouring triangles agree and no segment is doubled or lost.
+
+    With per-vertex ``values`` (V, k) - e.g. the colours of a mapped surface -
+    the values interpolated at the segment ends are returned too, as
+    ``(segments, (S, 2, k) values)``. Lengths are in the mesh's own unit.
     """
     if not (spacing > 0 and np.isfinite(spacing)):
         raise ValueError(f"The line spacing must be a positive number of bohr, not {spacing}.")
-    corners = mesh.vertices[mesh.triangles]                          # (F, 3 vertices, 3)
-    segments = []
+    triangles = np.asarray(mesh.triangles).reshape(-1, 3)
+    corners = mesh.vertices[triangles]                               # (F, 3 vertices, 3)
+    carried = None
+    if values is not None:
+        values = np.asarray(values, dtype=float)
+        carried = values.reshape(len(values), -1)[triangles]         # (F, 3 vertices, k)
+    segments, segment_values = [], []
     for axis in range(3):
         s = (corners[:, :, axis] - float(np.asarray(origin, dtype=float)[axis])) / spacing   # plane units
         first = np.floor(s.min(axis=1)) + 1.0
@@ -98,21 +124,31 @@ def contour_lines(mesh: IsoMesh, origin, spacing: float) -> np.ndarray:
             rows = np.nonzero(crossings > j)[0]
             t = s[rows] - (first[rows] + j)[:, None]
             t = np.where(t == 0.0, 1e-12, t)                          # on the plane = above it
-            points, cut = [], []
+            points, mixed, cut = [], [], []
             for a, b in _TRIANGLE_EDGES:
                 ta, tb = t[:, a], t[:, b]
                 cut.append(ta * tb < 0)
-                f = np.where(cut[-1], ta / np.where(cut[-1], ta - tb, 1.0), 0.0)
-                points.append(corners[rows, a] + f[:, None] * (corners[rows, b] - corners[rows, a]))
+                f = np.where(cut[-1], ta / np.where(cut[-1], ta - tb, 1.0), 0.0)[:, None]
+                points.append(corners[rows, a] + f * (corners[rows, b] - corners[rows, a]))
+                if carried is not None:
+                    mixed.append(carried[rows, a] + f * (carried[rows, b] - carried[rows, a]))
             cut = np.stack(cut, axis=1)
             keep = cut.sum(axis=1) == 2
             pts = np.stack(points, axis=1)[keep]                       # (K, 3 edges, 3)
             segments.append(pts[cut[keep]].reshape(-1, 2, 3))
+            if carried is not None:
+                vals = np.stack(mixed, axis=1)[keep]
+                segment_values.append(vals[cut[keep]].reshape(-1, 2, vals.shape[-1]))
+    width = carried.shape[-1] if carried is not None else 0
     if not segments:
-        return np.zeros((0, 2, 3))
+        empty = np.zeros((0, 2, 3))
+        return (empty, np.zeros((0, 2, width))) if carried is not None else empty
     segments = np.concatenate(segments)
     # A plane through a triangle's highest vertex touches it in a point: drop those.
-    return segments[np.linalg.norm(segments[:, 1] - segments[:, 0], axis=1) > 1e-9 * spacing]
+    real = np.linalg.norm(segments[:, 1] - segments[:, 0], axis=1) > 1e-9 * spacing
+    if carried is None:
+        return segments[real]
+    return segments[real], np.concatenate(segment_values)[real]
 
 
 def isosurface(volume: CubeVolume, isovalue: float, sign: int = 1,

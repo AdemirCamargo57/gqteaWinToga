@@ -140,6 +140,21 @@ class TestContourLines:
         x_cut = segments[np.isclose(segments[:, :, 0], 0.5).all(axis=1)][0]
         assert sorted(map(tuple, np.round(x_cut, 12))) == [(0.5, 0.0, 0.0), (0.5, 0.5, 0.0)]
 
+    def test_values_are_interpolated_onto_the_line_ends(self):
+        vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        triangles = np.array([[0, 1, 2]])
+        mesh = vd.IsoMesh(vertices, triangles, vd.vertex_normals(vertices, triangles))
+        values = np.array([[0.0, 1.0], [10.0, 1.0], [20.0, 1.0]])         # e.g. per-vertex colours
+        segments, carried = vd.contour_lines(mesh, (0.0, 0.0, 0.0), 0.5, values=values)
+        assert segments.shape == (2, 2, 3) and carried.shape == (2, 2, 2)
+        x_cut = np.isclose(segments[:, :, 0], 0.5).all(axis=1)
+        ends = {tuple(np.round(p, 12)): v[0] for p, v in zip(segments[x_cut][0], carried[x_cut][0])}
+        assert ends == {(0.5, 0.0, 0.0): pytest.approx(5.0), (0.5, 0.5, 0.0): pytest.approx(15.0)}
+        assert np.allclose(carried[:, :, 1], 1.0)
+        none = vd.IsoMesh(vertices, triangles, None)
+        segments, carried = vd.contour_lines(none, (0.0, 0.0, 0.0), 10.0, values=values)
+        assert segments.shape == (0, 2, 3) and carried.shape == (0, 2, 2)
+
     def test_bad_spacing(self, blob_volume):
         mesh = vd.isosurface(blob_volume, 0.5, use_numba=False)
         with pytest.raises(ValueError, match="line spacing"):

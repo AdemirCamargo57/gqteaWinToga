@@ -2142,8 +2142,11 @@ DISPLAY
                grows until the orbital is below isovalue/10 on every face;
                every value is computed exactly. Diffuse virtual orbitals need
                large grids: a coarser grid or a higher isovalue helps.
-  Style        Solid, Transparent (with the Opacity slider) or Mesh (the
-               triangle edges of the surface).
+  Style        Solid, Transparent (with the Transparency slider) or Mesh
+               (contour lines on the surface, GaussView's mesh). This is the
+               viewer's canvas-wide surface style, the same setting as the
+               Display tab's Surfaces row: changing it here changes it there
+               and for every surface drawn (Cube, ESP, NTO, Excitation).
   Colours      positive red, negative green by default (GaussView's); names
                or #rrggbb, Enter applies. |phi|^2 uses the positive colour.
   The phase signs are the .fchk coefficients as written, so the colours match

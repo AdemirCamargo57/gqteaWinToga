@@ -1620,7 +1620,7 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 **Window layout.** The controls are arranged as a fixed header, eleven tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
-- **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels. The atom styles are Line, CPK (ball and stick), vdW (space-filling) and **Design style**, which draws the molecule as the Molecular Design Canvas does: equal flat discs in the canvas colours with a thin outline, single bond lines, the element symbol centred on each disc and the atom number beside it, in colours that stay readable on the current background. The *Atom numbers* and *Atomic symbols* switches are independent (either, both or neither) and are the same settings as the QTAIM tab's *Atom labels*.
+- **Display** tab: projection, atom style, atom and bond scale, maximum bond length, canvas background colour, the surface style of every analysis surface (Solid, Transparent with a transparency slider, or Mesh), rotation, and atom labels. The atom styles are Line, CPK (ball and stick), vdW (space-filling) and **Design style**, which draws the molecule as the Molecular Design Canvas does: equal flat discs in the canvas colours with a thin outline, single bond lines, the element symbol centred on each disc and the atom number beside it, in colours that stay readable on the current background. The *Atom numbers* and *Atomic symbols* switches are independent (either, both or neither) and are the same settings as the QTAIM tab's *Atom labels*.
 - **Box** tab: periodic box settings and playback performance options.
 - **Dynamics** tab: frame navigation, trajectory playback, and per-frame bond recomputation.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
@@ -1647,6 +1647,13 @@ A typical session is: **Browse** for the file, adjust anything you need on the *
 - **Atom style**: `Line style`, `CPK style`, or `vdW style`.
 - **Atom scale** and **Bond scale**: relative size of the drawn atoms and bonds.
 - **Max bond length**: upper distance limit, in Å, for two atoms to be drawn as bonded. Type a value and press Enter to apply it to every atom pair. Leave it blank (and press Enter to clear a previous value) to use the default, which depends on the two elements: the sum of their covalent radii plus 0.45 Å (for example 1.97 Å for C–C, 1.42 Å for O–H), or 1.5 Å for an element with no known radius. Two atoms farther apart than the applicable limit are never drawn as bonded.
+- **Background**: the canvas colour. **Choose...** opens the Windows colour dialog; or type a colour name (`white`, `grey`, ...) or `#rrggbb` in the field and press Enter. The swatch shows the colour in use. It is the same setting as the Cube tab's *Background* and the QTAIM and ESP tabs' background choices: whichever you change last applies, and the Display and Cube fields always show it (the ESP tab still applies its own background choice when it draws its surface).
+- **Surfaces**: how every isosurface on the canvas is drawn — the surfaces of the **Cube**, **Orbitals**, **ESP**, **NTO** and **Excitation** tabs (markers such as QTAIM critical points, excitation centroids, the charge-transfer arrow, Cube slice planes and the atoms are not affected):
+  - *Solid* (default): fully opaque surfaces.
+  - *Transparent*: see-through surfaces; the **Transparency** slider beside it, enabled only for this style, goes from 0 (opaque) to 0.9 (almost invisible; default 0.5). A tab's own opacity setting still scales its surfaces on top of it (an NTO opacity of 0.6 with transparency 0.5 draws at 0.3).
+  - *Mesh*: contour lines where planes 0.4 bohr apart in x, y and z cut each surface, GaussView's mesh look; an ESP surface keeps its colour map on the lines.
+
+  The style is applied as the canvas draws, so changing it never recomputes a surface. The Orbitals tab's *Style* and *Transparency* are the same setting. In *Solid*, the tabs' opacity settings have no effect: choose *Transparent* to see through surfaces.
 - **Rotation**: rotate the displayed system about X, Y, and Z (described below).
 - **Atom numbers** and **Atomic symbols**: label every atom in the 3D view. Both are **off by default**, so the view starts uncluttered — click individual atoms to read their numbers (see the **Measure** tab's **None** type), or turn **Atom numbers** on to label the whole structure at once.
 - **Clear labels**: deselect every atom you have clicked for a measurement, remove any atom numbers you revealed by clicking, and clear the **Measure** tab's field and result. (This button was called *Clear selection* before the **Selection** section below existed; it does not touch that selection.)
@@ -2418,8 +2425,8 @@ the file in the background and fills the table.
   **Next ▶** and **Energy levels...**; and a line naming the selected orbital.
   The HOMO is selected after loading.
 - **Display**: **Surface**, **Isovalue**, **Grid quality** (with the custom
-  spacing field), **Style**, **Opacity**, the **Positive / Negative** colours
-  and **Display**.
+  spacing field), **Style**, **Transparency**, the **Positive / Negative**
+  colours and **Display**.
 - **Export**: **Export cube**, **Send to Cube tab**, **Export 3D image...**,
   the **Orbital range** field with **Export cubes**, and **Export energy
   table**, followed by the help text (replaced by the energy table when it is
@@ -2441,7 +2448,7 @@ two spins have different electron counts.
 | Surface | *Orbital phases (+/−)*, *Orbital density \|φ\|²* | Phases: the surfaces φ = +isovalue (positive colour) and φ = −isovalue (negative colour). Density: one surface \|φ\|² = isovalue, in the positive colour. |
 | Isovalue (a.u.) | any positive number | 0.02 for phases (GaussView's default); 0.0004 for \|φ\|² (= 0.02², the same envelope). Each surface keeps its own value. |
 | Grid quality | Coarse, Medium, Fine, Custom | 3, 6 or 12 points per bohr (cubegen's coarse, medium and fine grids); Custom = the spacing typed in bohr (blank = Medium's). Default Medium. |
-| Style | Solid, Transparent, Mesh | Solid: opaque, lit surfaces. Transparent: the **Opacity** slider (default 0.5) applies. Mesh: contour lines where planes 0.4 bohr apart in x, y and z cut the surface, GaussView's mesh look. |
+| Style | Solid, Transparent, Mesh | Solid: opaque, lit surfaces. Transparent: the **Transparency** slider (0 = opaque … 0.9, default 0.5) applies. Mesh: contour lines where planes 0.4 bohr apart in x, y and z cut the surface, GaussView's mesh look. This is the canvas-wide setting of the Display tab's **Surfaces** row (see [3D Molecular Viewer](#3d-molecular-viewer)): changing it in either tab changes both, and it applies to every surface drawn. |
 | Colours | names or `#rrggbb` | Positive red, negative green (GaussView's). Enter applies. |
 
 The grid is a box round the molecule (atoms ± 1.7 van der Waals radii) that
@@ -7080,7 +7087,8 @@ Version 1.5.5 (October 2026) adds the [Orbitals tab](#molecular-orbitals-orbital
 - the MO energy-level diagram in the interactive plot viewer (degenerate levels side by side, HOMO–LUMO gap marked), saved as `<name>_MO_levels.json` and reopened by **Plotter**;
 - cube export of one MO or of a range such as `HOMO-2:LUMO+2` (all on one grid), the `<name>_MO_energies.txt` table, *Send to Cube tab* and 3D image export;
 - validated against Gaussian's cubegen (same phase signs, values to 3 × 10⁻⁵ a.u. away from the nuclei);
-- [Example 12](#example-12-frontier-orbitals-of-benzene) and [the method](#formulas-and-methods-orbitals-tab) in this manual.
+- [Example 12](#example-12-frontier-orbitals-of-benzene) and [the method](#formulas-and-methods-orbitals-tab) in this manual;
+- the viewer's **Display** tab gains a canvas **Background** colour (Windows colour dialog or a typed colour) and a **Surfaces** style for every analysis surface on the canvas — Solid, Transparent (with a transparency slider) or Mesh — shared with the Orbitals tab and applied as the canvas draws (see [3D Molecular Viewer](#3d-molecular-viewer)).
 
 Version 1.5.0 (October 2026) adds the [Excitation tab](#electron-excitation-analysis-excitation-tab) to the 3D Molecular Viewer, atom and molecule selection, and a fix for the 3D canvas:
 

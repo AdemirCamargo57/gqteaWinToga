@@ -1213,6 +1213,117 @@ def test_the_analysis_layer_list_names_every_layer_the_canvas_draws():
     assert drawn == set(MolecularViewerUI.ANALYSIS_LAYERS)
 
 
+def _ui_with_surface_layers():
+    from types import SimpleNamespace
+    from cubeRender import CubeSceneLayer
+    from espSurfaceLayer import ESPSurfaceLayer
+    from qtaimLayer import QTAIMSceneLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    for name in ("cube_layer", "orbital_layer", "nto_layer", "excitation_layer"):
+        setattr(ui, name, CubeSceneLayer())
+    ui.esp_layer, ui.qtaim_layer = ESPSurfaceLayer(), QTAIMSceneLayer()
+    ui.surface_style_selection = SimpleNamespace(value="Solid")
+    ui.transparency_slider = SimpleNamespace(value=0.5, enabled=False)
+    ui.background_input = SimpleNamespace(value="#000000")
+    ui.background_swatch = SimpleNamespace(style=SimpleNamespace(background_color="#000000"))
+    return ui
+
+
+class TestDisplayTabCanvasControls:
+    def test_the_rows_sit_in_the_display_tab_above_rotation(self):
+        import inspect
+        source = inspect.getsource(MolecularViewerUI._build_display_tab)
+        assert source.index("self._build_canvas_rows(tab_box)") < source.index('"Rotation"')
+        rows = inspect.getsource(MolecularViewerUI._build_canvas_rows)
+        assert '"Background:"' in rows and '"Surfaces:"' in rows and "on_background_pick" in rows
+
+    def test_style_reaches_every_surface_layer_but_not_qtaim(self):
+        ui = _ui_with_surface_layers()
+        ui.apply_surface_style(style="Mesh")
+        for layer in ui.surface_layers():
+            assert layer.surface_style() == ("Mesh", 0.5)
+        assert {type(layer).__name__ for layer in ui.surface_layers()} == {"CubeSceneLayer", "ESPSurfaceLayer"}
+        assert len(ui.surface_layers()) == 5 and not hasattr(ui.qtaim_layer, "set_surface_style")
+
+    def test_the_slider_is_enabled_only_for_transparent(self):
+        ui = _ui_with_surface_layers()
+        ui.apply_surface_style(style="Transparent", transparency=0.3)
+        assert ui.transparency_slider.enabled is True and ui.transparency_slider.value == 0.3
+        assert ui.surface_style_selection.value == "Transparent"
+        assert ui.nto_layer.surface_style() == ("Transparent", 0.3)
+        ui.apply_surface_style(style="Solid")
+        assert ui.transparency_slider.enabled is False and ui.canvas_transparency == 0.3   # kept for later
+
+    def test_the_handlers_apply_and_ignore_the_tab_s_own_writes(self):
+        from types import SimpleNamespace
+        ui = _ui_with_surface_layers()
+        ui.loop = None
+        ui.on_surface_style_change(SimpleNamespace(value="Transparent"))
+        ui.on_transparency_change(SimpleNamespace(value=0.8))
+        assert (ui.canvas_surface_style, ui.canvas_transparency) == ("Transparent", 0.8)
+        ui._surface_syncing = True
+        ui.on_surface_style_change(SimpleNamespace(value="Mesh"))
+        ui._surface_syncing = False
+        assert ui.canvas_surface_style == "Transparent"
+
+    def test_the_orbitals_tab_follows(self):
+        calls = []
+        ui = _ui_with_surface_layers()
+        from types import SimpleNamespace
+        ui.orbital_controller = SimpleNamespace(sync_surface_widgets=lambda s, t: calls.append((s, t)))
+        ui.apply_surface_style(style="Mesh", transparency=0.2)
+        assert calls == [("Mesh", 0.2)]
+
+    def test_bad_values(self):
+        ui = _ui_with_surface_layers()
+        with pytest.raises(ValueError, match="surface style"):
+            ui.apply_surface_style(style="Wire")
+        ui.apply_surface_style(transparency=7.0)
+        assert ui.canvas_transparency == pytest.approx(0.9)
+
+    def test_a_background_set_anywhere_shows_in_the_display_and_cube_fields(self):
+        from types import SimpleNamespace
+        shown = []
+        ui = _ui_with_surface_layers()
+        ui.cube_controller = SimpleNamespace(show_background=shown.append)
+        ui.set_background_color((1.0, 1.0, 1.0))          # e.g. from the QTAIM or ESP tab
+        assert ui.background_input.value == "#FFFFFF" and ui.background_swatch.style.background_color == "#FFFFFF"
+        assert shown == [(1.0, 1.0, 1.0)]
+
+    def test_typed_and_picked_background(self, monkeypatch):
+        from types import SimpleNamespace
+        import molecularViewer as mv
+        ui = _ui_with_surface_layers()
+        ui.set_status_message = lambda message: None
+        ui.on_background_confirm(SimpleNamespace(value="white"))
+        assert ui.background_color == (1.0, 1.0, 1.0)
+        monkeypatch.setattr(mv, "pick_colour", lambda initial, owner: (0.0, 0.5, 1.0))
+        ui.on_background_pick(None)
+        assert ui.background_color == (0.0, 0.5, 1.0) and ui.background_input.value == "#0080FF"
+        monkeypatch.setattr(mv, "pick_colour", lambda initial, owner: None)   # cancelled
+        ui.on_background_pick(None)
+        assert ui.background_color == (0.0, 0.5, 1.0)
+
+    def test_a_bad_typed_background_is_refused_and_put_back(self):
+        from types import SimpleNamespace
+        ui = _ui_with_surface_layers()
+        errors = []
+
+        async def show_error(title, message):
+            errors.append((title, message))
+        ui._show_error = show_error
+
+        async def go():
+            ui.loop = asyncio.get_running_loop()
+            ui.background_input.value = "nonsense"
+            ui.on_background_confirm(ui.background_input)
+            await asyncio.sleep(0)
+        asyncio.run(go())
+        assert ui.background_color == (0.0, 0.0, 0.0) and ui.background_input.value == "#000000"
+        assert errors and errors[0][0] == "Background colour"
+
+
 def test_ui_overlay_draws_both_colour_bars():
     from cubeRender import CubeSceneLayer
     from espSurfaceLayer import ESPSurfaceLayer
