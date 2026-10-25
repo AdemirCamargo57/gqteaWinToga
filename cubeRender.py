@@ -32,9 +32,9 @@ OPAQUE_ALPHA = 0.999
 
 @dataclass(frozen=True, eq=False)
 class RenderItem:
-    kind: str                # "surface" | "slice"
+    kind: str                # "surface" | "slice" | "lines"
     vertices: np.ndarray     # (V, 3) float32, Angstrom
-    indices: np.ndarray      # (3F,) uint32
+    indices: np.ndarray      # (3F,) uint32; (2S,) for lines
     rgba: np.ndarray         # (V, 4) float32
     normals: Optional[np.ndarray] = None  # (V, 3) float32, surfaces only
     bounds: Tuple[np.ndarray, np.ndarray] = field(default=None)
@@ -72,6 +72,12 @@ def surface_item(mesh: IsoMesh, rgb, opacity: float) -> RenderItem:
     """One isosurface in a single colour."""
     return _item("surface", mesh.vertices, mesh.triangles, _rgba(rgb, len(mesh.vertices), opacity),
                  mesh.normals)
+
+
+def line_item(segments_bohr: np.ndarray, rgb, opacity: float = 1.0) -> RenderItem:
+    """Unlit line segments (S, 2, 3) bohr in one colour, e.g. ``volumeData.contour_lines`` of a surface."""
+    segments = np.asarray(segments_bohr, dtype=float).reshape(-1, 3)
+    return _item("lines", segments, np.arange(len(segments)), _rgba(rgb, len(segments), opacity))
 
 
 def slice_item(points_bohr: np.ndarray, colours: np.ndarray, opacity: float) -> RenderItem:
@@ -202,6 +208,8 @@ class CubeSceneLayer:
         for item in draw_order(items):
             if item.kind == "surface":
                 self._draw_surface(item)
+            elif item.kind == "lines":
+                self._draw_lines(item)
             else:
                 self._draw_slice(item)
 
@@ -235,6 +243,28 @@ class CubeSceneLayer:
             glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_FALSE)
             glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.0, 0.0, 0.0, 1.0))
             glDisable(GL_COLOR_MATERIAL)
+
+    @staticmethod
+    def _draw_lines(item: RenderItem):
+        translucent = not item.opaque
+        glDisable(GL_LIGHTING)
+        if translucent:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glDepthMask(GL_FALSE)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        try:
+            glVertexPointer(3, GL_FLOAT, 0, item.vertices)
+            glColorPointer(4, GL_FLOAT, 0, item.rgba)
+            glDrawElements(GL_LINES, int(item.indices.size), GL_UNSIGNED_INT, item.indices)
+        finally:
+            glDisableClientState(GL_COLOR_ARRAY)
+            glDisableClientState(GL_VERTEX_ARRAY)
+            if translucent:
+                glDepthMask(GL_TRUE)
+                glDisable(GL_BLEND)
+            glEnable(GL_LIGHTING)
 
     @staticmethod
     def _draw_slice(item: RenderItem):

@@ -40,6 +40,17 @@ class TestItems:
         assert item.vertices.shape == (6, 3) and item.indices.size == 2 * 2 * 3
         assert item.vertices[3] == pytest.approx([vd.BOHR_RADIUS_ANGSTROM, 0, 0])
 
+    def test_line_item(self):
+        segments = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0], [0.0, 1.0, 2.0]]])
+        item = cr.line_item(segments, (0.0, 1.0, 0.0))
+        assert item.kind == "lines" and item.normals is None and item.opaque
+        assert item.vertices.shape == (4, 3) and item.indices.tolist() == [0, 1, 2, 3]
+        assert item.vertices[1] == pytest.approx([vd.BOHR_RADIUS_ANGSTROM, 0, 0])
+        assert item.bounds[1] == pytest.approx([vd.BOHR_RADIUS_ANGSTROM, vd.BOHR_RADIUS_ANGSTROM,
+                                                2 * vd.BOHR_RADIUS_ANGSTROM])
+        empty = cr.line_item(np.zeros((0, 2, 3)), (1, 1, 1))
+        assert empty.vertices.shape == (0, 3) and empty.indices.size == 0
+
     def test_bounds(self):
         item = cr.surface_item(triangle_mesh(), (1, 1, 1), 1.0)
         lo, hi = item.bounds
@@ -68,6 +79,20 @@ class TestLayer:
         assert layer.items() == (item,)
         layer.clear()
         assert layer.items() == ()
+
+    def test_lines_are_drawn_unlit_as_gl_lines(self, monkeypatch):
+        calls = []
+        for name in ("glEnable", "glDisable", "glColorMaterial", "glMaterialfv", "glMaterialf", "glLightModeli",
+                     "glEnableClientState", "glDisableClientState", "glVertexPointer", "glNormalPointer",
+                     "glColorPointer", "glDrawElements", "glBlendFunc", "glDepthMask"):
+            monkeypatch.setattr(cr, name, lambda *args, _n=name: calls.append((_n, args)))
+        layer = cr.CubeSceneLayer()
+        layer.set_items([cr.line_item(np.zeros((3, 2, 3)), (1, 1, 1))])
+        layer.draw()
+        draws = [args for name, args in calls if name == "glDrawElements"]
+        assert len(draws) == 1 and draws[0][:2] == (cr.GL_LINES, 6)
+        assert calls[0] == ("glDisable", (cr.GL_LIGHTING,)) and calls[-1] == ("glEnable", (cr.GL_LIGHTING,))
+        assert "glNormalPointer" not in [name for name, _ in calls]
 
     def test_radius_covers_every_item(self):
         layer = cr.CubeSceneLayer()

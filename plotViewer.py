@@ -39,6 +39,13 @@ A sixth is the heat map of the Excitation tab (excitationAnalysis.heat_map_entry
     [{"type": "heat_map", "matrix": [[...], ...], "row_labels": [...], "col_labels": [...],
       "vmin": null, "vmax": null, "colorbar": "...", "xlabel", "ylabel", "title"}]
 
+A seventh is the MO energy-level diagram of the Orbitals tab
+(molecularOrbitals.energy_levels_entry)::
+
+    [{"type": "energy_levels", "columns": [{"label": "Alpha", "levels": [{"number",
+      "energy_ev", "occupancy", "label"}], "homo": 5, "lumo": 6}], "ylim": [lo, hi],
+      "ylabel", "title"}]
+
 Entries written before these shapes
 existed carry no ``"type"`` key at all, so the plain curve stays the default.
 
@@ -54,7 +61,8 @@ import json
 # the TkAgg pin would silently re-pin Agg and this viewer would open no
 # window at all. See draw_bar_comparison's docstring for why the renderer
 # lives there instead of here.
-from displayPlots import draw_bar_comparison, draw_heat_map, draw_plane_map, draw_uv_vis, series_style_kwargs
+from displayPlots import (draw_bar_comparison, draw_energy_levels, draw_heat_map, draw_plane_map, draw_uv_vis,
+                          series_style_kwargs)
 
 import matplotlib
 # Pin an interactive GUI backend explicitly. In a packaged (frozen) build
@@ -92,6 +100,10 @@ def build_figures(figures):
             continue
         if fig.get("type") == "heat_map":
             draw_heat_map(figure.gca(), fig, FONT_STYLE)
+            plt.tight_layout()
+            continue
+        if fig.get("type") == "energy_levels":
+            draw_energy_levels(figure.gca(), fig, FONT_STYLE)
             plt.tight_layout()
             continue
         if "series" in fig:

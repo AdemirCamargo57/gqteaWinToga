@@ -18,6 +18,7 @@
 - [Basic Workflows](#basic-workflows)
   - [Analyze a Bond Length](#analyze-a-bond-length)
   - [Run a QTAIM Topology Analysis](#run-a-qtaim-topology-analysis)
+  - [Visualize Molecular Orbitals](#visualize-molecular-orbitals)
   - [Generate Natural Transition Orbitals](#generate-natural-transition-orbitals)
   - [Analyse an Electronic Excitation](#analyse-an-electronic-excitation)
   - [Build CPMD Input Files](#build-cpmd-input-files)
@@ -58,6 +59,7 @@
   - [General Tools](#general-tools)
     - [3D Molecular Viewer](#3d-molecular-viewer)
       - [Cube tab](#cube-tab)
+    - [Molecular Orbitals (Orbitals tab)](#molecular-orbitals-orbitals-tab)
     - [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)
     - [QTAIM Topology Analysis](#qtaim-topology-analysis)
     - [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)
@@ -103,6 +105,7 @@
   - [Example 9: QTAIM Analysis of a Hydrogen Bond (water dimer)](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer)
   - [Example 10: Natural Transition Orbitals of Uracil S3](#example-10-natural-transition-orbitals-of-uracil-s3)
   - [Example 11: Classifying the Excited States of a Push-Pull Molecule (D-pi-A)](#example-11-classifying-the-excited-states-of-a-push-pull-molecule-d-pi-a)
+  - [Example 12: Frontier Orbitals of Benzene](#example-12-frontier-orbitals-of-benzene)
 - [Formulas and Methods (All Bond / Angle / Dihedral tools)](#formulas-and-methods-all-bond--angle--dihedral-tools)
 - [Formulas and Methods (Bond Length / Bond Angle / Dihedral Angle tools)](#formulas-and-methods-bond-length--bond-angle--dihedral-angle-tools)
 - [Formulas and Methods (Mean Residence Time tool)](#formulas-and-methods-mean-residence-time-tool)
@@ -110,6 +113,7 @@
 - [Formulas and Methods (Fukui Function tool)](#formulas-and-methods-fukui-function-tool)
 - [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules)
 - [Formulas and Methods (QTAIM tab)](#formulas-and-methods-qtaim-tab)
+- [Formulas and Methods (Orbitals tab)](#formulas-and-methods-orbitals-tab)
 - [Formulas and Methods (NTO tab)](#formulas-and-methods-nto-tab)
 - [Formulas and Methods (Excitation tab)](#formulas-and-methods-excitation-tab)
 - [Formulas and Methods (Solvation box builders)](#formulas-and-methods-solvation-box-builders)
@@ -129,6 +133,7 @@
   - [Plot windows do not appear](#plot-windows-do-not-appear)
   - [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view)
   - [ESP tool messages](#esp-tool-messages)
+  - [Orbitals tab messages](#orbitals-tab-messages)
   - [NTO tab messages](#nto-tab-messages)
   - [Excitation tab messages](#excitation-tab-messages)
   - [Fukui input builder messages](#fukui-input-builder-messages)
@@ -146,7 +151,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-1.5.0 Molecular Analysis Toolkit
+gQTEA-1.5.5 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -400,6 +405,18 @@ Typical outputs include bond length time series, distribution data, free-energy 
 9. Read `name_QTAIM.txt` in the output folder.
 
 The full procedure, with every option and what to do when points are missing, is in [QTAIM Topology Analysis](#qtaim-topology-analysis) (*Step-by-step procedure*); a worked example with real numbers is [Example 9](#example-9-qtaim-analysis-of-a-hydrogen-bond-water-dimer); the theory is in [Theoretical Background: the Quantum Theory of Atoms in Molecules](#theoretical-background-the-quantum-theory-of-atoms-in-molecules).
+
+### Visualize Molecular Orbitals
+
+1. Run any Gaussian HF or DFT job that keeps a checkpoint (for example `%chk=name.chk` with `# B3LYP/6-31G(d)`), and convert it: `formchk name.chk name.fchk`.
+2. Open **Tools > 3D Molecular Viewer** and choose the **Orbitals** tab.
+3. Browse to `name.fchk` and click **Load**. The table lists every MO with its label (HOMO, LUMO+1, ...), occupancy and energy; the HOMO is selected.
+4. Click **Display**: the HOMO's positive and negative phases appear as red and green isosurfaces in the 3D window.
+5. Click another row, or **LUMO**, **Previous**, **Next**: the drawing follows. For an unrestricted (UHF/UKS) file choose **Spin** first.
+6. Optionally change **Surface** (phases or |φ|²), **Isovalue**, **Grid quality** (Coarse/Medium/Fine) or **Style** (Solid, Transparent, Mesh).
+7. **Energy levels...** opens the MO energy diagram; **Export cube**, **Export cubes** (a range such as `HOMO-2:LUMO+2`), **Export energy table** and **Export 3D image...** save the results.
+
+The details are in [Molecular Orbitals (Orbitals tab)](#molecular-orbitals-orbitals-tab), a worked example in [Example 12](#example-12-frontier-orbitals-of-benzene), and the method in [Formulas and Methods (Orbitals tab)](#formulas-and-methods-orbitals-tab).
 
 ### Generate Natural Transition Orbitals
 
@@ -1600,7 +1617,7 @@ Typical outputs:
 
 Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 
-**Window layout.** The controls are arranged as a fixed header, ten tabs, and a status line:
+**Window layout.** The controls are arranged as a fixed header, eleven tabs, and a status line:
 
 - **Header** (always visible, whichever tab you are on): the XYZ file field with **Browse**, plus the two main actions — **Display Molecule/Trajectory**, which opens the 3D window, and **Save Current Frame XYZ**.
 - **Display** tab: projection, atom style, atom and bond scale, maximum bond length, rotation, and atom labels. The atom styles are Line, CPK (ball and stick), vdW (space-filling) and **Design style**, which draws the molecule as the Molecular Design Canvas does: equal flat discs in the canvas colours with a thin outline, single bond lines, the element symbol centred on each disc and the atom number beside it, in colours that stay readable on the current background. The *Atom numbers* and *Atomic symbols* switches are independent (either, both or neither) and are the same settings as the QTAIM tab's *Atom labels*.
@@ -1609,13 +1626,14 @@ Use **Tools > 3D Molecular Viewer** to inspect XYZ structures and trajectories.
 - **Measure** tab: distances, angles, dihedrals, and atom coordinates.
 - **Design** tab: draw, import and pre-optimize a molecule (see [Molecular Design](#molecular-design)).
 - **Cube** tab: Gaussian cube files as isosurfaces and slices, grid arithmetic, cube and image export (see [Cube tab](#cube-tab)).
+- **Orbitals** tab: the molecular orbitals of a Gaussian `.fchk` (RHF/RKS, UHF/UKS, ROHF/ROKS), one at a time, as GaussView shows them — an MO table with labels, occupancies and energies, red/green phase isosurfaces or |φ|², the energy-level diagram, cube and energy-table export (see [Molecular Orbitals (Orbitals tab)](#molecular-orbitals-orbitals-tab)).
 - **ESP** tab: the electrostatic potential mapped on electron-density isosurfaces of a Gaussian `.fchk`, its extrema, and ESP/density cube export (see [Electrostatic Surface Potential (ESP)](#electrostatic-surface-potential-esp)).
 - **QTAIM** tab: Bader's topology analysis of a Gaussian `.fchk` density — critical points, their properties, bond and ring paths, a text report and a 2D plane map (see [QTAIM Topology Analysis](#qtaim-topology-analysis)).
 - **NTO** tab: natural transition orbitals of a CIS/TDA/TD excited state from a Gaussian `.fchk` and its output — pair weights, hole and particle isosurfaces, cube and NTO `.fchk` export — and the GaussView-style UV-Vis spectrum of all the excited states (see [Natural Transition Orbitals (NTO)](#natural-transition-orbitals-nto)).
 - **Excitation** tab: electron excitation analysis of a CIS/TDA/TD state from the same two files — hole-electron indices, MO/atom/fragment contributions, interfragment charge transfer, the Δr and Λ indices and a classification of the excitation, with hole/electron isosurfaces, cubes, heat maps and a report (see [Electron Excitation Analysis (Excitation tab)](#electron-excitation-analysis-excitation-tab)).
 - **Status line** (bottom): reports the last action, such as trajectory loading progress or the value you just applied.
 
-**One analysis result on the canvas at a time.** The **Cube**, **ESP**, **QTAIM**, **NTO** and **Excitation** tabs all draw in the same 3D window. Displaying a result in one of them replaces whatever another of these tabs was showing, so you always see the result you asked for last (for example, an ESP surface no longer hides the hole and electron when you then display an excitation). The replaced tab keeps its results: press its display button again to bring them back. In the **Cube** tab the ticked cubes stay ticked; press **Display** to show them again.
+**One analysis result on the canvas at a time.** The **Cube**, **Orbitals**, **ESP**, **QTAIM**, **NTO** and **Excitation** tabs all draw in the same 3D window. Displaying a result in one of them replaces whatever another of these tabs was showing, so you always see the result you asked for last (for example, an ESP surface no longer hides the hole and electron when you then display an excitation). The replaced tab keeps its results: press its display button again to bring them back. In the **Cube** tab the ticked cubes stay ticked; press **Display** to show them again.
 
 **Loading a trajectory.** After **Browse**, the file is read in the background: a spinner turns beside the status line, which shows the frames read so far and the fraction of the file, and the window stays responsive. **Browse** is unavailable until loading ends. A 351 MB, 15 000-frame trajectory of 430 atoms loads in about 3 s (about 7 s with the earlier line-by-line reader, which read identical frames). Reading follows the same rules as before: blank or non-numeric lines where a frame should start are skipped, atom lines may have extra columns after x, y and z, and a frame cut short by the end of the file, with a line of fewer than four fields or with a coordinate that is not a number ends the reading, keeping the frames before it. Line endings may be `\n` or `\r\n`.
 
@@ -2366,6 +2384,108 @@ because there is no sensible geometry to produce; others are only reported.
 Other failures are reported in a dialog as they happen: an optimization that
 hits its iteration limit, or a 3D viewer that cannot open, both name the
 underlying cause and leave the structure available.
+
+#### Molecular Orbitals (Orbitals tab)
+
+Use the **Orbitals** tab of the **3D Molecular Viewer** (Tools > 3D Molecular
+Viewer) to look at the molecular orbitals of a Gaussian calculation one at a
+time, as GaussView's MO editor does: the positive and negative phases of the
+orbital as two isosurfaces of different colours, drawn with the molecule in
+the viewer's own 3D window. No external program is needed.
+
+**Input.** A Gaussian formatted checkpoint (`.fchk` / `.fch`, made with
+`formchk name.chk name.fchk`) of any SCF calculation — HF or DFT, a single
+point or an optimization, and also the ground-state MOs of a TD/CIS job:
+
+| Wavefunction | MO sets | Occupancy | Spin selection |
+| --- | --- | --- | --- |
+| Restricted closed shell (RHF, RB3LYP, ...) | one | 2 or 0 | off ("One MO set") |
+| Unrestricted (UHF, UB3LYP, ...) | alpha and beta | 1 or 0 in each | **Alpha** / **Beta** |
+| Restricted open shell (ROHF, ROB3LYP, ...) | one | 2, 1 or 0 | off |
+
+Basis functions up to g (5D/6D, 7F/10F and SP shells) are read. **Load** reads
+the file in the background and fills the table.
+
+**Tab layout, top to bottom.**
+
+- **Input**: the `.fchk` and the output folder (blank = the folder of the
+  `.fchk`), **Load**, **Clear**, a status line and a progress bar.
+- **Orbitals**: a summary (method/basis, electrons, number of MOs, kind of
+  wavefunction, HOMO, LUMO and gap); **Spin**; the MO table — **MO** number
+  (Gaussian's and GaussView's numbering, from 1), **Label** counted from the
+  HOMO of that spin (HOMO, HOMO-1, ..., LUMO, LUMO+1, ...), **Occ.**, and the
+  energy in Hartree and eV; the buttons **HOMO**, **LUMO**, **◀ Previous**,
+  **Next ▶** and **Energy levels...**; and a line naming the selected orbital.
+  The HOMO is selected after loading.
+- **Display**: **Surface**, **Isovalue**, **Grid quality** (with the custom
+  spacing field), **Style**, **Opacity**, the **Positive / Negative** colours
+  and **Display**.
+- **Export**: **Export cube**, **Send to Cube tab**, **Export 3D image...**,
+  the **Orbital range** field with **Export cubes**, and **Export energy
+  table**, followed by the help text (replaced by the energy table when it is
+  exported).
+
+**Choosing an orbital.** Click a row of the table, or use **HOMO**, **LUMO**,
+**Previous** and **Next** (they also select the row). Once an orbital is on the
+screen, every choice redraws it by itself — another MO, the spin, the surface,
+the grid or a typed isovalue (Enter applies). The last three orbitals computed
+are kept, so going back and forth costs nothing. For an unrestricted file the
+MO number stays the same when **Spin** changes, so alpha *n* and beta *n* can
+be compared; note that the HOMO is a different number in each set when the
+two spins have different electron counts.
+
+**Display options.**
+
+| Option | Choices | Default and meaning |
+| --- | --- | --- |
+| Surface | *Orbital phases (+/−)*, *Orbital density \|φ\|²* | Phases: the surfaces φ = +isovalue (positive colour) and φ = −isovalue (negative colour). Density: one surface \|φ\|² = isovalue, in the positive colour. |
+| Isovalue (a.u.) | any positive number | 0.02 for phases (GaussView's default); 0.0004 for \|φ\|² (= 0.02², the same envelope). Each surface keeps its own value. |
+| Grid quality | Coarse, Medium, Fine, Custom | 3, 6 or 12 points per bohr (cubegen's coarse, medium and fine grids); Custom = the spacing typed in bohr (blank = Medium's). Default Medium. |
+| Style | Solid, Transparent, Mesh | Solid: opaque, lit surfaces. Transparent: the **Opacity** slider (default 0.5) applies. Mesh: contour lines where planes 0.4 bohr apart in x, y and z cut the surface, GaussView's mesh look. |
+| Colours | names or `#rrggbb` | Positive red, negative green (GaussView's). Enter applies. |
+
+The grid is a box round the molecule (atoms ± 1.7 van der Waals radii) that
+grows by 1 bohr on any face where the orbital is still above isovalue/10, so
+the surface is never cut by the box; every grid value is computed exactly from
+the basis functions and MO coefficients in the file (no interpolation). Diffuse
+virtual orbitals (high LUMO+n, or any basis with `+`/`aug-` functions) need
+large boxes: if the program reports that the grid would be too large, choose a
+coarser grid or a higher isovalue. With numba installed, the HOMO of benzene
+(6-31G(d), Medium grid) is computed and drawn in about 1.2 s.
+
+**Phase colours.** The sign of each MO is taken from the coefficients in the
+file exactly as written, so the colours agree with GaussView and with cubegen
+cubes of the same `.fchk` (tested against cubegen). The overall sign of an
+orbital has no physical meaning: another run of the same calculation may give
+the opposite sign, which swaps the two colours.
+
+**Energy levels.** **Energy levels...** writes `<name>_MO_levels.json` in the
+output folder and opens it in the interactive plot viewer: one column of levels
+(alpha and beta side by side for an unrestricted file), occupied levels solid
+blue (singly occupied ones orange in a restricted open-shell file), virtual
+levels dashed grey, degenerate levels side by side, each level labelled with its
+MO number, the HOMO and LUMO named and the gap marked with an arrow. The view
+opens on HOMO−10 … LUMO+10 (at most 20 eV beyond the HOMO and LUMO, so core
+levels do not squash it); zoom or pan to see the rest. **Plotter** (*JSON plot
+file*) reopens the file later.
+
+**Exports** (all to the output folder):
+
+| Button | File | Content |
+| --- | --- | --- |
+| Export cube | `<name>_MO<n>.cube` (unrestricted: `_MO<n>_alpha.cube` / `_beta.cube`; \|φ\|²: `..._density.cube`) | The selected orbital, as chosen under *Surface*, on the chosen grid. Computed first if it is not on screen. |
+| Export cubes | the same names, one per orbital | Every orbital of the **Orbital range** field, all on one grid, so the Cube tab can add or subtract them. Ranges: numbers (`20-25, 30`) or HOMO/LUMO with offsets joined by `:` (`HOMO-2:LUMO+2`); at most 50 cubes at a time. |
+| Send to Cube tab | — | The displayed orbital as an unsaved Cube-tab entry (unticked), for slices, arithmetic and saving. |
+| Export 3D image... | PNG, TIFF or BMP | The 3D window exactly as shown (captured first, then the file name is asked). |
+| Export energy table | `<name>_MO_energies.txt` | A commented header (file, method, basis, wavefunction kind, electrons, charge, multiplicity, HOMO, LUMO and gap per spin) and one row per MO: `mo spin occupancy label energy_hartree energy_ev`. Read the numbers with `numpy.loadtxt(path, usecols=(0, 2, 4, 5))`. |
+
+**Limitations.** Gaussian `.fchk` files only (no `.wfn`, `.molden` or `.log`);
+SCF orbitals only — natural-orbital files are not recognised; one orbital at a
+time; no orbital composition (percent per atom); translucent surfaces are not
+depth-sorted, so overlapping lobes mix in drawing order. For ROHF jobs, G09's
+`formchk` writes the alpha density as `Total SCF Density` (found while testing
+this tab); the Orbitals tab does not use that section, but the density-based
+tabs (ESP, QTAIM) then see only the alpha electrons of such a file.
 
 #### Electrostatic Surface Potential (ESP)
 
@@ -4037,6 +4157,54 @@ Sr = 0.33, Δσ = 1.87 Å) is also Rydberg-like although its Sr is above 0.3 —
 is why the rule uses the diffuse-electron fraction rather than Sr. With a basis
 without diffuse functions such states cannot be described at all, and the
 report says that Rydberg character cannot be assigned.
+
+### Example 12: Frontier Orbitals of Benzene
+
+The file is the project's test fixture `tests/data/fchk/benzene_631gd.fchk`
+(RB3LYP/6-31G(d)).
+
+#### 1. Load and read the table
+
+Load gives *RB3LYP/6-31G(d), 42 electrons, 102 MOs (restricted). HOMO 21:
+-6.698 eV, LUMO 22: 0.098 eV, gap 6.796 eV.* The frontier part of the table:
+
+| MO | Label | Occ. | Energy (eV) | Character |
+| --- | --- | --- | --- | --- |
+| 17 | HOMO-4 | 2 | −9.7733 | π (a2u) |
+| 18, 19 | HOMO-3, HOMO-2 | 2 | −9.2653 | σ (degenerate pair) |
+| 20, 21 | HOMO-1, HOMO | 2 | −6.6978 | π (e1g, degenerate pair) |
+| 22, 23 | LUMO, LUMO+1 | 0 | 0.0980 | π* (e2u, degenerate pair) |
+| 24 | LUMO+2 | 0 | 2.4985 | σ* |
+| 27 | LUMO+5 | 0 | 4.4568 | π* (b2g) |
+
+The six π orbitals (17, 20, 21, 22, 23, 27) are the ones that change sign
+through the molecular plane; they are the 1 + 2 + 2 + 1 pattern of the Hückel
+model. The lowest π orbital (MO 17) lies *below* two σ orbitals, so "HOMO-4" is
+not a σ level as one might guess from its number.
+
+#### 2. Look at them
+
+Click **Display** (HOMO, Medium grid, isovalue 0.02): the HOMO shows one red
+and one green lobe on each side of the ring plane, with a nodal plane through
+the ring perpendicular to it. Click **Previous** for MO 20, its degenerate
+partner, whose nodal plane is turned by 90°. Click **LUMO**: four lobes
+alternating in colour round the ring, the e2u π* orbital with two nodal planes.
+Switch **Style** to *Mesh* to see the lobes behind each other, or **Surface**
+to *Orbital density |φ|²* to see where the electron is without the phases.
+
+#### 3. How to read it
+
+- Degenerate orbitals (equal energies) are any two orthonormal combinations of
+  each other: another program, or the same program on another computer, may
+  draw MO 20 and 21 turned by any angle in the ring plane. Compare them as a
+  pair.
+- Equally, the overall sign of each orbital is arbitrary: red and green may be
+  swapped in another run. Only the relative phase inside one orbital means
+  something (a bonding region has one colour, a node separates colours).
+- **Energy levels...** shows the two degenerate pairs side by side and the 6.80
+  eV gap. Kohn–Sham orbital energies are not ionisation energies, and the gap
+  is not the excitation energy; use the NTO and Excitation tabs (with a TD job)
+  for excited states.
 
 ## Formulas and Methods (All Bond / Angle / Dihedral tools)
 
@@ -6039,6 +6207,96 @@ T. Lu, F. Chen, *J. Comput. Chem.* 33, 580 (2012) and T. Lu, *J. Chem. Phys.*
 §3.5.5 (CPs and paths on plane maps); E. Espinosa, I. Alkorta, J. Elguero,
 E. Molins, *J. Chem. Phys.* 117, 5529 (2002) (the |V|/G regions of section 4).
 
+## Formulas and Methods (Orbitals tab)
+
+### 1. Molecular orbitals from the formatted checkpoint
+
+Each molecular orbital is a linear combination of the basis functions of the
+calculation,
+
+$$
+\varphi_k(\mathbf r) = \sum_{\mu} C_{\mu k}\,\chi_\mu(\mathbf r),
+$$
+
+with the coefficients $C_{\mu k}$ of the `.fchk` sections `Alpha MO
+coefficients` (and `Beta MO coefficients` for an unrestricted file) and the
+orbital energies $\varepsilon_k$ of `Alpha/Beta Orbital Energies`. The basis
+functions $\chi_\mu$ are contracted Gaussians read from the same file, with pure
+(5D, 7F, ...) shells expressed through Cartesian ones exactly as in the ESP tab
+([Formulas and Methods (Electrostatic Surface Potential tool)](#formulas-and-methods-electrostatic-surface-potential-tool),
+section 3). When the basis has linear dependencies, Gaussian keeps fewer MOs
+than basis functions (`Number of independent functions`); the table lists the
+MOs actually in the file.
+
+### 2. Occupancies, HOMO and LUMO
+
+With $N_\alpha \ge N_\beta$ the numbers of α and β electrons, the occupancy of
+MO $k$ (numbered from 1 in order of energy) is
+
+| Wavefunction | Occupancy $n_k$ |
+| --- | --- |
+| Restricted closed shell ($N_\alpha = N_\beta$, one MO set) | 2 for $k \le N_\alpha$, otherwise 0 |
+| Restricted open shell ($N_\alpha > N_\beta$, one MO set) | 2 for $k \le N_\beta$, 1 for $N_\beta < k \le N_\alpha$, otherwise 0 |
+| Unrestricted (α and β sets) | α set: 1 for $k \le N_\alpha$; β set: 1 for $k \le N_\beta$; otherwise 0 |
+
+The HOMO of a set is its highest MO with $n_k > 0$ and the LUMO the next one;
+the labels count from them (HOMO−$m$, LUMO+$m$), separately for α and β. The
+gap is $\varepsilon_\text{LUMO} - \varepsilon_\text{HOMO}$ of the same set.
+These occupancies reproduce the SCF density matrix,
+$P = \sum_\sigma \sum_k n_k\,C_{\cdot k} C_{\cdot k}^{\mathsf T}$, and count every
+electron, $\operatorname{tr}(PS) = N$ (both are tested).
+
+### 3. The grid
+
+The orbital is evaluated on a cubic grid of spacing $h$,
+$\mathbf r_{ijk} = \mathbf o + h\,(i, j, k)$. The presets are cubegen's
+coarse, medium and fine grids, $h = 1/3$, $1/6$ and $1/12$ bohr. The box starts
+at the atoms ± 1.7 van der Waals radii and every face on which
+$\max|\varphi| \ge c/10$ ($c$ = the isovalue) moves out by 1 bohr until none
+does, so the surface $|\varphi| = c$ always closes inside the box. A range of
+orbitals uses one box for all of them ($\max_k |\varphi_k|$ on each face). The
+values are exact: one evaluation of the basis functions per block of grid
+points serves every requested orbital (compiled kernel when numba is
+installed). A grid of more than 25 million points is refused with the smallest
+spacing that would fit.
+
+### 4. Surfaces
+
+The phases are the two isosurfaces $\varphi = +c$ (positive colour) and
+$\varphi = -c$ (negative colour), triangulated by the marching-tetrahedra
+method of the Cube tab. The orbital density is the single surface
+$|\varphi|^2 = c'$; since $|\varphi|^2 = c^2 \iff |\varphi| = c$, the default
+$c' = 0.0004$ gives the same envelope as the default $c = 0.02$, without the
+phases. The *Mesh* style draws, instead of the triangles, the lines where the
+planes $x, y, z = o + m\,d$ ($d$ = 0.4 bohr, $m$ integer) cut the surface: each
+triangle crossed by a plane contributes the segment between its two cut edges,
+found by linear interpolation along each edge.
+
+### 5. Units
+
+Energies are listed in Hartree and in eV, $1\ E_\text{h} = 27.211386245988$ eV
+(CODATA 2018, as in the Fukui and Excitation tools). Lengths are bohr inside the
+program and in the cube files, Å on the 3D canvas.
+
+### 6. Validation
+
+- Orbital values at the grid points of cubegen MO cubes (Gaussian 09W, coarse
+  grid; restricted HOMO and LUMO of water, unrestricted α and β orbitals of CH₃,
+  the restricted open-shell SOMO of CH₃): agreement to 3 × 10⁻⁵ a.u. away from
+  the nuclei (cubegen writes six significant digits and approximates near the
+  nuclei) and the **same sign at every point where |φ| > 10⁻³**, so the colours
+  match GaussView's for the same file.
+- $\sum_k n_k |\varphi_k|^2$ on the grid equals the density
+  $\chi^{\mathsf T} P \chi$ to 10⁻⁸ (relative) for restricted, unrestricted and
+  restricted open-shell files.
+
+### 7. References
+
+- A. Szabo, N. S. Ostlund, *Modern Quantum Chemistry*, Dover (1996), chapters 2
+  and 3 (molecular orbitals, restricted and unrestricted Hartree–Fock).
+- Gaussian, Inc., *cubegen* and *formchk* documentation (grid definitions and
+  the formatted checkpoint file).
+
 ## Formulas and Methods (NTO tab)
 
 ### 1. Excited states of single-reference methods
@@ -6721,6 +6979,26 @@ appear as `NOTE:` lines at the end of the results summary.
 | `Could not write …` | The output folder is read-only or missing. | Choose another output folder. |
 | `The 3D viewer could not be opened` | OpenGL/GLFW problem, as for the 3D molecular viewer. | See [Molecular viewer does not open or shows no 3D view](#molecular-viewer-does-not-open-or-shows-no-3d-view). |
 
+### Orbitals tab messages
+
+Errors from the Orbitals tab appear in a dialog; notes about the drawn surface
+appear in the tab's status line.
+
+| Message | Cause | What to do |
+| --- | --- | --- |
+| `… has no molecular orbitals (no 'Alpha MO coefficients' section).` | The `.fchk` was written without orbitals. | Re-create it with `formchk` from the job's checkpoint. |
+| `… is missing fchk section(s): …` / `… has … values, expected …` | The file is not a complete Gaussian formatted checkpoint. | Re-create it with `formchk`. |
+| `basis functions with l = 5 are not supported` | The basis has h functions. | Use a basis up to g functions. |
+| `Load a .fchk file first.` | A button was pressed before **Load**. | Choose the file and press **Load**. |
+| `A grid at … bohr would have … million points. Use a grid spacing of at least … bohr.` | The grid is too fine for the box (large molecule or diffuse orbital). | Choose a coarser **Grid quality**, type the suggested spacing under *Custom*, or raise the isovalue. |
+| `The isovalue must be a positive …` / `The grid spacing must be a positive …` | The field holds zero, a negative number or text. | Type a positive number, or leave it blank for the default. |
+| `'…' is not an orbital …` / `MO … does not exist …` / `'…' is not a valid MO range …` | The **Orbital range** field could not be read. | Use numbers (`20-25, 30`) or `HOMO-2:LUMO+2`. |
+| `… orbitals requested; export at most 50 cubes at a time.` | The range is longer than 50 orbitals. | Export it in parts. |
+| `No +0.02 surface for this orbital.` (status line) | The orbital never reaches the isovalue with that sign. | Lower the isovalue. |
+| `The surface reaches the edge of the grid; raise the isovalue.` (status line) | Only when the box could not grow enough. | Raise the isovalue. |
+| `This MO set has no virtual orbital.` (status line) | **LUMO** in a file whose every MO is occupied. | Nothing to show. |
+| `The plot viewer could not be started. The diagram was saved as …` | The interactive viewer could not open (see [Plot windows do not appear](#plot-windows-do-not-appear)). | Reopen the saved file with **Plotter** (*JSON plot file*). |
+
 ### NTO tab messages
 
 Errors from the NTO tab appear in a dialog; notes appear under `NOTES` in the
@@ -6793,8 +7071,16 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-1.5.0 Molecular Analysis Toolkit
+gQTEA-1.5.5 Molecular Analysis Toolkit
 ```
+
+Version 1.5.5 (October 2026) adds the [Orbitals tab](#molecular-orbitals-orbitals-tab) to the 3D Molecular Viewer:
+
+- **molecular orbitals** of a Gaussian `.fchk` (restricted, unrestricted and restricted open-shell SCF), one at a time, as GaussView shows them: an MO table with labels, occupancies and energies, HOMO/LUMO/Previous/Next, red/green phase isosurfaces or |φ|² on Coarse/Medium/Fine grids, and Solid/Transparent/Mesh styles (Mesh draws GaussView-style contour lines);
+- the MO energy-level diagram in the interactive plot viewer (degenerate levels side by side, HOMO–LUMO gap marked), saved as `<name>_MO_levels.json` and reopened by **Plotter**;
+- cube export of one MO or of a range such as `HOMO-2:LUMO+2` (all on one grid), the `<name>_MO_energies.txt` table, *Send to Cube tab* and 3D image export;
+- validated against Gaussian's cubegen (same phase signs, values to 3 × 10⁻⁵ a.u. away from the nuclei);
+- [Example 12](#example-12-frontier-orbitals-of-benzene) and [the method](#formulas-and-methods-orbitals-tab) in this manual.
 
 Version 1.5.0 (October 2026) adds the [Excitation tab](#electron-excitation-analysis-excitation-tab) to the 3D Molecular Viewer, atom and molecule selection, and a fix for the 3D canvas:
 

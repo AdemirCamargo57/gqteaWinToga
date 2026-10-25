@@ -54,6 +54,9 @@ class PlotterBase:
     #    {"type": "heat_map", "matrix": [[..]], "row_labels": [..],         #
     #     "col_labels": [..], "vmin", "vmax", "colorbar"}                   #
     #     (composition / charge-transfer matrices, Excitation tab)          #
+    #    {"type": "energy_levels", "columns": [{"label", "levels":          #
+    #     [{"number", "energy_ev", "occupancy", "label"}], "homo", "lumo"}]} #
+    #     (MO energy-level diagram, Orbitals tab)                          #
     #                                                                      #
     # xlabel/ylabel/title/xlim/ylim are optional; so are a group's 'errors' #
     # and a bars figure's 'line'.                                           #
@@ -158,6 +161,28 @@ class PlotterBase:
                 cls._check_numeric_sequence([figure[key]], f"{where}: '{key}'")
 
     @classmethod
+    def _check_energy_levels(cls, figure: dict, where: str) -> None:
+        """An MO energy-level diagram (molecularOrbitals.energy_levels_entry); messages name the figure."""
+        columns = figure.get("columns")
+        if not isinstance(columns, list) or not columns:
+            raise ValueError(f"{where}: 'columns' must be a non-empty list of orbital sets.")
+        for c_index, column in enumerate(columns, start=1):
+            tag = f"{where}, column {c_index}"
+            levels = column.get("levels") if isinstance(column, dict) else None
+            if not isinstance(levels, list) or not levels:
+                raise ValueError(f"{tag}: 'levels' must be a non-empty list of orbital levels.")
+            for l_index, level in enumerate(levels, start=1):
+                if (not isinstance(level, dict) or "number" not in level or "energy_ev" not in level
+                        or "occupancy" not in level):
+                    raise ValueError(f"{tag}, level {l_index} needs 'number', 'energy_ev' and 'occupancy'.")
+                cls._check_numeric_sequence([level["number"], level["energy_ev"], level["occupancy"]],
+                                            f"{tag}, level {l_index}: 'number'/'energy_ev'/'occupancy'")
+            for key in ("homo", "lumo"):
+                value = column.get(key)
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                    raise ValueError(f"{tag}: '{key}' must be an MO number or null.")
+
+    @classmethod
     def validate_plot_manifest(cls, payload) -> List[dict]:
         """Check a decoded JSON plot manifest and return its figures.
 
@@ -226,6 +251,8 @@ class PlotterBase:
                 cls._check_uv_vis(figure, where)
             elif figure.get("type") == "heat_map":
                 cls._check_heat_map(figure, where)
+            elif figure.get("type") == "energy_levels":
+                cls._check_energy_levels(figure, where)
             elif "series" in figure:
                 series = figure["series"]
                 if not isinstance(series, list) or not series:
@@ -311,6 +338,10 @@ class PlotterBase:
             elif figure.get("type") == "heat_map":
                 matrix = figure.get("matrix", [[]])
                 detail = f"{len(matrix)} x {len(matrix[0]) if matrix else 0} heat map"
+            elif figure.get("type") == "energy_levels":
+                columns = figure.get("columns", [])
+                n_levels = sum(len(column.get("levels", [])) for column in columns)
+                detail = f"{n_levels} orbital levels in {len(columns)} column(s)"
             elif "series" in figure:
                 n_points = len(figure["series"][0].get("x", []))
                 detail = f"{len(figure['series'])} curves, {n_points} points each"
@@ -998,6 +1029,9 @@ class PlotterBase:
                 elif figure.get("type") == "heat_map":
                     from displayPlots import draw_heat_map
                     draw_heat_map(figure_obj.gca(), figure)
+                elif figure.get("type") == "energy_levels":
+                    from displayPlots import draw_energy_levels
+                    draw_energy_levels(figure_obj.gca(), figure)
                 else:
                     if "series" in figure:
                         for curve in figure["series"]:

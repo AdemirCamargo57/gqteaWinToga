@@ -255,6 +255,78 @@ def draw_heat_map(axes, figure_entry, font_style=None):
     return image
 
 
+ENERGY_LEVEL_WIDTH = 0.6        # width of one column's levels (x units; columns are 1 apart)
+ENERGY_LEVEL_DEGENERACY = 0.003  # eV; closer levels are drawn side by side (molecularOrbitals.DEGENERACY_EV)
+ENERGY_LEVEL_COLOURS = {"occupied": "#1F3A93", "singly": "#D35400", "virtual": "#7F7F7F"}
+
+
+def _degenerate_groups(levels, tolerance=ENERGY_LEVEL_DEGENERACY):
+    """Levels sorted by energy, split where neighbours differ by more than ``tolerance`` eV."""
+    groups = []
+    for level in sorted(levels, key=lambda l: l["energy_ev"]):
+        if groups and level["energy_ev"] - groups[-1][-1]["energy_ev"] <= tolerance:
+            groups[-1].append(level)
+        else:
+            groups.append([level])
+    return groups
+
+
+def draw_energy_levels(axes, figure_entry, font_style=None):
+    """Draw one "energy_levels" manifest entry (molecularOrbitals.energy_levels_entry).
+
+    One column per MO set (alpha and beta side by side for an unrestricted
+    file). Occupied levels are solid (singly occupied ones orange), virtual
+    levels dashed grey; degenerate levels share their slot side by side, as in
+    GaussView's MO editor. Each level carries its MO number; HOMO and LUMO are
+    named and the gap is marked with an arrow. ``ylim`` opens the view on the
+    frontier orbitals; the rest is reached by zooming or panning.
+    """
+    font_style = font_style or {}
+    columns = figure_entry.get("columns", [])
+    half = ENERGY_LEVEL_WIDTH / 2.0
+    # Occupancy 1 is "singly occupied" only in a one-set (restricted-open)
+    # diagram; in an alpha or beta column it is a full occupation.
+    one_set = len(columns) == 1
+    for c, column in enumerate(columns):
+        for group in _degenerate_groups(column.get("levels", [])):
+            width = ENERGY_LEVEL_WIDTH / len(group)
+            for k, level in enumerate(group):
+                x0 = c - half + k * width + 0.04 * width
+                x1 = c - half + (k + 1) * width - 0.04 * width
+                occupancy = level.get("occupancy", 0)
+                if occupancy <= 0:
+                    kind = "virtual"
+                else:
+                    kind = "singly" if one_set and occupancy < 2 else "occupied"
+                axes.hlines(level["energy_ev"], x0, x1, colors=ENERGY_LEVEL_COLOURS[kind], linewidth=2.0,
+                            linestyles="solid" if occupancy > 0 else "dashed")
+            axes.text(c - half - 0.03, group[0]["energy_ev"], ",".join(str(l["number"]) for l in group),
+                      ha="right", va="center", fontsize=7, clip_on=True)
+        by_number = {l["number"]: l for l in column.get("levels", [])}
+        homo, lumo = by_number.get(column.get("homo")), by_number.get(column.get("lumo"))
+        for level, name in ((homo, "HOMO"), (lumo, "LUMO")):
+            if level is not None:
+                axes.text(c + half + 0.03, level["energy_ev"], f"{name} {level['energy_ev']:.3f} eV",
+                          ha="left", va="center", fontsize=8, clip_on=True)
+        if homo is not None and lumo is not None:
+            x = c + half + 0.02
+            axes.annotate("", xy=(x, lumo["energy_ev"]), xytext=(x, homo["energy_ev"]),
+                          arrowprops={"arrowstyle": "<->", "color": "black", "linewidth": 0.8})
+            axes.text(x + 0.03, 0.5 * (homo["energy_ev"] + lumo["energy_ev"]),
+                      f"gap {lumo['energy_ev'] - homo['energy_ev']:.3f} eV", ha="left", va="center",
+                      fontsize=8, clip_on=True)
+    axes.set_xlim(-0.9, len(columns) - 1 + 1.2)
+    labels = [column.get("label", "") for column in columns]
+    axes.set_xticks(range(len(columns)) if any(labels) else [])
+    if any(labels):
+        axes.set_xticklabels(labels)
+    if figure_entry.get("ylim"):
+        axes.set_ylim(*figure_entry["ylim"])
+    axes.grid(True, axis="y", linestyle=":", color="0.8")
+    axes.set_ylabel(figure_entry.get("ylabel", ""), fontdict=font_style)
+    axes.set_title(figure_entry.get("title", ""), fontdict=font_style)
+
+
 class DisplayPlots():
 
     font_style = {'color':  'darkred','weight': 'normal','size': 14}

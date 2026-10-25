@@ -33,6 +33,7 @@ from cubeTab import _assign  # write-only-on-change: every widget write re-lays 
 from molecularDesign import (ATOM_CANVAS_COLORS, ATOM_LABEL_COLOR, DEFAULT_ATOM_COLOR, MolecularDesignController,
                              canvas_palette, parse_hex_color)
 from ntoTab import NTOTabController
+from orbitalTab import OrbitalTabController
 from excitationTab import ExcitationTabController
 from qtaimLayer import QTAIMSceneLayer
 from qtaimTab import QTAIMTabController
@@ -2480,6 +2481,10 @@ class MolecularViewerUI(MolecularViewer):
         self.cube_layer = CubeSceneLayer()
         self.cube_controller = None
 
+        # Orbitals tab: the selected MO's +/- isosurfaces (a cube layer) and the controller.
+        self.orbital_layer = CubeSceneLayer()
+        self.orbital_controller = None
+
         # ESP tab: the mapped surface, its markers and colour bar, and the controller.
         self.esp_layer = ESPSurfaceLayer()
         self.esp_controller = None
@@ -2580,6 +2585,7 @@ class MolecularViewerUI(MolecularViewer):
                 ("Measure", self._tab_page(self._build_measure_tab())),
                 ("Design", self._tab_page(self._build_design_tab())),
                 ("Cube", self._tab_page(self._build_cube_tab())),
+                ("Orbitals", self._tab_page(self._build_orbital_tab())),
                 ("ESP", self._tab_page(self._build_esp_tab())),
                 ("QTAIM", self._tab_page(self._build_qtaim_tab())),
                 ("NTO", self._tab_page(self._build_nto_tab())),         
@@ -3058,6 +3064,11 @@ class MolecularViewerUI(MolecularViewer):
         self.esp_controller = ESPTabController(viewer=self)
         return self.esp_controller.build_tab()
 
+    def _build_orbital_tab(self) -> toga.Box:
+        """Molecular orbitals of an fchk (orbitalTab.OrbitalTabController)."""
+        self.orbital_controller = OrbitalTabController(viewer=self)
+        return self.orbital_controller.build_tab()
+
     def _build_qtaim_tab(self) -> toga.Box:
         """QTAIM topology of an fchk density (qtaimTab.QTAIMTabController)."""
         self.qtaim_controller = QTAIMTabController(viewer=self)
@@ -3074,7 +3085,7 @@ class MolecularViewerUI(MolecularViewer):
         return self.excitation_controller.build_tab()
 
     # The analysis tabs' result layers (all drawn by render_scene_extras).
-    ANALYSIS_LAYERS = ("cube_layer", "esp_layer", "qtaim_layer", "nto_layer", "excitation_layer")
+    ANALYSIS_LAYERS = ("cube_layer", "orbital_layer", "esp_layer", "qtaim_layer", "nto_layer", "excitation_layer")
 
     def show_analysis_layer(self, name: str):
         """A tab is about to show its result in ``name``: clear every other analysis layer.
@@ -3096,9 +3107,9 @@ class MolecularViewerUI(MolecularViewer):
         self.invalidate_scene_cache()
         self.request_projection_update()
 
-    # The hooks below draw the Cube tab's volume, the ESP tab's surface, the
-    # QTAIM tab's critical points and paths, the NTO tab's orbitals and the
-    # Excitation tab's surfaces.
+    # The hooks below draw the Cube tab's volume, the Orbitals tab's MO, the
+    # ESP tab's surface, the QTAIM tab's critical points and paths, the NTO
+    # tab's orbitals and the Excitation tab's surfaces.
     # They are overridden here, not in MolecularViewer, whose hooks must stay
     # empty for subclasses such as espViewer.ESPSurfaceViewer. getattr keeps
     # them safe on headless instances built with __new__.
@@ -3106,6 +3117,9 @@ class MolecularViewerUI(MolecularViewer):
         layer = getattr(self, "cube_layer", None)
         if layer is not None:
             layer.draw()
+        orbital_layer = getattr(self, "orbital_layer", None)
+        if orbital_layer is not None:
+            orbital_layer.draw()
         esp_layer = getattr(self, "esp_layer", None)
         if esp_layer is not None:
             esp_layer.draw_scene(self)
@@ -3135,8 +3149,8 @@ class MolecularViewerUI(MolecularViewer):
         qtaim_layer = getattr(self, "qtaim_layer", None)
         if qtaim_layer is not None and qtaim_layer.get() is not None:
             base = max(base, qtaim_layer.radius() + 0.3)
-        layers = [layer for layer in (getattr(self, "cube_layer", None), getattr(self, "nto_layer", None),
-                                      getattr(self, "excitation_layer", None))
+        layers = [layer for layer in (getattr(self, "cube_layer", None), getattr(self, "orbital_layer", None),
+                                      getattr(self, "nto_layer", None), getattr(self, "excitation_layer", None))
                   if layer is not None and layer.items()]
         if not layers:
             return base

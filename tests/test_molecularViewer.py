@@ -1064,7 +1064,8 @@ def test_the_cube_tab_follows_design_and_keeps_the_other_tabs_in_order():
     import inspect
     source = inspect.getsource(MolecularViewerUI.layout_main_window)
     order = [source.index(f'("{name}"') for name in
-             ("Display", "Box", "Dynamics", "Measure", "Design", "Cube", "ESP", "QTAIM", "NTO", "Excitation")]
+             ("Display", "Box", "Dynamics", "Measure", "Design", "Cube", "Orbitals", "ESP", "QTAIM", "NTO",
+              "Excitation")]
     assert order == sorted(order)
 
 
@@ -1072,6 +1073,30 @@ def test_the_excitation_tab_comes_right_after_the_nto_tab():
     import inspect
     names = re.findall(r'\("([^"]+)", self\._tab_page', inspect.getsource(MolecularViewerUI.layout_main_window))
     assert names[names.index("NTO") + 1] == "Excitation"
+
+
+def test_the_orbitals_tab_comes_right_after_the_cube_tab():
+    import inspect
+    names = re.findall(r'\("([^"]+)", self\._tab_page', inspect.getsource(MolecularViewerUI.layout_main_window))
+    assert names[names.index("Cube") + 1] == "Orbitals"
+    assert len(names) == 11
+
+
+def test_ui_draws_the_orbital_layer_and_frames_it():
+    from cubeRender import CubeSceneLayer
+    ui = MolecularViewerUI.__new__(MolecularViewerUI)
+    MolecularViewer.__init__(ui)
+    ui.frames = []
+    ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
+    plain = ui.get_scene_radius()
+    ui.orbital_layer = CubeSceneLayer()
+    drawn = []
+    ui.orbital_layer.draw = lambda: drawn.append(True)
+    ui.render_scene_extras()
+    assert drawn == [True] and ui.get_scene_radius() == pytest.approx(plain)
+    ui.orbital_layer = CubeSceneLayer()
+    ui.orbital_layer.set_items([_cube_item()])
+    assert ui.get_scene_radius() > 10.0 * 0.529 > plain
 
 
 def test_ui_draws_the_nto_layer_and_frames_it():
@@ -1145,8 +1170,9 @@ def _ui_with_every_analysis_layer_filled():
     ui.frames = []
     ui.molecule_data = [("H", (0.0, 0.0, 0.0))]
     ui.cube_layer, ui.nto_layer, ui.excitation_layer = CubeSceneLayer(), CubeSceneLayer(), CubeSceneLayer()
+    ui.orbital_layer = CubeSceneLayer()
     ui.esp_layer, ui.qtaim_layer = ESPSurfaceLayer(), QTAIMSceneLayer()
-    for layer in (ui.cube_layer, ui.nto_layer, ui.excitation_layer):
+    for layer in (ui.cube_layer, ui.orbital_layer, ui.nto_layer, ui.excitation_layer):
         layer.set_items([_cube_item()], colour_bar=("-1", "1", "caption"))
     vertices = np.array([[8.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
     ui.esp_layer.set_surface(vertices, np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.001)

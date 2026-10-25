@@ -2106,6 +2106,74 @@ LIMITATIONS
   Excitation tab.
 """
 
+    help_orbitals = """MOLECULAR ORBITALS (Orbitals tab)
+
+Draws the molecular orbitals (MOs) of a Gaussian SCF calculation one at a
+time, as GaussView's MO editor does: the + and - phases of the orbital as two
+isosurfaces of different colours, or its density |phi|^2 as one surface.
+
+INPUT
+  Formatted checkpoint   the .fchk / .fch of any Gaussian SCF job (HF or DFT;
+                         the ground-state MOs of a TD/CIS job too):
+                           formchk name.chk name.fchk
+  Supported: restricted closed shell (RHF/RKS: one MO set, occupancy 2/0),
+  unrestricted (UHF/UKS: alpha and beta sets, occupancy 1/0 each; choose the
+  set with Spin) and restricted open shell (ROHF/ROKS: one set, occupancy
+  2/1/0). Basis functions up to g. Load reads the file and lists the MOs.
+
+ORBITALS
+  The table lists every MO: number (Gaussian's and GaussView's numbering),
+  label counted from the HOMO (HOMO-1, LUMO+2, ...), occupancy and energy in
+  Hartree and eV. Click a row, or use HOMO, LUMO, Previous and Next. For an
+  unrestricted file the MO number is kept when the spin changes, so alpha n
+  and beta n can be compared. Energy levels opens the MO energy diagram in
+  the interactive plot viewer (occupied solid, virtual dashed, degenerate
+  levels side by side, HOMO-LUMO gap marked) and saves it as
+  <name>_MO_levels.json; Plotter (JSON plot type) reopens it.
+
+DISPLAY
+  Display computes the selected orbital and opens the 3D window. After that,
+  every choice (another MO, spin, surface, grid, isovalue) redraws by itself.
+  Surface      Orbital phases: + and - isosurfaces at +/- isovalue (default
+               0.02 a.u., GaussView's). Orbital density: |phi|^2 at its own
+               isovalue (default 0.0004 = 0.02^2, the same envelope).
+  Grid quality Coarse, Medium (default), Fine = 3, 6, 12 points per bohr, as
+               cubegen's grids; Custom = the typed spacing in bohr. The grid
+               grows until the orbital is below isovalue/10 on every face;
+               every value is computed exactly. Diffuse virtual orbitals need
+               large grids: a coarser grid or a higher isovalue helps.
+  Style        Solid, Transparent (with the Opacity slider) or Mesh (the
+               triangle edges of the surface).
+  Colours      positive red, negative green by default (GaussView's); names
+               or #rrggbb, Enter applies. |phi|^2 uses the positive colour.
+  The phase signs are the .fchk coefficients as written, so the colours match
+  GaussView and cubegen for the same file. The overall sign of an orbital is
+  arbitrary in any program: a calculation repeated on another computer may
+  swap the two colours. The last three orbitals computed are kept, so going
+  back and forth with Previous/Next is instant.
+
+EXPORT (to the output folder, or the folder of the .fchk)
+  Export cube          the selected orbital on the chosen grid:
+                       <name>_MO<n>.cube (unrestricted: _MO<n>_alpha.cube
+                       ...; |phi|^2: ..._density.cube).
+  Orbital range        one cube per orbital of e.g. HOMO-2:LUMO+2 or
+                       20-25, 30, all on one grid (so the Cube tab can add or
+                       subtract them); at most 50 at a time.
+  Send to Cube tab     the displayed orbital as an unsaved Cube-tab entry.
+  Export 3D image      the 3D window exactly as shown.
+  Export energy table  <name>_MO_energies.txt: every MO with spin, occupancy,
+                       label and energy (Hartree, eV), HOMO, LUMO and gap in
+                       the header.
+
+LIMITATIONS
+  Gaussian .fchk files only (no .wfn, .molden or .log); SCF orbitals only
+  (natural orbitals are not recognised: their occupation numbers are not
+  read); one orbital at a time; no orbital composition. Note:
+  for ROHF jobs G09's formchk writes the alpha density as "Total SCF Density";
+  this tab does not use it, but density-based tabs (ESP, QTAIM) then see only
+  the alpha electrons.
+"""
+
     help_excitation = """ELECTRON EXCITATION ANALYSIS (Excitation tab)
 
 Characterises one excited state of a CIS, TDA or TD (TD-DFT/TDHF) calculation

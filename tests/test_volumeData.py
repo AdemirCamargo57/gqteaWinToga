@@ -108,6 +108,44 @@ class TestIsosurface:
         assert vd.isosurface(blob_volume, 0.5) is not None  # None = "if installed" -> numpy
 
 
+class TestContourLines:
+    """The Orbitals tab's Mesh style: the surface cut by evenly spaced x, y and z planes."""
+
+    def test_sphere_contours_lie_on_the_planes_and_the_surface(self, blob_volume):
+        mesh = vd.isosurface(blob_volume, 0.5, use_numba=False)
+        segments = vd.contour_lines(mesh, blob_volume.origin, 0.4)
+        assert segments.shape[1:] == (2, 3) and len(segments) > 100
+        assert np.abs(np.linalg.norm(segments, axis=2) - BLOB_RADIUS).max() < 0.2
+        # Each segment lies in one plane origin + m * 0.4 of one axis.
+        plane = (segments - blob_volume.origin) / 0.4
+        on_plane = (np.abs(plane[:, 0] - plane[:, 1]) < 1e-9) & (np.abs(plane[:, 0] - np.round(plane[:, 0])) < 1e-9)
+        assert np.all(on_plane.any(axis=1))
+
+    def test_the_equator_is_a_closed_circle_of_the_right_length(self, blob_volume):
+        mesh = vd.isosurface(blob_volume, 0.5, use_numba=False)
+        segments = vd.contour_lines(mesh, blob_volume.origin, 0.4)
+        equator = segments[(np.abs(segments[:, :, 2]) < 1e-9).all(axis=1)]   # plane z = -4 + 10 x 0.4 = 0
+        length = np.linalg.norm(equator[:, 1] - equator[:, 0], axis=1).sum()
+        assert length == pytest.approx(2 * np.pi * BLOB_RADIUS, rel=0.03)
+        ends, counts = np.unique(np.round(equator.reshape(-1, 3), 9), axis=0, return_counts=True)
+        assert np.all(counts == 2)    # closed: every end point is shared by exactly two segments
+
+    def test_one_triangle(self):
+        vertices = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        triangles = np.array([[0, 1, 2]])
+        mesh = vd.IsoMesh(vertices, triangles, vd.vertex_normals(vertices, triangles))
+        segments = vd.contour_lines(mesh, (0.0, 0.0, 0.0), 0.5)
+        # Planes x = 0.5 and y = 0.5 cut it; x = 1 and y = 1 only touch a corner; z = 0 holds it whole.
+        assert len(segments) == 2
+        x_cut = segments[np.isclose(segments[:, :, 0], 0.5).all(axis=1)][0]
+        assert sorted(map(tuple, np.round(x_cut, 12))) == [(0.5, 0.0, 0.0), (0.5, 0.5, 0.0)]
+
+    def test_bad_spacing(self, blob_volume):
+        mesh = vd.isosurface(blob_volume, 0.5, use_numba=False)
+        with pytest.raises(ValueError, match="line spacing"):
+            vd.contour_lines(mesh, blob_volume.origin, 0.0)
+
+
 class TestModuleImports:
     @pytest.mark.parametrize("module", ["volumeData", "volumeNumba"])
     def test_does_not_import_toga(self, module):
