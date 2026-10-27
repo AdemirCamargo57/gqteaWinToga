@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**gqteaWinToga** (title: *gQTEA Molecular Analysis Toolkit*, current app version 1.5.5, set in the title label in `gqteaWinToga.py`; releases are tagged `vX.Y.Z`) is a Windows desktop GUI for preparing, converting, and analyzing molecular dynamics and electronic-structure simulation data (CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping, trajectory analysis). It is built with the [Toga](https://toga.readthedocs.io/) GUI framework on the WinForms backend.
+**gqteaWinToga** (title: *gQTEA Molecular Analysis Toolkit*, current app version 1.5.6, set in the title label in `gqteaWinToga.py`; releases are tagged `vX.Y.Z`) is a Windows desktop GUI for preparing, converting, and analyzing molecular dynamics and electronic-structure simulation data (CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping, trajectory analysis). It is built with the [Toga](https://toga.readthedocs.io/) GUI framework on the WinForms backend.
 
 The git repository lives in `venv/src/` (this directory), which is nested inside a Python `venv` created against Python 3.13. Run all commands from `venv/src/`.
 

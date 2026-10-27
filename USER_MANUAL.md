@@ -151,7 +151,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-1.5.5 Molecular Analysis Toolkit
+gQTEA-1.5.6 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -7078,8 +7078,10 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-1.5.5 Molecular Analysis Toolkit
+gQTEA-1.5.6 Molecular Analysis Toolkit
 ```
+
+Version 1.5.6 (October 2026) makes the [3D Molecular Viewer](#3d-molecular-viewer) open faster: the six analysis tabs (Cube, Orbitals, ESP, QTAIM, NTO, Excitation) are now built the first time you open each one rather than when the window opens, so the viewer window appears in about 1 s instead of about 3 s, and each of those tabs takes under a second the first time it is shown. Nothing else changes in how the tabs work.
 
 Version 1.5.5 (October 2026) adds the [Orbitals tab](#molecular-orbitals-orbitals-tab) to the 3D Molecular Viewer:
 
