@@ -28,7 +28,7 @@ import excitationAnalysis as xa
 import excitationData as ed
 import volumeData as vd
 from cubeRender import arrow_item, sphere_item, surface_item
-from cubeTab import CubeEntry, _assign, _item_names, canonical_colour
+from cubeTab import CubeEntry, _assign, _item_names, canonical_colour, cube_controller_of
 from help import HelpGqteaWin
 from qtaimTab import fit_table_columns, parse_optional_float
 
@@ -718,8 +718,10 @@ class ExcitationTabController:
 
     async def send_to_cube_tab(self, widget):
         """Add the displayed quantities to the Cube tab (slices, arithmetic, saving)."""
-        cube = getattr(self.viewer, "cube_controller", None)
-        if self.results is None or self._volumes is None or cube is None:
+        # Asked for only when there is something to send: it builds an unvisited Cube tab.
+        shown = self.results is not None and self._volumes is not None
+        cube = cube_controller_of(self.viewer) if shown else None
+        if cube is None:
             await self._show_info("Nothing to Send", "Display the analysis first; the shown quantities are sent.")
             return
         names = []

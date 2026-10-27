@@ -27,7 +27,7 @@ import ntoAnalysis as na
 import uvVisSpectrum as uv
 import volumeData as vd
 from cubeRender import surface_item
-from cubeTab import CubeEntry, _assign, _item_names, canonical_colour
+from cubeTab import CubeEntry, _assign, _item_names, canonical_colour, cube_controller_of
 from help import HelpGqteaWin
 from qtaimTab import fit_table_columns, parse_optional_float
 
@@ -671,8 +671,10 @@ class NTOTabController:
 
     async def send_to_cube_tab(self, widget):
         """Add the displayed pair's hole and particle to the Cube tab (slices, arithmetic, saving)."""
-        cube = getattr(self.viewer, "cube_controller", None)
-        if self.results is None or self._orbitals is None or cube is None:
+        # Asked for only when there is something to send: it builds an unvisited Cube tab.
+        shown = self.results is not None and self._orbitals is not None
+        cube = cube_controller_of(self.viewer) if shown else None
+        if cube is None:
             await self._show_info("Nothing to Send", "Display a pair first; its two orbitals are sent.")
             return
         _, spin, pair, _, _ = self._orbitals[0]

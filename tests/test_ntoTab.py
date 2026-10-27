@@ -312,6 +312,18 @@ class TestExport:
         assert [e.name for e in cube.added] == ["uracil_state3_NTO1_hole", "uracil_state3_NTO1_particle"]
         assert not any(e.visible for e in cube.added) and cube.synced == ["uracil_state3_NTO1_hole"]
 
+    def test_send_builds_an_unvisited_cube_tab(self, shown):
+        cube, built = shown.viewer.cube_controller, []
+        shown.viewer.cube_controller = None
+
+        def ensure_tab_built(title):
+            built.append(title)
+            shown.viewer.cube_controller = cube
+            return cube
+        shown.viewer.ensure_tab_built = ensure_tab_built
+        asyncio.run(shown.send_to_cube_tab(None))
+        assert built == ["Cube"] and len(cube.added) == 2
+
     def test_send_needs_a_displayed_pair(self, ran):
         asyncio.run(ran.send_to_cube_tab(None))
         assert ran.viewer.cube_controller.added == [] and ran.viewer.main_window.dialogs

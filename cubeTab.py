@@ -227,6 +227,19 @@ def default_cube_filename(name: str) -> str:
     return f"{stem or 'cube'}.cube"
 
 
+def cube_controller_of(viewer) -> Optional["CubeTabController"]:
+    """The viewer's Cube tab controller, for tabs that send results to it.
+
+    The viewer builds the Cube tab only when it is first visited
+    (``MolecularViewerUI.ensure_tab_built``), so a sender must ask for it to be
+    built rather than read ``cube_controller``, which is None until then.
+    """
+    ensure = getattr(viewer, "ensure_tab_built", None)
+    if callable(ensure):
+        return ensure("Cube")
+    return getattr(viewer, "cube_controller", None)
+
+
 @dataclass(eq=False)
 class CubeEntry:
     name: str

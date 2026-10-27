@@ -9,6 +9,7 @@ tests/conftest.py.
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -1080,6 +1081,73 @@ def test_the_orbitals_tab_comes_right_after_the_cube_tab():
     names = re.findall(r'\("([^"]+)", self\._tab_page', inspect.getsource(MolecularViewerUI.layout_main_window))
     assert names[names.index("Cube") + 1] == "Orbitals"
     assert len(names) == 11
+
+
+class TestDeferredAnalysisTabs:
+    """The six analysis tabs hold ~490 of the window's ~665 native controls; building
+    them when the window opened took it from ~1 s to ~3 s, so each is built on first visit."""
+
+    ANALYSIS_TABS = {"Cube", "Orbitals", "ESP", "QTAIM", "NTO", "Excitation"}
+
+    @staticmethod
+    def _ui(pages=("Cube",)):
+        ui = MolecularViewerUI.__new__(MolecularViewerUI)
+        MolecularViewer.__init__(ui)
+        ui._deferred_pages = {title: SimpleNamespace(content=None) for title in pages}
+        for _, attr in MolecularViewerUI.DEFERRED_TABS.values():
+            setattr(ui, attr, None)
+        return ui
+
+    @staticmethod
+    def _counting_builder(ui, attr, built):
+        def build():
+            built.append(attr)
+            setattr(ui, attr, f"{attr} instance")
+            return f"{attr} page"
+        return build
+
+    def test_the_six_analysis_tabs_are_deferred(self):
+        assert set(MolecularViewerUI.DEFERRED_TABS) == self.ANALYSIS_TABS
+
+    def test_opening_the_window_builds_none_of_them(self):
+        import inspect
+        source = inspect.getsource(MolecularViewerUI.layout_main_window)
+        for builder, _ in MolecularViewerUI.DEFERRED_TABS.values():
+            assert f"self.{builder}()" not in source
+        assert "on_select=" in source or "on_select =" in source
+
+    def test_each_builder_sets_the_controller_it_is_paired_with(self):
+        import inspect
+        for builder, attr in MolecularViewerUI.DEFERRED_TABS.values():
+            assert f"self.{attr} = " in inspect.getsource(getattr(MolecularViewerUI, builder))
+
+    def test_first_visit_builds_the_tab_into_its_page_once(self):
+        ui, built = self._ui(), []
+        ui._build_cube_tab = self._counting_builder(ui, "cube_controller", built)
+        assert ui.ensure_tab_built("Cube") == "cube_controller instance"
+        assert ui._deferred_pages["Cube"].content == "cube_controller page"
+        assert ui.ensure_tab_built("Cube") == "cube_controller instance"
+        assert built == ["cube_controller"]
+
+    def test_selecting_a_tab_builds_it_and_other_tabs_build_nothing(self):
+        ui, built = self._ui(pages=("QTAIM",)), []
+        ui._build_qtaim_tab = self._counting_builder(ui, "qtaim_controller", built)
+        ui.on_tab_select(SimpleNamespace(current_tab=SimpleNamespace(text="Display")))
+        assert built == []
+        ui.on_tab_select(SimpleNamespace(current_tab=SimpleNamespace(text="QTAIM")))
+        assert built == ["qtaim_controller"] and ui._deferred_pages["QTAIM"].content == "qtaim_controller page"
+
+    def test_a_selection_before_the_pages_exist_is_ignored(self):
+        ui = MolecularViewerUI.__new__(MolecularViewerUI)
+        MolecularViewer.__init__(ui)
+        ui.on_tab_select(SimpleNamespace(current_tab=SimpleNamespace(text="Cube")))  # no error
+        ui.on_tab_select(SimpleNamespace(current_tab=None))
+
+    def test_without_a_window_the_existing_controller_is_returned(self):
+        ui = MolecularViewerUI.__new__(MolecularViewerUI)
+        MolecularViewer.__init__(ui)
+        ui.cube_controller = "stub controller"
+        assert ui.ensure_tab_built("Cube") == "stub controller"
 
 
 def test_ui_draws_the_orbital_layer_and_frames_it():

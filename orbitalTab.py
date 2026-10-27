@@ -31,7 +31,7 @@ from toga.style.pack import COLUMN, ROW
 import molecularOrbitals as mo
 import volumeData as vd
 from cubeRender import surface_item
-from cubeTab import CubeEntry, _assign, _item_names, canonical_colour
+from cubeTab import CubeEntry, _assign, _item_names, canonical_colour, cube_controller_of
 from help import HelpGqteaWin
 from qtaimTab import fit_table_columns, parse_optional_float
 
@@ -807,9 +807,10 @@ class OrbitalTabController:
 
     async def send_to_cube_tab(self, widget):
         """Add the displayed orbital to the Cube tab (slices, arithmetic, saving)."""
-        cube = getattr(self.viewer, "cube_controller", None)
         entry = self.surface_entry() if self.catalogue is not None else None
-        if entry is None or cube is None:
+        # Asked for only when there is something to send: it builds an unvisited Cube tab.
+        cube = cube_controller_of(self.viewer) if entry is not None else None
+        if cube is None:
             await self._show_info("Nothing to Send", "Display an orbital first; it is sent as shown.")
             return
         added = cube.add_result(entry.volume, self._current_names())

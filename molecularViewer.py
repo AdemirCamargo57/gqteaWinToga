@@ -2553,13 +2553,49 @@ class MolecularViewerUI(MolecularViewer):
             style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 8, 0)),
         )
 
-    @staticmethod
-    def _tab_page(content_box: toga.Box) -> toga.ScrollContainer:
-        return toga.ScrollContainer(
+    # The analysis tabs hold ~490 of the window's ~665 native controls, and
+    # building them made opening the window take ~3 s instead of ~1 s
+    # (measured), so each is built the first time it is shown. Title ->
+    # (builder, the controller attribute that builder sets).
+    DEFERRED_TABS = {
+        "Cube": ("_build_cube_tab", "cube_controller"),
+        "Orbitals": ("_build_orbital_tab", "orbital_controller"),
+        "ESP": ("_build_esp_tab", "esp_controller"),
+        "QTAIM": ("_build_qtaim_tab", "qtaim_controller"),
+        "NTO": ("_build_nto_tab", "nto_controller"),
+        "Excitation": ("_build_excitation_tab", "excitation_controller"),
+    }
+
+    def _tab_page(self, content_box: Optional[toga.Box] = None, deferred: Optional[str] = None) -> toga.ScrollContainer:
+        """A tab's scrolling page; ``deferred`` names a DEFERRED_TABS tab filled on first visit."""
+        page = toga.ScrollContainer(
             content=content_box,
             horizontal=False,
             style=Pack(flex=1),
         )
+        if deferred is not None:
+            self._deferred_pages[deferred] = page
+        return page
+
+    def ensure_tab_built(self, title: str):
+        """Build the deferred tab ``title`` into its page unless already built; return its controller.
+
+        Selecting the tab calls this, and so does any tab that hands results to
+        another (Send to Cube tab). The controllers read the viewer's current
+        background, surface style and view settings when they are built, so a
+        late tab shows what the Display tab set. Without a window (headless
+        tests) nothing is built and the existing controller, if any, is returned.
+        """
+        builder, attr = self.DEFERRED_TABS[title]
+        page = getattr(self, "_deferred_pages", {}).get(title)
+        if getattr(self, attr, None) is None and page is not None:
+            page.content = getattr(self, builder)()
+        return getattr(self, attr, None)
+
+    def on_tab_select(self, widget, **kwargs):
+        tab = widget.current_tab
+        if tab is not None and tab.text in self.DEFERRED_TABS:
+            self.ensure_tab_built(tab.text)
 
     def layout_main_window(self):
         # Every tab is a ScrollContainer; without this, choosing an option far
@@ -2587,6 +2623,7 @@ class MolecularViewerUI(MolecularViewer):
         main_box.add(self._build_header())
         main_box.add(toga.Divider(style=Pack(margin=(8, 0, 8, 0))))
 
+        self._deferred_pages: Dict[str, toga.ScrollContainer] = {}
         tabs = toga.OptionContainer(
             content=[
                 ("Display", self._tab_page(self._build_display_tab())),
@@ -2594,13 +2631,14 @@ class MolecularViewerUI(MolecularViewer):
                 ("Dynamics", self._tab_page(self._build_dynamics_tab())),
                 ("Measure", self._tab_page(self._build_measure_tab())),
                 ("Design", self._tab_page(self._build_design_tab())),
-                ("Cube", self._tab_page(self._build_cube_tab())),
-                ("Orbitals", self._tab_page(self._build_orbital_tab())),
-                ("ESP", self._tab_page(self._build_esp_tab())),
-                ("QTAIM", self._tab_page(self._build_qtaim_tab())),
-                ("NTO", self._tab_page(self._build_nto_tab())),         
-                ("Excitation", self._tab_page(self._build_excitation_tab())),
+                ("Cube", self._tab_page(deferred="Cube")),
+                ("Orbitals", self._tab_page(deferred="Orbitals")),
+                ("ESP", self._tab_page(deferred="ESP")),
+                ("QTAIM", self._tab_page(deferred="QTAIM")),
+                ("NTO", self._tab_page(deferred="NTO")),
+                ("Excitation", self._tab_page(deferred="Excitation")),
             ],
+            on_select=self.on_tab_select,
             style=Pack(flex=1),
         )
         main_box.add(tabs)

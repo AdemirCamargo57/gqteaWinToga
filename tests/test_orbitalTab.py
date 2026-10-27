@@ -434,6 +434,19 @@ class TestExports:
         assert added.name == "water_631gd_5d_MO5" and added.visible is False
         assert loaded.viewer.cube_controller.synced == ["water_631gd_5d_MO5"]
 
+    def test_send_builds_an_unvisited_cube_tab(self, loaded):
+        cube, built = loaded.viewer.cube_controller, []
+        loaded.viewer.cube_controller = None
+
+        def ensure_tab_built(title):
+            built.append(title)
+            loaded.viewer.cube_controller = cube
+            return cube
+        loaded.viewer.ensure_tab_built = ensure_tab_built
+        asyncio.run(loaded.display_orbital(None))
+        asyncio.run(loaded.send_to_cube_tab(None))
+        assert built == ["Cube"] and cube.added[0].name == "water_631gd_5d_MO5"
+
     def test_export_3d_image(self, shown, tmp_path):
         async def ask(title, suggested, file_types):
             assert suggested == "water_631gd_5d_MO5.png"

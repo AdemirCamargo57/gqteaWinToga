@@ -297,6 +297,18 @@ class TestDisplay:
         assert [e.name for e in added] == ["h2co_cis_ccpvdz_state1_hole", "h2co_cis_ccpvdz_state1_electron"]
         assert not any(e.visible for e in added)
 
+    def test_send_builds_an_unvisited_cube_tab(self, shown):
+        cube, built = shown.viewer.cube_controller, []
+        shown.viewer.cube_controller = None
+
+        def ensure_tab_built(title):
+            built.append(title)
+            shown.viewer.cube_controller = cube
+            return cube
+        shown.viewer.ensure_tab_built = ensure_tab_built
+        asyncio.run(shown.send_to_cube_tab(None))
+        assert built == ["Cube"] and len(cube.added) == 2
+
     def test_handlers_are_muted_while_syncing(self, shown):
         shown._syncing = True
         shown.show_selection.value = "Hole"

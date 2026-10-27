@@ -867,3 +867,17 @@ class TestCanvasOwnership:
         c.viewer.claims.clear()
         asyncio.run(c.refresh_scene())
         assert not c.viewer.cube_layer.items() and c.viewer.claims == []
+
+
+class TestCubeControllerOf:
+    """Other tabs send results to the Cube tab, which the viewer builds only on first visit."""
+
+    def test_a_deferred_cube_tab_is_built_on_demand(self):
+        asked = []
+        viewer = SimpleNamespace(cube_controller=None,
+                                 ensure_tab_built=lambda title: asked.append(title) or "built controller")
+        assert ct.cube_controller_of(viewer) == "built controller" and asked == ["Cube"]
+
+    def test_a_viewer_without_deferred_tabs_gives_its_controller(self):
+        assert ct.cube_controller_of(SimpleNamespace(cube_controller="controller")) == "controller"
+        assert ct.cube_controller_of(SimpleNamespace()) is None
