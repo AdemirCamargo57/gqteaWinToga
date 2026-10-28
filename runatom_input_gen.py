@@ -279,8 +279,11 @@ class RunatomGenerator:
         summary = ro.job_summary([(r.stage.label, r.seconds, r.report) for r in outcome.results], uspp)
         if outcome.formatted is not None:
             name = outcome.formatted.name
-            parts.append(f"CPMD: {name} is the formatted pseudopotential. Copy it to CPMD's PP_LIBRARY_PATH "
-                         f"(or the run directory) and use the &ATOMS species line\n  {rr.cpmd_atom_line(name)}")
+            parts.append(f"CPMD: {name} is the formatted pseudopotential. Copy it to the CPMD run directory "
+                         "or CPMD's pseudopotential folder (CPMD_PP_LIBRARY_PATH or PP_LIBRARY_PATH, depending "
+                         "on the CPMD version) and use the &ATOMS species line\n"
+                         f"  {rr.cpmd_atom_line(name)}\nfollowed, as for every species, by the LMAX line "
+                         "and the number of atoms (see the Help tab).")
         elif outcome.formatted_note:
             parts.append(outcome.formatted_note)
         if outcome.error is not None:
