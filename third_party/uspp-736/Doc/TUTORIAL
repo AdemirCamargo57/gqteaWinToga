@@ -1,0 +1,544 @@
+
+     ============================================
+     Ultrasoft Pseudopotential Package User Guide
+     ============================================
+
+
+This is the closest thing there is to a "User Guide" to this
+ultrasoft pseudopotential generation package.  Suggestion for
+improvement are welcome.
+
+					David Vanderbilt
+					July, 2002
+
+
+=========
+Resources
+=========
+
+
+Please be aware of the following additional sources of documentation:
+
+-- The main program Source/runatom.f, which contains some internal
+   documentation.  In particular, the first 400 lines or so contains
+   a summary of the revision history of the code.  And it is worth
+   scanning your eyes over the main program and subroutine scpgef in
+   scgsubs.f, as these are the main routines that control the overall
+   flow of operations in the program.
+
+-- The Doc/INPUT_AE contains some pointers about the content and
+   format of the input file for the all-electron run.
+
+-- The Doc/INPUT_GEN contains some pointers about the content and
+   format of the input file for the pseudo generation run.
+
+-- The Doc/FORMAT provides some information about the output
+   pseudopotential datafile and the format in which it is written.
+
+
+The basic papers about ultrasoft pseudpotentials are the following:
+
+   David Vanderbilt, ``Soft Self-Consistent Pseudopotentials in a
+   Generalized Eigenvalue Formalism,'' Physical Review B {\bf 41}
+   (Rapid Communications), 7892 (1990).
+
+   Kari Laasonen, Roberto Car, Changyol Lee, and David
+   Vanderbilt, ``Implementation of Ultra-Soft Pseudopotentials
+   in Ab-initio Molecular Dynamics,'' Phys. Rev. B {\bf 43}
+   (Rapid Communications), 6796 (1991).
+
+   Kari Laasonen, Alfredo Pasquarello, Changyol Lee, Roberto Car,
+   and David Vanderbilt, ``Car-Parrinello Molecular Dynamics with
+   Vanderbilt's Ultrasoft Pseudopotentials,'' Physical Review B
+   {\bf 47}, 10142 (1993).
+
+
+Note the following important comments in runatom.f:
+
+c     ------------------------------------------------------
+c     note: in this program:
+c     potentials, e.g. rucore, are really r*v(r)
+c     wave funcs, e.g. snl, are really proportional to r*psi(r)
+c       and are normalized so int dr (snl**2) = 1
+c     thus psi(r-vec)=(1/r)*snl(r)*y_lm(theta,phi)
+c     conventions carry over to beta, etc
+c     charge dens, e.g. rscore, really 4*pi*r**2*rho
+c     ------------------------------------------------------
+c     rydberg units are used throughout this program
+c     ------------------------------------------------------
+
+
+
+
+
+=====================================
+How to generate a new pseudopotential
+=====================================
+
+
+We will assume here that you are starting from scratch to generate
+an entirely new pseudopotential for atom X.  Of course, in
+practice, you may have a good example to work from, e.g., an atom
+from a neighboring cell of the periodic table.  In that case, you
+can probably skip some of the trial-and-error steps below by using
+your example as a template and source of informed guesswork.
+
+If you simply want to generate the pseudopotential datafile for
+an existing potential in the Work/ library, you do NOT need to
+go through the following steps; instead, just follow the directions
+in the file AA-QUICK-START in the top-level directory of this
+distribution.
+
+
+-------------------------------------------------------
+Do the all-electron run for the reference configuration
+-------------------------------------------------------
+
+The first step is to run the all-electron reference atom
+calculation for the reference configuration that you want to use
+for the pseudopotential generation.  See Doc/INPUT_AE and refer to
+the examples in Work/*/*/*ae*adat.  Once your Makefile and
+x_ae_*.adat files are set up correctly, you should be able to
+execute this step just by typing "make ae".  It is recommended to
+do a semirelativistic run (irel=2) even for light atoms.  Usually
+this step is entirely straightforward and it is normal to run it
+with ifprt=0.
+
+
+----------------------------------------------------------
+Do a very simple version of the pseudopotential generation
+----------------------------------------------------------
+
+Prepare the x_ps.adat file by referring to Doc/INPUT_PSP and
+the examples in Work/*/*/*ps.adat.  I suggest you normally
+work with ifprt=2, increasing this to larger values from time
+to time to see what additional information can be gained by
+doing so.  (ifprt is a variable whose setting, in the range of
+roughly -3 to +5, determines how much printout appears in the
+*.out file.)
+
+I suggest you start conservatively.  In each angular momentum
+channel:
+  If you are unsure whether to choose 0 or 1 beta functions, pick 0.
+  If you are unsure whether to choose 1 or 2, pick 1.
+  Only if there are two valence shells in the same channel (as
+    in the s channel for Ti, in which semicore s and p shells are
+    included), choose 2 beta functions and set the energies to the
+    two eigenvalues.
+Do the simpest possible pseudization of the local potential
+(lloc=-1) and and turn off pseudization of the Q-functions entirely
+(ifqopt=-1).  Run the job by typing "make" and check that it
+executes without error, and familiarize yourself with the output
+file x_ps.out.
+
+Look at the "plot" of log derivatives near the end (view in a
+terminal window of at least 120 characters to see it properly).  If
+you have asked to plot 3 channels (ilogd=3), then the all-electron
+log derivatives are plotted as characters 1,2,3, and the
+corresponding pseudo ones are plotted as 4,5,6.  (If the agreement
+is good, the first set of characters will obscure the second set,
+so you only see 1,2,3.)  You want the agreement to be good over the
+energy range of the target solid-state calculation, usually in the
+neighborhood of, say, -1.5 Ry to 0 Ry.  If you have been
+conservative in setting the number of beta functions, probably
+there will be one or more angular momentum channels where the
+agreement is not very good.  Then, of course, the game is to play
+around with the options below until you are satisfied.
+
+If you made an arbitrary choice of the cutoff radii (rcloc for the
+local potential and rc for each channel), this would be a good time
+to take a look at the plots comparing the all-electron and pseudo
+local potentials (search for "chart: pseudized local potential")
+and the one comparing the all-electron and pseudo wavefunctions
+(search for "valence all-electron and pseudo wavefunctions").
+Especially for the wavefunctions, the shape of the all-electron
+curve sometimes suggests a natural range in which to choose the
+corresponding rc value.
+
+
+-----------------------------------------------------
+Choosing the method of pseudizing the local potential
+-----------------------------------------------------
+
+This is something of a black art.
+
+The choices are either to do a simple polynomial pseudization
+at rcloc (lloc.eq.-1), or to specify some angular momentum
+channel in which the local potential will be constructed so
+as to give good scattering properties in the absence of
+projectors (lloc.ge.0).
+
+You can always look at the result of the pseudization by
+viewing the "chart: pseudized local potential" in the output
+file.  You should check that this looks reasonably smooth
+and well-behaved.
+
+If you are pseudizing a first-row atom in which you intend to
+have projectors for s and p only, then probably you will want
+to set lloc=2 so that the scattering in the d channel will be
+OK.  Similarly, if you intend to have s, p, and d projectors,
+you may want to set lloc=3 so that f-scattering will be OK.
+(Normally you can set keyee=0, eloc=0, and iploctype=1 for
+the remaining items on the lloc input line.)
+
+Otherwise, you can just experiment with different settings.  In
+easy cases it probably doesn't matter what you choose; lloc=-1 may
+do fine.  In difficult cases, you may want to experiment with
+different choices of lloc and rcloc in conjunction with the steps
+below, to see if this additional freedom allows you to fix some
+problem that may occur there.
+
+(Originally I had the idea that if there was a channel where
+you are unsure whether you want one or two projectors, you could
+try just one projector in conjunction with setting lloc for
+this channel.  However, my experience has been that in practice
+this does not work very well.)
+
+
+--------------------------------------------------------
+Adjust the pseudization in each angular momentum channel
+--------------------------------------------------------
+
+Now work through the angular momentum channels one by one; each
+will act more or less independently at this stage.  (Strictly
+speaking, this is only true as long as you do not decide to
+adjust the pseudization of the local potential to fix a problem
+in one of the channels; in this case, go back and check the
+effect on channels that you have dealt with previously.)
+
+To check the quality in a given channel, the main thing to pay
+attention to is the comparison of scattering properties (plot of
+log derivatives) near the end of the output file.  Generally, more
+projectors give you better accuracy (e.g., better scattering
+properties).  But other things being equal, you obviusly want as
+few projectors as possible, since there are some operations in the
+solid-state calculation with a CPU cost that scales with the number
+of projectors.  (This is especially a consideration in the higher-l
+channels, since there are really 2l+1 projectors needed in 3D for
+each projector in the radial space that you see here.)  Moreover,
+using two projectors sometimes gives rise to problems with
+near-degeneracy or with ghosts (see below).  (Although the program
+will allow it, I don't think three projectors are ever needed.)
+As usual, trial and error will determine how many projectors you
+need in each channel.
+
+In addition to keeping an eye on the log derivative plots, it is a
+good idea to scan the plots of "valence all-electron and pseudo
+wavefunctions" near the end of the output file, and those of
+beta(r) and chi(r) printed earlier on if you choose ifprt=3,
+to make sure they look smooth and reasonable.
+
+** If you currently have 0 projectors in this channel
+
+If you currently do not have any beta functions in this channel,
+and the scattering properties don't look good enough, then you can
+either (i) try going back to adjust the pseudization of the local
+potential until the scatter properties look good enough, or (ii)
+include one or more projectors for this channel.  In the latter
+case, try one projector and see what happens.
+
+** If you currently have 1 projector in this channel
+
+If the the scattering properties are almost but not quite good
+enough, see if you can tune them up by:
+
+-- Reducing the cutoff radius r_c.  But note that softness may
+   suffer (see below).
+
+-- If you have freedom to set the reference energy (i.e., if it
+   is not set to an existing occupied valence eigenvalue), try
+   adjusting it to see what happens.
+
+-- Or try adjusting the local potential.
+
+If you are not satisfied with any of these attempts, go on to
+try 2 projectors.
+
+I believe ghost-eigenvalue problems are relatively uncommon with
+just one projector, but do check the "eigensolution in bessel basis"
+reports to be sure, as explained below.
+
+** If you currently have 2 projectors in this channel
+
+In this case, you will probably find that the scattering properties
+look good.  However, there are some dangers to watch out for in
+this case:
+
+1. Degeneracy/singularity problems:
+
+Basically, the problem is that if the two chi functions that are
+generated are almost degenerate with one another, then the 2x2 B
+matrix formed from them becomes nearly singular; later operations
+involve inversion of the B matrix, which can lead to pathologically
+large coefficients in some of the terms entering the
+pseudo-operators.
+
+To check for degeneracy/singularity problems, scan down the output
+file to look for "matrix b" and "matrix i".  The latter matrix is
+the inverse of the former one.  Look at the 2x2 sub-block of the
+inverse matrix corresponding to the channel you are working in.  If
+the elements of the inverse matrix are enormous, this is likely to
+be a problem.
+
+A better diagnostic, in my opinion, is to look at the Q matrix
+after the transformation.  Find the second instance of "matrix q"
+in the output (the one just after "after transformation") and look
+at the 2x2 sub-block for your channel.  (The "transformation"
+referred to is one in which the beta two beta functions are
+orthonormalized to each other, and all the matrices and
+coefficients are transformed to this new representation.) Or, even
+easier, search for "eigenvalues of q matrix" and look at the two
+eigenvalues in your channel.  If one of these is large, it could
+signal a problem.  The program (as of version 7.3.4) now issues a
+"mild warning" if an eigenvalue is >5; a "severe" warning if it is
+>20; and terminates if it is >50.
+
+These problems will also tend to result in other symptoms: large
+beta functions (e.g., as seen from plots of beta functions obtained
+when ifprt.ge.3) and large q-functions (again, visible in plots).
+
+A large eigenvalue of the q-matrix is probably not as dangerous
+as it may sound at first.  Heuristically, the solution of the
+generalized eigenvalue problem det(H - eps S)=0 is equivalent to
+det (H-tilde - eps)=0 where H-tilde = S^{-1/2} H S^{-1/2} and
+S=1+Q; thus, H-tilde will acquire small, not large, elements.  We
+routinely use potentials with Q eigenvalues of order 15-20 in
+solid-state calculations without encountering problems.  Still,
+large eigenvalues are an indication that the pseudopotential is
+"unbalanced" in some sense, and it is preferable to eliminate
+them.
+
+Sometimes you can fix these problems by:
+
+-- Enlarging the energy interval between the two reference
+   energies.  E.g., if there is one valence eigenvalue in this
+   channel, leave one reference energy set there, and set the
+   other, say, 0.3 Ry above the vacuum level.
+
+-- Adjusting r_c (trial and error)
+
+-- Adjusting the pseudization of the local potential (trial and
+   error).
+
+If you can't fix the problem no matter what you try, then probably
+this is a channel where there is simply not much variation of the
+valence wave functions in the core region over the energy range of
+interest, which means you should be able to get away with a single
+projector in this channel.  Try dropping back to see if you can
+make do with one projector.
+
+2. Ghost states:
+
+This refers to a case where there is an unexpected and unwanted
+extra eigensolution to the pseudo secular equation.  Usuall this
+eigenvalue falls at lower energy (say, from -30 Ry to -2 Ry), so
+that the intended ground state is not really the ground state, but
+the first excited state, of the pseudopotential in this channel.
+
+There are two ways to check for ghost states.
+
+One is to look at the log derivative plot carefully; a ghost state
+may show up there as a sharp resonance in the pseudo log
+derivatives at the ghost energy.  However, it can be missed if the
+resonance is so sharp that it occurs on an energy scale small
+compared to the delta-e used for the plot, or if it falls at an
+energy below the lower limit of the plot.
+
+The second method is much more robust: look at the "eigensolution
+in bessel basis" reports near the end of the printout.  What is
+done here is to actually diagonalize the pseudo-Hamiltonian in a
+basis of bessel functions in a way that mimics the solution that
+would occur in a plane-wave basis set in the target calculation.
+Probably you can just focus on the last report of "eigenvalues of
+US hamiltonian" for the highest energy cutoff (usually 40 Ry).  For
+each channel, the sequence of eigenvalues is reported.  Compare
+with what is expected (see "the eigenvalues are" in the *ae*out
+and in the pseudo generation output files) and make sure there
+is not an extra one; if so, it is a ghost.
+
+Ghosts can sometimes be removed by the same methods that are used
+to deal with degeneracy/singularity problems; see (1.) above.
+Again, if you have no luck, try dropping back to one projector
+and try again.
+
+There are some situations where it seems to be very difficult to
+eliminate ghost states.  The most common one is when there is a
+shallow semicore state that is NOT being included in the valence.
+In this case, choosing a single projector may not give good enough
+scattering properties; while choosing two projectors may lead
+consistently to ghost problems.  (Actually, the ghost usually
+turns out to be very close in energy to the semicore eigenvalue;
+the program is so smart that, by inspecting the log derivatives in
+the range of the two reference energies, it infers that there ought
+to be a resonance down at the semicore energy, and it builds it
+in!)  In this case, you may be stuck with the necessity of
+including the semicore state in the valence.
+
+(This is not very satisfactory, as there may be a substantial CPU
+and memory cost in the solid-state calculation associated with
+carrying the semicore states in the valence.  This is one of the
+known shortcomings of the present ultrasoft generation scheme.  I
+believe that these problems are avoided by two-stage schemes in
+which one first generates a semilocal potential and then
+ultrasoft-pseudizes it, e.g., in the VASP method.  I invite
+attempts to solve this problem in the context of the present
+generation code; some options to treat this problem would be a
+valuable improvement to a future release.)
+
+
+---------------------------------------------
+Check the all-electron vs. pseudo eigenvalues
+---------------------------------------------
+
+Search for "comparison of all-electron and pseudo eigenvalues"
+and check the agreement of pseudo and all-electron eigenvalues.
+If all the valence eigenvalues were used as reference energies,
+which is the normal case, then in principle the errors should
+be zero; in practice they are typically < 10^-5.
+
+
+------------------------------------
+Softness and choice of cut-off radii
+------------------------------------
+
+Most of the discussion above has been focussed on arriving at a
+pseudopotential of good quality.  However, you also want one that
+is soft, i.e., can be represented with a low plane-wave cutoff.  To
+get a feel for the softness of your potential, try looking at the
+plots of "fourier transform of chi  functions", "fourier transform
+of beta functions", and "fourier transform of wfns".  Obviously
+you want these to go to zero at as small a q as possible.  Also,
+look at how the eigenvalues reported at "eigensolution in bessel
+basis" converge with plane-wave cutoff.
+
+To improve the softness, you may wish to try increasing the cut-off
+radii r_c.  But of course, the quality of the potential may suffer.
+
+
+-------------------------------
+Pseudization of the Q-functions
+-------------------------------
+
+Now, you can finally turn your attention to the pseudization of
+the Q-functions at the inner radius rinner.  This part is more or
+less independent of previous parts; e.g., log derivative plots,
+ghost tests, etc. should not be affected by what you do here, and
+vice versa.  Only please be aware that if deneracy/singularity
+problems went unnoticed in the previous stage, they may give
+rise to very large q-functions here.  In that case, go back and
+check more carefully for those problems as described above.
+
+I recommend working with ifprt.ge.2 at this stage.  Run with
+ifqopt=-1 and search for "chart: qfunction Q_{ib,ib}(r)" to 
+see what the unpseudized q-functions look like.
+
+Now try turning on pseudization and see what happens to the
+q-functions.  Look for "l-dep. qfunction in real-space"
+to see the comparison before (line "1") and after (line "2")
+pseudization.  (For l.gt.0 channels there are additional lines
+corresponding to higher total angular momentum L; for the most
+part, you can ignore these.)  Also, look again at
+"chart: qfunction Q_{ib,ib}(r)" for a summary of all the
+pseudizes q-functions.
+
+We usually set (ifqopt,nqf,qtryc) = (2,8,10.).  The main choice
+here is the choice of rinner; once again it is a tradeoff of
+quality (smaller rinner) vs. softness (larger rinner).  But
+sometimes there is a "natural" value of rinner at which the plots
+look nice and smooth.  To get a more quantitative measure of the
+smoothness, look at the fourier transforms that follow.
+
+Now, there is one problem that can arise at this stage, indicated
+by the error message
+
+  *** stopping in vhxc: negative densities ***
+
+During the descreening process, when the screened pseudopotential
+is converted into a bare one, the charge density arising from the
+pseudo valence electrons has to be subtracted from that of the
+all-electron atom to get a density of the bare atom.  The resulting
+density will be positive everywhere if the exact q-functions are
+used, but in some cases it may be negative when pseudized q-functions
+are used.  This problem occurs because the pseudo valence charge
+density is too large in the core region, due to the q-function
+pseudization.
+
+The best way to fix this problem is by trial-and-error adjustment
+of rinner, probably to a smaller value.
+
+However, if that doesn't work, the program has a feature that allows
+you to "steer" the q-function pseudization process by adding an
+extra constraint that the pseudized q-function in a given channel
+should have a given value at a given radius.  This is turned on
+by setting a non-zero value to the "nfix" input parameter in the
+*_ps.adat file.  Here is another example where the process is a
+"black art!"  Hopefully you will not need to do this.
+
+
+---------------------
+Transferability tests
+---------------------
+
+Congratulations; you have generated a pseudopotential!  However, before
+resting on your laurels, it is highly recommended to run one or more
+transferability tests, to check that the potential is working OK.  If
+you generated the potential for the +1 ion, you could try a
+transferability test for the neutral atom, or vice versa; or, keep the
+charge state the same, but try promoting an electron from one valence
+shell to a higher one.
+
+Basically, following the example in Work/000-Ex/000-Ex-ca-sp-test,
+prepare an x_ae_*.adat file for the new configuration, a corresponding
+x_test_*.adat file for the test run, and modify your Makefile.  Then
+you should be able to run the test just by typing "make test".
+
+It is suggested to run with ifprt=1.  Search the output file for the
+table "comparison of all-electron and pseudo eigenvalues"; if the
+discrepancy between pseudo and all-electron eigenvalues is less that 1
+mRy in each channel, then it is probably OK; sometimes you can do much
+better.  You may also want to look at the plot of log derivatives near
+the end and check that the match still looks pretty good even in the
+new configuration.
+
+A word of warning: Some users have reported that the program sometimes
+fails to converge at the stage of doing the transferability test.  For
+example, Bernd Meyer writes:
+
+   Usually this happens in one of the first cycles of the
+   self-consistency loop. I think what happens is that the
+   pseudopotential test calculations are started with information from
+   the all electron run and it is assumed that the solution with the
+   pseudopotential (eigenvalue, decay of the wave function) is very
+   similar to the all electron case. But in the first iteration steps,
+   the Kohn-Sham potential can become very different from the final
+   self-consistent solution...  I have not found a good solution to
+   fix this problem. Often it helps if you reduce the mixing
+   constant to 0.2 or 0.1, but not always.
+
+If anybody develops a robust fix for this problem, please let me know.
+
+
+-----------------------
+Exporting the potential
+-----------------------
+
+Type "make install" to copy the final pseudopotential to your library
+in the Pot/ directory.  By default it is in binary form (i.e., generated
+by unformatted fortran write statements).  If this is what your program
+expects, and if there are no compatibility problems, then you are done.
+But see Doc/FORMAT for a discussion of generating a formatted version
+in case you need it.
+
+
+
+
+					David Vanderbilt
+					July 2002
+
+------------------------------------------------------------------------
+Prof. David Vanderbilt               Phone: (732) 445-2514
+Department of Physics and Astronomy  Fax:   (732) 445-4400
+Rutgers University                   Email:  dhv@physics.rutgers.edu
+136 Frelinghuysen Road               http://www.physics.rutgers.edu/~dhv
+Piscataway, NJ 08854-8019   USA
+------------------------------------------------------------------------

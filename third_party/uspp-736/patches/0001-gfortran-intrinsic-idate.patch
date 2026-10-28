@@ -1,0 +1,11 @@
+--- a/Source/runatom.f
++++ b/Source/runatom.f
+@@ -83,7 +83,7 @@
+       character*40 flname(6)
+       character*40 filewfref
+ c
+-      external idate
++c     external idate
+ c
+ c=======================================================================
+ c     c h a n g e s  m a d e  t o  c r e a t e  v e r s i o n  3.0.0

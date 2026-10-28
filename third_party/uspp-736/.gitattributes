@@ -1,0 +1,2 @@
+# Upstream USPP files: keep every byte (fixed-column Fortran input, LF endings, binary data).
+* -text
