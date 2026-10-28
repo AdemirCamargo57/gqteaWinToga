@@ -177,3 +177,75 @@ class TestCaseFolders:
         text = ri.makefile_text(_ti_case())
         assert "ATOM= ti" in text and "CFG= s2d1" in text and "CFT1= s2d2" in text
         assert "${PROG} ${TST1}.adat" in text
+
+
+class TestFields:
+    def test_typed_values_are_parsed_not_copied(self):
+        assert ri.parse_line_values("1 0 3", "iii", "ifprt ifplw ilogd") == [1, 0, 3]
+        assert ri.parse_line_values("1.0d-10, 1e-9  0.5 0", "fffi", "x") == [1e-10, 1e-9, 0.5, 0]
+        assert ri.parse_line_values("1.8 1.8 2", "f*", "rc") == [1.8, 1.8, 2.0]
+
+    def test_wrong_count_and_type_name_the_field(self):
+        with pytest.raises(ValueError, match="ifprt ifplw ilogd: expected 3 values, got 2"):
+            ri.parse_line_values("1 0", "iii", "ifprt ifplw ilogd")
+        with pytest.raises(ValueError, match="is not an integer"):
+            ri.parse_line_values("1.5 0 3", "iii", "ifprt ifplw ilogd")
+
+    @pytest.mark.parametrize("folder", [p for p in CASE_DIRS if not (p / "V_ps.adat").exists()],
+                             ids=lambda p: p.name)
+    def test_fields_round_trip_every_library_case(self, folder):
+        case = ri.read_case_folder(folder)
+        expected = ri.replace(
+            case, ps=ri.replace(case.ps, controls=ri.replace(case.ps.controls, title=case.ae.controls.title)),
+            tests=[ri.replace(t, test_input=None) for t in case.tests if t.ae_input is None])
+        assert ri.case_from_fields(ri.case_to_fields(case)) == expected
+
+    def test_tests_with_their_own_shell_list_are_named_not_lost_silently(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
+        skipped = ri.unrepresentable_tests(case)
+        assert skipped and all(name not in ri.case_to_fields(case)["tests"].split() for name in skipped)
+
+
+class TestChecks:
+    def test_mesh_size_matches_runatom(self):
+        # Ti example: rinit printed "value of mesh generated in rinit is   851"
+        assert ri.radial_mesh_size(22.0, 200.0, 6.0, 59.0) == 851
+
+    @pytest.mark.parametrize("folder", [p for p in CASE_DIRS if not (p / "V_ps.adat").exists()],
+                             ids=lambda p: p.name)
+    def test_no_library_case_is_refused(self, folder):
+        # runatom accepted every one of these, so a refusal is a wrong rule
+        assert ri.check_case(ri.read_case_folder(folder)) == []
+
+    def _ti(self, **ps_changes):
+        case = _ti_case()
+        return ri.replace(case, ps=ri.replace(case.ps, **ps_changes))
+
+    def test_gga_requires_ifqopt_3_even_for_minus_one(self):
+        case = _ti_case()
+        gga = ri.replace(case, ae=ri.replace(case.ae, exfact=5.0), ps=ri.replace(case.ps, ifqopt=-1))
+        assert any("ifqopt = 3" in p for p in ri.check_case(gga))
+
+    def test_occupations_must_add_up(self):
+        case = _ti_case()
+        bad = ri.replace(case, ae=ri.replace(case.ae, xion=0.0))
+        assert any("add up to" in p for p in ri.check_case(bad))
+
+    def test_projector_rules(self):
+        betas = _ti_case().ps.betas
+        assert any("non-decreasing" in p for p in ri.check_case(self._ti(betas=list(reversed(betas)))))
+        assert any("keyee < 0" in p for p in ri.check_case(self._ti(betas=[ri.replace(betas[0], keyee=-1)] + betas[1:])))
+        assert any("npf" in p for p in ri.check_case(self._ti(npf=4)))
+
+    def test_mesh_limit(self):
+        case = _ti_case()
+        assert any("radial mesh" in p for p in ri.check_case(ri.replace(case, ae=ri.replace(case.ae, rmax=1e6))))
+
+    def test_long_file_names_are_refused(self):
+        case = ri.replace(_ti_case(), generation_name="a" * 40)
+        assert any("40 characters" in p for p in ri.check_case(case))
+
+    def test_unknown_shell_in_a_test(self):
+        case = _ti_case()
+        case.tests[0].occupations[430] = 1.0
+        assert any("430" in p for p in ri.check_case(case))
