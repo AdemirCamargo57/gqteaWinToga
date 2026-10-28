@@ -47,7 +47,7 @@ TOOL_TABS: Tuple[Tuple[str, Tuple[ToolSpec, ...]], ...] = (
         ToolSpec("ORCA Input Builder", "orca_input_builder", "ORCAInputBuilderUI"),
         ToolSpec("gqteaMD Input Builder", "gqteaMDinputBuilder", "GqteaMDInputBuilderUI"),
         ToolSpec("Gaussian Fukui Input Builder", "fukuiInputBuilder", "FukuiInputBuilderUI"),
-        ToolSpec("Vanderbilt runatom.x Input Builder", "runatom_input_gen", "RunatomGenerator"),
+        ToolSpec("Vanderbilt USPP Generator (runatom)", "runatom_input_gen", "RunatomGenerator"),
     )),
     ("Structural", (
         ToolSpec("Radial Distribution Function", "radialDistribution", "RadialFunctionUI"),

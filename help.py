@@ -2454,3 +2454,60 @@ Then open <name>_N.fchk in Tools > Analysis of Fukui Functions: the N+1
 and N-1 files are filled in. If one job fails, Gaussian does not run the
 jobs after it; the script then reports which .chk is missing.
 """
+
+    help_runatom = """VANDERBILT USPP GENERATOR (runatom, USPP 7.3.6)
+
+Generates an ultrasoft pseudopotential with D. Vanderbilt's program runatom,
+which is shipped with gqteaWinToga (Fortran, GPL v2; source in
+third_party/uspp-736). No separate installation is needed.
+
+WORKFLOW
+1. Choose a job folder (Browse...). Every input and output file is written there.
+2. Start from a library case (Import library case...: the Work/ folder of USPP
+   holds tested inputs for 45 elements) or from the Ti example loaded at start.
+3. Edit the tabs. Type values separated by spaces; the tool writes them in the
+   fixed columns runatom reads, so spacing does not matter.
+4. Check runs every test runatom makes before it starts; Run writes the inputs and
+   runs: all-electron reference -> pseudopotential generation -> for each test,
+   all-electron test configuration -> transferability test.
+5. Results shows each stage's time, warnings, the all-electron vs pseudo
+   eigenvalue table (differences above 1 mRy are flagged), and a ghost-state
+   check. Open .out shows the full report with its plots of log derivatives,
+   wavefunctions and Q functions.
+
+FILES (in the job folder)
+<symbol>_ae_<config>.adat/.out/.ae   all-electron run
+<symbol>_ps.adat/.out/.uspp          generation; .uspp is the pseudopotential
+                                     (binary, gfortran little-endian records)
+<symbol>_ps_formatted.uspp           the same pseudopotential, formatted, for
+                                     CPMD (written by USPP's reform). In the
+                                     CPMD input, &ATOMS line:
+                                       *<symbol>_ps_formatted.uspp FORMATTED
+<symbol>_test_<name>.adat/.out       transferability test
+
+FIELDS (see also Doc/INPUT_AE, Doc/INPUT_GEN and Doc/TUTORIAL of USPP)
+All-electron:  ifprt ifplw ilogd; rlogd emin emax nnt; thresh tol damp maxit;
+               z xion exfact (0 CA, -1 Wigner, -2 HL, -3 GL, 1 BLYP, 2 B88,
+               3 BP86, 4 PW91, 5 PBE); rmax aasf bbsf irel; one shell per line:
+               nnlz wwnl ee (e.g. 320 1.0 -0.2 = 3d, 1 electron, guess -0.2 Ry).
+Pseudopotential: ncores nvales nang; Bessel-basis ghost check; keyps (3)
+               ifpcor rinner rpcor; rcloc; rc per l; one projector per line:
+               l keyee eeread iptype; npf ptryc (when some iptype is 2);
+               lloc keyee eloc iploctype; ifqopt nqf qtryc; Q constraints.
+Tests:         one per line: name xion nnlz=occupation ...  Shells not listed
+               keep the generation occupation.
+
+RULES WORTH KNOWING
+- GGA functionals (exfact 1-5) need ifqopt = 3; runatom refuses -1, 0, 1 and 2,
+  although Doc/TUTORIAL suggests starting with -1.
+- The radial mesh may have at most 1000 points (lower rmax or bbsf).
+- File names are limited to 40 characters, so keep the symbol and configuration
+  names short.
+- A large q-matrix eigenvalue gives a "mild" (> 5) or "severe" (> 20) warning;
+  runatom stops above 50.
+- If a run reports negative densities, reduce rinner or add Q constraints.
+- If a test does not converge, lower damp to 0.1-0.2.
+
+Not supported: reference wavefunctions from another configuration (keyee < 0),
+Dirac generation (irel 1), UPF export.
+"""
