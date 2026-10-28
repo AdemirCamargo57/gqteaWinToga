@@ -1223,9 +1223,12 @@ def test_ui_draws_the_esp_layer_and_its_colour_bar_and_frames_it():
 
 
 def test_the_tools_menu_no_longer_opens_a_separate_esp_window():
-    source = (Path(__file__).resolve().parents[1] / "gqteaWinToga.py").read_text(encoding="utf-8")
-    assert "ElectrostaticSurfacePotentialUI" not in source
-    assert "Electrostatic Surface Potential" not in source
+    # The menu entries live in toolLoader.TOOL_TABS; the window builds from them.
+    src = Path(__file__).resolve().parents[1]
+    for name in ("gqteaWinToga.py", "toolLoader.py"):
+        source = (src / name).read_text(encoding="utf-8")
+        assert "ElectrostaticSurfacePotentialUI" not in source
+        assert "Electrostatic Surface Potential" not in source
 
 
 def _ui_with_every_analysis_layer_filled():

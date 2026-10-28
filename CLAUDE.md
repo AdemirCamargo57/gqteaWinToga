@@ -33,7 +33,8 @@ Packaging to a Windows `.exe` is done manually with `auto-py-to-exe` (bundle the
 
 ## Architecture
 
-**Flat module tree, one tool per file.** [gqteaWinToga.py](gqteaWinToga.py) is the only entry point. Its `gqteaWin(toga.App).startup()` imports one `*UI` class per tool and registers them as buttons across five `OptionContainer` tabs: **Geometry**, **Inputs** (`cpmd_tools`), **Structural**, **Thermo**, **Tools** (`general_tools`). Each button's `on_press` is the `*UI` class itself — clicking instantiates the class, which opens its own `toga.Window`.
+**Flat module tree, one tool per file.** [gqteaWinToga.py](gqteaWinToga.py) is the only entry point. Its `gqteaWin(toga.App).startup()` builds one button per entry of [toolLoader.py](toolLoader.py)'s `TOOL_TABS` (`ToolSpec(label, module, attribute)`) across five `OptionContainer` tabs: **Geometry**, **Inputs**, **Structural**, **Thermo**, **Tools**. Clicking calls the `*UI` class with the Button (as when the class itself was `on_press`), which opens its own `toga.Window`.
+  **Startup: no tool is imported by the entry point** (a subprocess test pins it). Importing all 36 delayed the window by 2.5 s warm / 11.4 s on a cold disk cache (molecularViewer alone 8.7 s cold: numba, OpenGL, scipy); window-running time went 3.5 → 1.55 s warm. `ToolLoader` imports modules on **one daemon thread** (never two threads importing at once): `on_running` starts a preload in menu order (≤ 50 ms UI-loop lag measured, all 36 in a few seconds warm) and a pressed button's module jumps the queue (`request`, waited with `asyncio.wrap_future`; the button is disabled meanwhile and the status line says *Opening …*). `PREREQUISITE_MODULES = ("displayPlots",)` is imported before any tool so the process-wide `Agg` pin holds exactly as when everything was imported at startup (`sh_geom_analyzer` imports pyplot without displayPlots and relies on it). A failed import shows a "Tool could not be loaded" `ErrorDialog` and is retried on the next press, instead of the app failing to start. Status line + `ActivityIndicator` under the title (`load_status`/`update_load_status`, written only on change; the loader's `on_loaded` runs on its thread and is marshalled with `loop.call_soon_threadsafe`). **PyInstaller cannot see `importlib` imports**: `toolLoader._frozen_build_imports()` (never called) holds literal imports of every tool, and a test keeps it equal to `TOOL_TABS`. Pre-existing, not fixed: with the tools loaded, the process takes ~5 s to terminate after the window closes (also before this change). Tests: [tests/test_toolLoader.py](tests/test_toolLoader.py).
 
 **Standard per-tool pattern** (see [bond.py](bond.py) as the canonical example):
 - A logic/analysis class (e.g. `BondAnalyser`) holding the numeric work and file I/O.
@@ -227,7 +228,7 @@ The pattern first applied in [radialDistribution.py](radialDistribution.py): sho
 ## Adding a new tool
 
 1. Create a self-contained `myTool.py` exposing a `MyToolUI` class following the `layout_main_window` / `workflow` pattern above, reusing the `FramesCounter`/`DisplayPlots` mixins where relevant.
-2. Import it in [gqteaWinToga.py](gqteaWinToga.py) and add `("Button label", MyToolUI)` to the appropriate tab list.
+2. Add `ToolSpec("Button label", "myTool", "MyToolUI")` to the appropriate tab in [toolLoader.py](toolLoader.py)'s `TOOL_TABS`, and `import myTool` to its `_frozen_build_imports()` (a test fails otherwise). **Do not import the tool in [gqteaWinToga.py](gqteaWinToga.py)** — the main window would wait for it.
 3. Add help text to `HelpGqteaWin` in [help.py](help.py) and, if user-facing, document it in [USER_MANUAL.md](USER_MANUAL.md).
 
 ## Docs

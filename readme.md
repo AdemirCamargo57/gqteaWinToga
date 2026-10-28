@@ -263,12 +263,24 @@ interactive matplotlib backend to be bundled. Ensure the build includes:
 If `tkinter`/`TkAgg` is missing from the bundle, the plot window will fail to
 open in the packaged build even though it works when running from source.
 
+### Tool modules in the packaged build
+
+The main window imports the tools by name when they are needed (see
+`toolLoader.py`), which PyInstaller cannot see on its own. `toolLoader.py`
+therefore lists every tool module as a literal `import` in
+`_frozen_build_imports()`, a function that is never called, so the build
+bundles them without extra hidden imports. If a packaged build reports
+"Tool could not be loaded" with `No module named ...`, add that module as a
+hidden import.
+
 ## Development Notes
 
 - The application is launched from `gqteaWinToga.py`.
-- Most user-facing modules expose a `*UI` class imported by the launcher.
-- Keep new tools self-contained in their own module when possible, then register
-  the UI class in the appropriate tab in `gqteaWinToga.py`.
+- Most user-facing modules expose a `*UI` class that a menu button opens.
+- Keep new tools self-contained in their own module when possible, then add a
+  `ToolSpec(label, module, class)` to the appropriate tab in
+  `toolLoader.TOOL_TABS` and the module to `_frozen_build_imports()` there.
+  Do not import tools in `gqteaWinToga.py`: the main window would wait for them.
 - Prefer adding clear help text in `help.py` for new analysis workflows.
 
 ## Contributors
