@@ -1,0 +1,4 @@
+case: 026-Fe/026-Fe-gpw-n-campos
+atom: Fe
+cfg: ref
+tests: 1 2 3

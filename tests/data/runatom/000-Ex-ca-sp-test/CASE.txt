@@ -1,0 +1,4 @@
+case: 000-Ex/000-Ex-ca-sp-test
+atom: ti
+cfg: s2d1
+tests: s2d2

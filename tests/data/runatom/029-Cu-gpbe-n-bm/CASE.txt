@@ -1,0 +1,4 @@
+case: 029-Cu/029-Cu-gpbe-n-bm
+atom: cu
+cfg: d9.5s1p0.5
+tests:

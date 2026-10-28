@@ -1,0 +1,4 @@
+case: 082-Pb/082-Pb-ca-d-vgrp
+atom: pb
+cfg: s2p2
+tests: s2p1

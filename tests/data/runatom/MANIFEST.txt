@@ -1,0 +1,3 @@
+compiler: GNU Fortran (GCC) 11.5.0 20240719 (Red Hat 11.5.0-11.0.2)
+flags: -O1 -std=legacy -fallow-argument-mismatch
+source: third_party/uspp-736/Source + patches/0001-gfortran-intrinsic-idate.patch
