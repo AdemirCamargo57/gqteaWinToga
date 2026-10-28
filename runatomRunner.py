@@ -1,0 +1,264 @@
+"""Running the Vanderbilt USPP program runatom as a child process.
+
+No Toga here (a subprocess test pins it). runatom stops on errors with
+`call exit(1)` (134 places) or `stop` (exit status 0) and takes its six file
+names as character*40 command-line arguments. It therefore runs as a separate
+process, with its working directory set to the job folder and short relative
+names. A stage succeeds when the exit status is 0, its completion marker is on
+stderr and its output files exist.
+"""
+
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, List, Optional, Sequence
+
+from runatomInput import MAX_FORTRAN_NAME, CaseInputs, file_stems
+from runatomOutput import OutReport, parse_out
+
+DEFAULT_STAGE_TIMEOUT = 120.0     # s; the slowest measured stage takes 0.7 s
+POLL_INTERVAL = 0.05              # s between cancel/timeout checks
+ENV_VAR = "GQTEA_RUNATOM"
+FROZEN_SUBDIR = "uspp"
+VENDOR_DIR = Path(__file__).resolve().parent / "third_party" / "uspp-736"
+VENDOR_EXE = VENDOR_DIR / "bin" / "runatom.exe"
+COMPLETION_MARKERS = {"ae": "all electron calculation completed",
+                      "pseudo": "writing the pseudopotential to file",
+                      "test": "pseudopotential test converged"}
+_SCF = re.compile(r"completed self-consistent cycle\s*(\d+)\s+delta\s*=\s*([-+0-9.EeDd]+)")
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+class RunatomError(RuntimeError):
+    def __init__(self, kind: str, stage_label: str, message: str):
+        super().__init__(f"{stage_label}: {message}")
+        self.kind, self.stage_label, self.message = kind, stage_label, message
+
+
+class RunatomCancelled(RuntimeError):
+    pass
+
+
+def _bundle_dir() -> Optional[Path]:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)) / FROZEN_SUBDIR
+    return None
+
+
+def _find_program(explicit: Optional[str], env_var: str, exe_name: str, vendor_path: Path,
+                  path_names: Sequence[str]) -> Optional[str]:
+    """Explicit path, the environment variable, the frozen bundle, third_party, PATH; None if absent."""
+    candidates = []
+    if explicit and explicit.strip():
+        candidates.append(explicit.strip())
+    if os.environ.get(env_var):
+        candidates.append(os.environ[env_var])
+    bundle = _bundle_dir()
+    if bundle is not None:
+        candidates.append(str(bundle / exe_name))
+    candidates.append(str(vendor_path))
+    for name in path_names:
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+    return next((c for c in candidates if os.path.isfile(c)), None)
+
+
+def find_runatom(explicit: Optional[str] = None) -> Optional[str]:
+    return _find_program(explicit, ENV_VAR, "runatom.exe", VENDOR_EXE, ("runatom.exe", "runatom.x"))
+
+
+def library_dir() -> Path:
+    bundle = _bundle_dir()
+    return bundle / "Work" if bundle is not None else VENDOR_DIR / "Work"
+
+
+def runatom_command(exe: str) -> List[str]:
+    return [exe]
+
+
+@dataclass(frozen=True)
+class Stage:
+    kind: str           # "ae", "pseudo" or "test"
+    label: str
+    stem: str           # <stem>.adat, .out, .atwf, .logd
+    ae_file: str        # .ae written (ae) or read (pseudo, test)
+    uspp_file: str      # "dummy" for an all-electron stage
+
+    def arguments(self) -> List[str]:
+        return [f"{self.stem}.adat", f"{self.stem}.out", self.ae_file,
+                f"{self.stem}.atwf", f"{self.stem}.logd", self.uspp_file]
+
+    def required(self) -> List[str]:
+        files = [f"{self.stem}.out"]
+        files += [self.ae_file] if self.kind == "ae" else []
+        files += [self.uspp_file] if self.kind == "pseudo" else []
+        return files
+
+    def products(self) -> List[str]:
+        return self.required() + [f"{self.stem}.atwf", f"{self.stem}.logd"]
+
+
+@dataclass
+class StageResult:
+    stage: Stage
+    seconds: float
+    report: OutReport
+    returncode: int
+
+
+def plan_stages(case: CaseInputs) -> List[Stage]:
+    """The Work/000-Ex Makefile's chain: AE, generation, then per test AE + test."""
+    stems = file_stems(case)
+    ae_ref, uspp = f"{stems['ae']}.ae", f"{stems['ps']}.uspp"
+    stages = [Stage("ae", f"All-electron ({case.generation_name})", stems["ae"], ae_ref, "dummy"),
+              Stage("pseudo", "Pseudopotential generation", stems["ps"], ae_ref, uspp)]
+    for test, (ae_stem, test_stem) in zip(case.tests, stems["tests"]):
+        stages.append(Stage("ae", f"All-electron ({test.name})", ae_stem, f"{ae_stem}.ae", "dummy"))
+        stages.append(Stage("test", f"Transferability test ({test.name})", test_stem, f"{ae_stem}.ae", uspp))
+    return stages
+
+
+def progress_text(info: dict) -> str:
+    text = f"Stage {info['stage_index'] + 1}/{info['stage_count']}: {info['stage']}"
+    if info.get("iteration") is not None:
+        return f"{text} - SCF cycle {info['iteration']}, delta = {info['delta']:.2e}"
+    return f"{text} - {info['message']}"
+
+
+def _tail(stderr_text: str) -> str:
+    lines = [l.strip() for l in stderr_text.splitlines() if l.strip() and "self-consistent cycle" not in l]
+    return " | ".join(lines[-3:])
+
+
+def classify(stage: Stage, returncode: int, stderr_text: str, out_text: str, workdir: Path) -> Optional[RunatomError]:
+    def error(kind, message):
+        return RunatomError(kind, stage.label, message)
+
+    if "Fortran runtime error" in stderr_text:
+        detail = " ".join(l.strip() for l in stderr_text.splitlines()
+                          if l.startswith("At line") or "Fortran runtime error" in l)
+        if "unit = 10" in stderr_text:
+            return error("input_format", f"runatom could not read {stage.stem}.adat ({detail}); "
+                                         "the file does not follow runatom's fixed columns.")
+        return error("runtime_error", detail)
+    if "negative densities" in stderr_text:
+        return error("negative_density", "the pseudo charge density became negative while descreening; "
+                                         "reduce rinner or add Q-function constraints (Doc/TUTORIAL).")
+    lines = out_text.splitlines()
+    for i, line in enumerate(lines):
+        if "***error" in line or "*** error" in line:
+            detail = " ".join(l.strip() for l in lines[i:i + 3] if l.strip())
+            return error("not_converged" if "could not be converged" in detail else "program_error", detail)
+    if returncode != 0:
+        return error("runtime_error", f"runatom stopped with exit status {returncode}: {_tail(stderr_text)}")
+    if COMPLETION_MARKERS[stage.kind] not in stderr_text:
+        tail = _tail(stderr_text)
+        return error("missing_output", "runatom stopped before the end of this stage" + (f": {tail}" if tail else "."))
+    missing = [name for name in stage.required() if not (workdir / name).is_file()]
+    if missing:
+        return error("missing_output", "expected output not written: " + ", ".join(missing))
+    return None
+
+
+def _pump(stream, lines: "queue.Queue"):
+    for raw in iter(stream.readline, b""):
+        lines.put(raw.decode("latin-1"))
+    lines.put(None)
+
+
+def _stop(process: subprocess.Popen):
+    if process.poll() is None:
+        process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _remove(workdir: Path, names: Sequence[str]):
+    for name in names:
+        try:
+            (workdir / name).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def run_stage(command: Sequence[str], stage: Stage, workdir, progress: Optional[Callable[[dict], None]] = None,
+              cancel: Optional[threading.Event] = None, timeout: float = DEFAULT_STAGE_TIMEOUT,
+              stage_index: int = 0, stage_count: int = 1) -> StageResult:
+    workdir = Path(workdir)
+    arguments = stage.arguments()
+    too_long = [a for a in arguments if len(a) > MAX_FORTRAN_NAME]
+    if too_long:
+        raise ValueError(f"file names longer than {MAX_FORTRAN_NAME} characters: {', '.join(too_long)}")
+
+    def report(message: str, iteration: Optional[int] = None, delta: Optional[float] = None):
+        if progress is None:
+            return
+        try:
+            progress({"stage_index": stage_index, "stage_count": stage_count, "stage": stage.label,
+                      "message": message, "iteration": iteration, "delta": delta})
+        except Exception:      # reporting must never abort a run
+            pass
+
+    _remove(workdir, stage.products())
+    report("starting")
+    started = time.monotonic()
+    process = subprocess.Popen(list(command) + arguments, cwd=str(workdir), stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=_NO_WINDOW)
+    lines: "queue.Queue" = queue.Queue()
+    pump = threading.Thread(target=_pump, args=(process.stderr, lines), daemon=True)
+    pump.start()
+    collected, finished_reading = [], False
+    try:
+        while not (finished_reading and process.poll() is not None):
+            if cancel is not None and cancel.is_set():
+                raise RunatomCancelled(f"{stage.label}: cancelled")
+            if time.monotonic() - started > timeout:
+                raise RunatomError("timeout", stage.label, f"no result after {timeout:.0f} s; the run was stopped.")
+            try:
+                line = lines.get(timeout=POLL_INTERVAL)
+            except queue.Empty:
+                continue
+            if line is None:
+                finished_reading = True
+                continue
+            collected.append(line)
+            match = _SCF.search(line)
+            if match:
+                report(f"SCF cycle {match.group(1)}", int(match.group(1)),
+                       float(match.group(2).upper().replace("D", "E")))
+            elif line.strip():
+                report(line.strip())
+    except (RunatomCancelled, RunatomError):
+        _stop(process)
+        _remove(workdir, stage.products())
+        raise
+    finally:
+        _stop(process)
+        pump.join(timeout=5)       # the killed process closes the pipe; never close it under the reader
+        process.stderr.close()
+    seconds = time.monotonic() - started
+    out_path = workdir / f"{stage.stem}.out"
+    out_text = out_path.read_text(encoding="latin-1") if out_path.is_file() else ""
+    problem = classify(stage, process.returncode, "".join(collected), out_text, workdir)
+    if problem is not None:
+        _remove(workdir, [n for n in stage.products() if n != f"{stage.stem}.out"])  # keep the report
+        raise problem
+    return StageResult(stage, seconds, parse_out(out_text), process.returncode)
+
+
+def run_job(command: Sequence[str], stages: Sequence[Stage], workdir,
+            progress: Optional[Callable[[dict], None]] = None, cancel: Optional[threading.Event] = None,
+            timeout: float = DEFAULT_STAGE_TIMEOUT) -> List[StageResult]:
+    """All stages in order; the first failure raises RunatomError (or RunatomCancelled)."""
+    return [run_stage(command, stage, workdir, progress, cancel, timeout, index, len(stages))
+            for index, stage in enumerate(stages)]
