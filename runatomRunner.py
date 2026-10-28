@@ -262,3 +262,55 @@ def run_job(command: Sequence[str], stages: Sequence[Stage], workdir,
     """All stages in order; the first failure raises RunatomError (or RunatomCancelled)."""
     return [run_stage(command, stage, workdir, progress, cancel, timeout, index, len(stages))
             for index, stage in enumerate(stages)]
+
+
+REFORM_ENV_VAR = "GQTEA_REFORM"
+VENDOR_REFORM = VENDOR_DIR / "bin" / "reform.exe"
+MAX_REFORM_NAME = 36          # reform.f reads its file names with format a36
+REFORM_DONE = "pseudopotential has been written out"
+FORMATTED_LABEL = "Formatted file for CPMD"
+
+
+def find_reform(explicit: Optional[str] = None) -> Optional[str]:
+    return _find_program(explicit, REFORM_ENV_VAR, "reform.exe", VENDOR_REFORM, ("reform.exe", "reform.x"))
+
+
+def reform_command(exe: str) -> List[str]:
+    return [exe]
+
+
+def formatted_name(case: CaseInputs) -> str:
+    return f"{file_stems(case)['ps']}_formatted.uspp"
+
+
+def cpmd_atom_line(name: str) -> str:
+    """The &ATOMS species line that makes CPMD read the file as a formatted Vanderbilt potential."""
+    return f"*{name} FORMATTED"
+
+
+def write_formatted(command: Sequence[str], workdir, uspp_name: str, formatted: str,
+                    timeout: float = DEFAULT_STAGE_TIMEOUT) -> Path:
+    """The CPMD formatted copy of a binary .uspp, written by USPP's reform (itype 1), with LF endings."""
+    workdir = Path(workdir)
+    for name in (uspp_name, formatted):
+        if len(name) > MAX_REFORM_NAME:
+            raise ValueError(f"reform reads file names of at most {MAX_REFORM_NAME} characters: {name}")
+    target = workdir / formatted
+    _remove(workdir, [formatted])                  # reform opens its output with status='new'
+    try:
+        done = subprocess.run(list(command), cwd=str(workdir), input=f"1\n{uspp_name}\n{formatted}\n".encode("ascii"),
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+                              creationflags=_NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        _remove(workdir, [formatted])
+        raise RunatomError("timeout", FORMATTED_LABEL, f"no result after {timeout:.0f} s; the conversion was stopped.")
+    stdout, stderr = done.stdout.decode("latin-1"), done.stderr.decode("latin-1")
+    if done.returncode != 0 or REFORM_DONE not in stdout or not target.is_file():
+        _remove(workdir, [formatted])
+        detail = _tail(stderr)
+        raise RunatomError("formatted", FORMATTED_LABEL,
+                           f"reform could not convert {uspp_name}" + (f": {detail}" if detail else "."))
+    data = target.read_bytes()
+    if b"\r\n" in data:            # MinGW gfortran writes CRLF; CPMD runs on Linux
+        target.write_bytes(data.replace(b"\r\n", b"\n"))
+    return target

@@ -277,3 +277,100 @@ def job_summary(stages: List[Tuple[str, float, OutReport]], uspp: Optional[UsppD
                      f"rc = {', '.join(f'{v:g}' for v in uspp.rc)} bohr, "
                      f"core correction = {'yes' if uspp.ifpcor else 'no'}")
     return "\n".join(lines)
+
+
+_EXPONENT_WITHOUT_E = re.compile(r"(?<=\d)([+-]\d)")
+
+
+def _fortran_float(token: str) -> float:
+    """A real as Fortran list-directed input reads it ('1.0D-03', and '1.23456789012-100',
+    which is how an E format writes a 3-digit exponent)."""
+    text = token.upper().replace("D", "E")
+    if "E" not in text:
+        text = _EXPONENT_WITHOUT_E.sub(r"E\1", text, count=1)
+    return float(text)
+
+
+class _ListReader:
+    """List-directed READs: each starts on a new record and may continue over several."""
+
+    def __init__(self, text: str):
+        self.lines, self.index = text.splitlines(), 0
+
+    def line(self) -> str:
+        if self.index >= len(self.lines):
+            raise ValueError("the formatted file ends early")
+        self.index += 1
+        return self.lines[self.index - 1]
+
+    def read(self, count: int) -> List[str]:
+        tokens: List[str] = []
+        while len(tokens) < count:
+            tokens += self.line().replace(",", " ").split()
+        return tokens[:count]
+
+    def ints(self, count: int) -> List[int]:
+        return [int(t) for t in self.read(count)]
+
+    def reals(self, count: int) -> np.ndarray:
+        return np.array([_fortran_float(t) for t in self.read(count)])
+
+
+def read_formatted_uspp(path) -> UsppData:
+    """A formatted .uspp (reform itype 1) read in CPMD readvan's statement order.
+
+    This is the CPMD-compatibility check: CPMD reads every record list-directed
+    except the title, '(A20,3F15.9/2I5,1PE19.11)'.
+    """
+    r = _ListReader(Path(path).read_text(encoding="latin-1"))
+    head = r.ints(6)
+    version, date = tuple(head[:3]), tuple(head[3:])
+    if version < (7, 3, 2):
+        raise ValueError(f"file version {version} predates the 7.3.2 layout this reader follows")
+    first, second = r.line(), r.line()
+    title = first[:20].strip()
+    z, zv, exfact = (_fortran_float(first[20 + 15 * k:35 + 15 * k]) for k in range(3))
+    nval, mesh, etot = int(second[0:5]), int(second[5:10]), _fortran_float(second[10:29])
+    t = r.read(3 * nval)
+    valence = [(int(t[3 * i]), _fortran_float(t[3 * i + 1]), _fortran_float(t[3 * i + 2])) for i in range(nval)]
+    t = r.read(3)
+    keyps, ifpcor = int(t[0]), int(t[1])
+    t = r.read(6)
+    nang, lloc, eloc, ifqopt, nqf, qtryc = int(t[0]), int(t[1]), _fortran_float(t[2]), int(t[3]), int(t[4]), _fortran_float(t[5])
+    n_l = 2 * nang - 1
+    rinner = r.reals(n_l)
+    (irel,) = r.ints(1)
+    rc = r.reals(nang)
+    nbeta, kkbeta = r.ints(2)
+    l, eee = np.zeros(nbeta, int), np.zeros(nbeta)
+    beta = np.zeros((nbeta, kkbeta))
+    ddd0, ddd, qqq = (np.zeros((nbeta, nbeta)) for _ in range(3))
+    qfunc = np.zeros((nbeta, nbeta, kkbeta))
+    qfcoef = np.zeros((nbeta, nbeta, n_l, nqf))
+    for j in range(nbeta):
+        t = r.read(2 + kkbeta)
+        l[j], eee[j] = int(t[0]), _fortran_float(t[1])
+        beta[j] = [_fortran_float(x) for x in t[2:]]
+        for k in range(j, nbeta):
+            v = r.reals(3 + kkbeta + nqf * n_l)
+            ddd0[j, k] = ddd0[k, j] = v[0]
+            ddd[j, k] = ddd[k, j] = v[1]
+            qqq[j, k] = qqq[k, j] = v[2]
+            qfunc[j, k] = qfunc[k, j] = v[3:3 + kkbeta]
+            qfcoef[j, k] = qfcoef[k, j] = v[3 + kkbeta:].reshape(n_l, nqf)
+    t = r.read(nbeta + 2)
+    iptype = np.array([int(x) for x in t[:nbeta]])
+    npf, ptryc = int(t[nbeta]), _fortran_float(t[nbeta + 1])
+    v = r.reals(1 + mesh)
+    rcloc, vloc0 = float(v[0]), v[1:]
+    rpcor = rspsco = None
+    if ifpcor > 0:
+        rpcor = float(r.reals(1)[0])
+        rspsco = r.reals(mesh)
+    vloc, rsatom, radii, rab = (r.reals(mesh) for _ in range(4))
+    (nchi,) = r.ints(1)
+    wf = r.reals(mesh * nchi).reshape(nchi, mesh)
+    return UsppData(version, date, title, z, zv, exfact, valence, mesh, etot, keyps, ifpcor, nang,
+                    lloc, eloc, ifqopt, nqf, qtryc, rinner, irel, rc, kkbeta, l, eee, beta, ddd0,
+                    ddd, qqq, qfunc, qfcoef, iptype, npf, ptryc, rcloc, vloc0, rpcor, rspsco,
+                    vloc, rsatom, radii, rab, wf)
