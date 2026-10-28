@@ -39,3 +39,9 @@ def test_built_program_matches_its_recorded_checksum(name):
         pytest.skip(f"{name} has not been built yet (Task 2)")
     recorded = (VENDOR / "bin" / f"{name}.sha256").read_text().split()[0]
     assert hashlib.sha256(exe.read_bytes()).hexdigest() == recorded
+
+
+def test_readme_tells_packagers_to_bundle_runatom_and_its_source():
+    readme = (VENDOR.parents[1] / "readme.md").read_text(encoding="utf-8")
+    assert "third_party/uspp-736/bin/runatom.exe" in readme and "uspp/" in readme
+    assert "third_party/uspp-736/bin/reform.exe" in readme and "FORMATTED" in readme

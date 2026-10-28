@@ -30,3 +30,11 @@ temporary copy by `build_runatom.ps1`; the file in `Source/` stays unmodified.
 - `039-Y-ca-sp-vgrp` is a retracted entry (README only).
 - `Doc/TUTORIAL` suggests starting with ifqopt = -1, which runatom refuses for
   every GGA functional (rwsubs.f: ifqopt < 3 with exfact >= 1 is an error).
+- `Work/034-Se/034-Se-ca--vgrp`: runatom stops with "unreasonable q eigenvalues"
+  (a q-matrix eigenvalue above 50, a check added in 7.3.4), in both the Windows
+  (MSYS2 gfortran 16.2) and the Linux (gfortran 11.5) build. The benchmark lists
+  it as a known upstream failure.
+- When no projector has iptype 2, runatom writes npf and ptryc to the .uspp file
+  uninitialised (the values vary from run to run; e.g. 32759 for Au). Readers
+  must ignore them in that case. CPMD reads but does not use them, and the
+  validation masks those 12 bytes.

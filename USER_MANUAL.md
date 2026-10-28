@@ -43,7 +43,7 @@
     - [ORCA Input Builder](#orca-input-builder)
     - [gqteaMD Input Builder](#gqteamd-input-builder)
     - [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder)
-    - [Vanderbilt runatom.x Input Builder](#vanderbilt-runatomx-input-builder)
+    - [Vanderbilt USPP Generator (runatom)](#vanderbilt-uspp-generator-runatom)
   - [Structural Tools](#structural-tools)
     - [Radial Distribution Function](#radial-distribution-function)
     - [Mean Residence Time](#mean-residence-time)
@@ -287,7 +287,7 @@ All three are listed as commented entries in `installation_requirements.txt`.
 #### External simulation programs
 
 Some workflows also require files produced by external chemistry programs, such
-as CPMD, Quantum ESPRESSO `cp.x`, ORCA, Gaussian, or Vanderbilt `runatom.x`.
+as CPMD, Quantum ESPRESSO `cp.x`, ORCA, Gaussian, or the Vanderbilt USPP generator (runs `runatom`).
 gqteaWinToga prepares and analyzes files for these programs, but it does not
 replace the external simulation engines.
 
@@ -485,7 +485,7 @@ The program is GUI-based. The "commands" below refer to the buttons and controls
 The main window organizes tools by category:
 
 - **Geometry**: bond length, all bond distances, bond angle, all bond angles, dihedral angle, all dihedral angles, and hydrogen bond analysis.
-- **Inputs**: CPMD, surface hopping, collision, Quantum ESPRESSO `cp.x`, ORCA, gqteaMD, and Vanderbilt `runatom.x` input builders.
+- **Inputs**: CPMD, surface hopping, collision, Quantum ESPRESSO `cp.x`, ORCA, gqteaMD, and the Vanderbilt USPP generator (runs `runatom`).
 - **Structural**: radial distribution function, mean residence time, autocorrelation function, and solvent box builders.
 - **Thermo**: classical rate constant calculation.
 - **Tools**: visualization, plotting, frame selection, converters, force processing, coordinate tools, and unit conversion.
@@ -1067,18 +1067,64 @@ Others only produce a **warning**:
 
 If one linked job fails, Gaussian does not run the jobs after it. The script then reports which `.chk` is missing; the reason is in the `.log` file.
 
-#### Vanderbilt runatom.x Input Builder
+#### Vanderbilt USPP Generator (runatom)
 
-Use **Inputs > Vanderbilt runatom.x Input Builder** to generate Vanderbilt `runatom.x` input files.
+Use **Inputs > Vanderbilt USPP Generator (runatom)** to generate an ultrasoft pseudopotential with D. Vanderbilt's program `runatom` (USPP 7.3.6). The program ships with gqteaWinToga, so nothing else needs to be installed. It runs in the background; the window checks the inputs, runs the stages, and reports the outcome.
 
-Controls:
+Workflow:
 
-- Mode selection for all-electron or generation input.
-- **Also generate Makefile** option.
-- **Generate** button.
-- **Help** button.
+1. Choose a **job folder** (**Browse...**). Every input and output file is written there.
+2. Start from a library case (**Import library case...**: the `Work` folder of USPP holds tested inputs for 45 elements) or from the Ti example loaded when the window opens.
+3. Edit the tabs **All-electron**, **Pseudopotential** and **Tests**. Type values separated by spaces; the tool writes them in the fixed columns `runatom` reads, so spacing does not matter.
+4. **Check** runs every test that `runatom` makes before it starts. **Run** writes the inputs and runs, in order: the all-electron reference, the pseudopotential generation and, for each test, the all-electron test configuration and the transferability test.
+5. Read the **Results** tab (below). **Open .out** shows the full report of a stage, with its plots of log derivatives, wavefunctions and Q functions.
 
-Depending on the selected mode, the form shows the relevant atomic, pseudopotential, and state fields. The generated input is saved through a Save dialog, and a Makefile can be written alongside it.
+Fields (see also `Doc/INPUT_AE`, `Doc/INPUT_GEN` and `Doc/TUTORIAL` in the USPP library):
+
+- **All-electron**: print and plot switches and the logarithmic-derivative window; convergence settings (`thresh`, `tol`, `damp`, `maxit`); the nuclear charge `z`, the ionic charge `xion` and the functional `exfact` (0 CA, -1 Wigner, -2 HL, -3 GL, 1 BLYP, 2 B88, 3 BP86, 4 PW91, 5 PBE); the radial mesh (`rmax`, `aasf`, `bbsf`) and `irel`; and one shell per line as `nnlz wwnl ee` (for example `320 1.0 -0.2` is 3d, one electron, starting guess -0.2 Ry).
+- **Pseudopotential**: numbers of core and valence states and angular momenta; the core-correction switch and radii (`ifpcor`, `rinner`, `rpcor`); the local-potential radius `rcloc` and one `rc` per l; one projector per line (`l keyee eeread iptype`, plus `npf ptryc` when some projector has `iptype` 2); the local channel; the Q-function settings (`ifqopt nqf qtryc`) and Q constraints.
+- **Tests**: one test per line as `name xion nnlz=occupation ...`. Shells not listed keep their occupation from the generation.
+
+Rules worth knowing:
+
+- GGA functionals (`exfact` 1 to 5) need `ifqopt` = 3; `runatom` refuses -1, 0, 1 and 2, although `Doc/TUTORIAL` suggests starting with -1.
+- The radial mesh may have at most 1000 points (lower `rmax` or `bbsf`).
+- File names are limited to 40 characters, so keep the symbol and the configuration names short.
+- A large q-matrix eigenvalue gives a "mild" (above 5) or "severe" (above 20) warning, and `runatom` stops above 50.
+- If a run reports negative densities, reduce `rinner` or add Q constraints.
+- If a test does not converge, lower `damp` to 0.1-0.2.
+
+Results tab:
+
+- the time taken by each stage;
+- the warnings `runatom` printed;
+- the table of all-electron against pseudopotential eigenvalues, with every difference above 1 mRy flagged;
+- the ghost-state check;
+- a summary of the `.uspp` file written;
+- the CPMD line to use with the formatted pseudopotential.
+
+Files written in the job folder:
+
+- `<symbol>_ae_<config>.adat`, `.out`, `.ae` - all-electron run;
+- `<symbol>_ps.adat`, `.out`, `.uspp` - generation; the `.uspp` file is the pseudopotential (binary);
+- `<symbol>_ps_formatted.uspp` - the same pseudopotential as a formatted text file, for CPMD;
+- `<symbol>_test_<name>.adat`, `.out` - transferability tests.
+
+##### Using the pseudopotential in CPMD
+
+CPMD reads the formatted file, which `reform.exe` (also shipped with the program) writes after a successful generation. Put `<symbol>_ps_formatted.uspp` in the CPMD run folder or in the folder named by `PP_LIBRARY_PATH`, and in the `&ATOMS` section give the species line
+
+```
+*<symbol>_ps_formatted.uspp FORMATTED
+```
+
+The Results tab prints this line with the actual file name.
+
+Limitations:
+
+- Reference wavefunctions taken from another configuration (`keyee` < 0), Dirac generation (`irel` 1) and export to UPF are not supported.
+- Library cases whose transferability tests use a different shell list from the generation input cannot be edited as tests in the window. The window names them when you import them. They still run and validate programmatically.
+- A few cases of the USPP library are defective as shipped (for example `023-V`, `041-Nb` and `034-Se`); they are listed in `third_party/uspp-736/PROVENANCE.md`.
 
 ### Structural Tools
 

@@ -34,7 +34,7 @@ distributions.
 - ORCA input builder
 - gqteaMD input builder
 - Gaussian Fukui input builder (one Gaussian 16 linked job: optimization of N, then `Geom=Check` single points on N+1 and N-1; plus a formchk script)
-- Vanderbilt `runatom.x` input builder
+- Vanderbilt USPP generator (runs `runatom`)
 
 ### Structural Analysis
 
@@ -211,7 +211,7 @@ Common files used by the toolkit include:
 - Surface hopping `SH_STATE.dat` files
 - Quantum ESPRESSO `cp.x` input and force files
 - ORCA input files
-- Vanderbilt `runatom.x` inputs
+- Vanderbilt USPP generator (runs `runatom`)
 
 Generated outputs depend on the selected tool and may include analysis tables,
 selected trajectory frames, converted geometry files, generated input decks, and
@@ -272,6 +272,36 @@ therefore lists every tool module as a literal `import` in
 bundles them without extra hidden imports. If a packaged build reports
 "Tool could not be loaded" with `No module named ...`, add that module as a
 hidden import.
+
+### runatom (Vanderbilt USPP generator) in the packaged build
+
+The Vanderbilt USPP Generator runs two programs that **must ship with
+gqteaWinToga**:
+- `runatom.exe`, a statically linked build of USPP 7.3.6;
+- `reform.exe`, USPP's converter, which writes the formatted file CPMD reads
+  with the `&ATOMS` line `*<file> FORMATTED`.
+
+Both are committed in `third_party/uspp-736/bin/`. Rebuild them with
+`third_party/uspp-736/build_runatom.ps1`, which needs MSYS2 UCRT64 gfortran.
+In auto-py-to-exe, under *Additional Files*, add:
+
+- `third_party/uspp-736/bin/runatom.exe` with destination `uspp/`
+- `third_party/uspp-736/bin/reform.exe` with destination `uspp/`
+- `third_party/uspp-736/Work` with destination `uspp/Work` (the input library)
+- `third_party/uspp-736/Source`, `third_party/uspp-736/Utils`,
+  `third_party/uspp-736/patches`, `third_party/uspp-736/AA-README` and
+  `third_party/uspp-736/Source/LICENSE` with destination `uspp/` (GPL v2
+  requires shipping the source with the programs)
+
+At run time each program is looked for in this order:
+1. the path typed in the window (`reform.exe` next to it);
+2. `%GQTEA_RUNATOM%` / `%GQTEA_REFORM%`;
+3. `<bundle>/uspp/`;
+4. the repository copy;
+5. `PATH`.
+
+Windows SmartScreen or antivirus software may question the unsigned programs;
+they are not packed or obfuscated.
 
 ## Development Notes
 
