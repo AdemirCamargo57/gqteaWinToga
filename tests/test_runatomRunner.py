@@ -72,6 +72,8 @@ def test_a_failing_progress_callback_never_stops_the_run(tmp_path, monkeypatch):
     ("runtime", "input_format", "ti_ae_s2d1.adat"),
     ("negative", "negative_density", "rinner"),
     ("stop0", "missing_output", "stopped before the end"),
+    ("not_converged", "not_converged", "potential could not be converged"),
+    ("exit3", "runtime_error", "exit status 3"),
 ])
 def test_failures_are_classified(tmp_path, monkeypatch, mode, kind, text):
     with pytest.raises(rr.RunatomError) as info:
@@ -101,6 +103,69 @@ def test_timeout_stops_a_hung_program(tmp_path, monkeypatch):
     with pytest.raises(rr.RunatomError) as info:
         _job(tmp_path, "hang", monkeypatch, timeout=0.5)
     assert info.value.kind == "timeout"
+
+
+FAKE_REFORM = [sys.executable, "-I", str(Path(__file__).resolve().parent / "fake_reform.py")]
+FORMATTED = "ti_ps_formatted.uspp"
+
+
+def _case_job(tmp_path, mode, monkeypatch, reform=FAKE_REFORM, **kwargs):
+    monkeypatch.setenv("FAKE_RUNATOM_MODE", mode)
+    monkeypatch.setenv("FAKE_REFORM_MODE", "ok")
+    case = _ti()
+    ri.write_case(case, tmp_path)
+    return rr.run_case_job(FAKE, reform, rr.plan_stages(case), tmp_path, rr.formatted_name(case), **kwargs)
+
+
+class TestRunCaseJob:
+    def test_a_complete_job_writes_the_formatted_file(self, tmp_path, monkeypatch):
+        outcome = _case_job(tmp_path, "ok", monkeypatch)
+        assert [r.stage.kind for r in outcome.results] == ["ae", "pseudo", "ae", "test"]
+        assert outcome.error is None and outcome.failed_stage is None
+        assert outcome.formatted == tmp_path / FORMATTED and outcome.formatted.is_file()
+        assert outcome.formatted_note == ""
+
+    def test_progress_counts_the_whole_job(self, tmp_path, monkeypatch):
+        seen = []
+        _case_job(tmp_path, "ok", monkeypatch, progress=seen.append)
+        assert {i["stage_count"] for i in seen} == {4} and {i["stage_index"] for i in seen} == {0, 1, 2, 3}
+
+    def test_a_failed_test_keeps_the_generation_and_its_formatted_file(self, tmp_path, monkeypatch):
+        outcome = _case_job(tmp_path, "fail_test", monkeypatch)
+        assert outcome.failed_stage.kind == "test" and outcome.error.kind == "not_converged"
+        assert [r.stage.kind for r in outcome.results] == ["ae", "pseudo", "ae"]
+        assert (tmp_path / "ti_ps.uspp").is_file() and outcome.formatted == tmp_path / FORMATTED
+        assert outcome.formatted.is_file()
+
+    def test_a_stale_formatted_file_is_removed_before_the_job(self, tmp_path, monkeypatch):
+        (tmp_path / FORMATTED).write_text("from an earlier run")
+        (tmp_path / "ti_test_s2d2.out").write_text("from an earlier run")
+        outcome = _case_job(tmp_path, "error", monkeypatch)
+        assert outcome.failed_stage.kind == "ae" and outcome.results == []
+        assert not (tmp_path / FORMATTED).exists() and not (tmp_path / "ti_test_s2d2.out").exists()
+
+    def test_an_all_electron_failure_leaves_no_formatted_file(self, tmp_path, monkeypatch):
+        outcome = _case_job(tmp_path, "not_converged", monkeypatch)
+        assert outcome.error.kind == "not_converged" and outcome.failed_stage.kind == "ae"
+        assert outcome.formatted is None and not (tmp_path / FORMATTED).exists()
+
+    def test_without_reform_the_note_says_so(self, tmp_path, monkeypatch):
+        outcome = _case_job(tmp_path, "ok", monkeypatch, reform=None)
+        assert outcome.formatted is None and "reform.exe was not found" in outcome.formatted_note
+        assert len(outcome.results) == 4
+
+    def test_a_failed_conversion_becomes_a_note(self, tmp_path, monkeypatch):
+        outcome = _case_job(tmp_path, "ok", monkeypatch, reform=[sys.executable, "-c", "import sys; sys.exit(2)"])
+        assert outcome.formatted is None and "not written" in outcome.formatted_note
+        assert outcome.error is None and len(outcome.results) == 4
+
+    def test_cancel_before_the_conversion_leaves_no_formatted_file(self, tmp_path, monkeypatch):
+        (tmp_path / FORMATTED).write_text("from an earlier run")
+        cancel = threading.Event()
+        threading.Timer(0.5, cancel.set).start()
+        with pytest.raises(rr.RunatomCancelled):
+            _case_job(tmp_path, "hang", monkeypatch, cancel=cancel)
+        assert not (tmp_path / FORMATTED).exists()
 
 
 def test_names_longer_than_fortran_accepts_are_refused(tmp_path):

@@ -51,13 +51,15 @@ class Window:
 def _window(tmp_path):
     w = gen.RunatomGenerator.__new__(gen.RunatomGenerator)
     w._closed, w._busy, w._cancel, w._last_out = False, False, None, None
+    w._imported_case = None
     case = ri.read_case_folder(LIBRARY_DIR / "000-Ex" / "000-Ex-ca-sp-test")
     w.inputs = {k: Value(v) for k, v in ri.case_to_fields(case).items()}
     w.folder_input, w.exe_input = Value(str(tmp_path)), Value("")
     w.makefile_switch = Value(False)
     w.results_text = Value("")
     w.status_label, w.activity, w.tabs, w.main_window = Label(), Spinner(), Tabs(), Window()
-    for name in ("check_button", "save_button", "run_button", "cancel_button"):
+    for name in ("check_button", "save_button", "run_button", "cancel_button",
+                 "import_case_button", "import_adat_button", "browse_button"):
         setattr(w, name, Value())
     w.errors = []                     # a Toga dialog keeps no readable message: record _error instead
 
@@ -95,6 +97,63 @@ def test_run_writes_inputs_runs_every_stage_and_shows_results(tmp_path, monkeypa
     assert not w._busy and w.run_button.enabled and not w.activity.running
 
 
+def _fakes(monkeypatch, reform=True):
+    monkeypatch.setenv("FAKE_REFORM_MODE", "ok")
+    monkeypatch.setattr(gen.rr, "find_runatom", lambda explicit=None: "runatom.exe")
+    monkeypatch.setattr(gen.rr, "runatom_command", lambda exe: FAKE)
+    monkeypatch.setattr(gen.rr, "find_reform", lambda explicit=None: "reform.exe" if reform else None)
+    monkeypatch.setattr(gen.rr, "reform_command", lambda exe: FAKE_REFORM)
+
+
+def test_a_failed_rerun_shows_only_its_own_results(tmp_path, monkeypatch):
+    _fakes(monkeypatch)
+    w, _ = _window(tmp_path)
+    monkeypatch.setenv("FAKE_RUNATOM_MODE", "ok")
+    asyncio.run(w.on_run(None))
+    assert "Transferability test (s2d2): finished" in w.results_text.value
+    formatted = tmp_path / "ti_ps_formatted.uspp"
+    formatted.write_text("written by run 1")
+    monkeypatch.setenv("FAKE_RUNATOM_MODE", "fail_test")
+    asyncio.run(w.on_run(None))
+    text = w.results_text.value
+    assert "Pseudopotential generation: finished" in text and "Stopped at Transferability test (s2d2)" in text
+    assert "Transferability test (s2d2): finished" not in text
+    assert "*ti_ps_formatted.uspp FORMATTED" in text
+    assert formatted.read_bytes() == b"    7    3    6\nformatted\n"      # rewritten by run 2
+    assert w._last_out == tmp_path / "ti_test_s2d2.out"
+    ((title, message),) = w.errors
+    assert title == "runatom stopped" and "could not be converged" in message
+    assert w.status_label.text.startswith("Stopped at") and not w._busy
+
+
+def test_a_run_that_fails_at_once_clears_the_old_results(tmp_path, monkeypatch):
+    _fakes(monkeypatch)
+    w, _ = _window(tmp_path)
+    monkeypatch.setenv("FAKE_RUNATOM_MODE", "ok")
+    asyncio.run(w.on_run(None))
+    assert w._last_out == tmp_path / "ti_ps.out"
+    monkeypatch.setenv("FAKE_RUNATOM_MODE", "error")
+    asyncio.run(w.on_run(None))
+    assert "FORMATTED" not in w.results_text.value and "finished" not in w.results_text.value
+    assert "Stopped at All-electron (s2d1)" in w.results_text.value
+    assert not (tmp_path / "ti_ps_formatted.uspp").exists() and not (tmp_path / "ti_ps.uspp").exists()
+    assert w._last_out == tmp_path / "ti_ae_s2d1.out"
+
+
+def test_busy_window_disables_imports_and_browse(tmp_path):
+    w, _ = _window(tmp_path)
+    w._set_busy(True, "Running")
+    assert not any(b.enabled for b in (w.import_case_button, w.import_adat_button, w.browse_button))
+    w._set_busy(False, "done")
+    assert all(b.enabled for b in (w.import_case_button, w.import_adat_button, w.browse_button))
+
+
+def test_a_missing_library_at_startup_is_reported(tmp_path):
+    w, _ = _window(tmp_path)
+    w._load_case(tmp_path / "no-such-case", quiet=True)
+    assert "Library not found" in w.status_label.text
+
+
 def test_missing_reform_leaves_the_binary_result_and_says_so(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_RUNATOM_MODE", "ok")
     monkeypatch.setattr(gen.rr, "find_runatom", lambda explicit=None: "runatom.exe")
@@ -118,7 +177,7 @@ def test_program_error_is_shown_in_a_dialog(tmp_path, monkeypatch):
 
 def test_invalid_inputs_never_reach_the_program(tmp_path, monkeypatch):
     called = []
-    monkeypatch.setattr(gen.rr, "run_job", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(gen.rr, "run_case_job", lambda *a, **k: called.append(a))
     w, _ = _window(tmp_path)
     w.inputs["ae_atom"].value = "22 0.0 0"            # occupations no longer add up
     asyncio.run(w.on_run(None))
@@ -152,7 +211,7 @@ def test_an_unexpected_error_never_leaves_the_window_busy(tmp_path, monkeypatch)
     def boom(*args, **kwargs):
         raise KeyError("unexpected")
     monkeypatch.setattr(gen.rr, "find_runatom", lambda explicit=None: "runatom.exe")
-    monkeypatch.setattr(gen.rr, "run_job", boom)
+    monkeypatch.setattr(gen.rr, "run_case_job", boom)
     w, _ = _window(tmp_path)
     asyncio.run(w.on_run(None))
     assert not w._busy and w.run_button.enabled and not w.activity.running

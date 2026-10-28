@@ -1,7 +1,9 @@
 """Stand-in for runatom in tests (never the real program).
 
 Called like runatom: input out ae atwf logd uspp. FAKE_RUNATOM_MODE selects:
-ok, error, stop0, runtime, negative, hang. Every call is logged to fake_calls.jsonl.
+ok, error, stop0, runtime, negative, hang, not_converged (every stage), fail_test
+(like ok, but the transferability tests do not converge) and exit3 (exit status 3
+with no Fortran message). Every call is logged to fake_calls.jsonl.
 """
 
 import json
@@ -47,6 +49,12 @@ if mode == "hang":
         open(name, "w").close()
     while True:
         time.sleep(0.05)
+if mode == "not_converged" or (mode == "fail_test" and kind == "test"):
+    with open(out, "w") as f:
+        f.write(" ***error in subroutine atom\n potential could not be converged\n")
+    sys.exit(1)
+if mode == "exit3":
+    sys.exit(3)
 if mode == "error":
     with open(out, "w") as f:
         f.write(" ***error in subroutine readin\n nang =  5 but idim5 =  4\n")

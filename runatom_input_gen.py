@@ -26,6 +26,9 @@ LABEL_WIDTH = 240
 HINT_COLOR = "#666666"
 MULTILINE_HEIGHT = 110
 DEFAULT_CASE = ("000-Ex", "000-Ex-ca-sp-test")
+MAKEFILE_HINT = ("The Makefile assumes a USPP source tree: the job folder three levels below its root "
+                 "(ROOT=../../..) and the program built as Bin/runatom.x.")
+LIBRARY_MISSING = "Library not found: start from an empty form or import a case."
 NAME_FIELDS = ("symbol", "generation", "title")
 TAB_FIELDS = (
     ("All-electron", ("ae_print", "ae_logd", "ae_conv", "ae_atom", "ae_mesh", "ae_shells")),
@@ -40,6 +43,7 @@ class RunatomGenerator:
     def __init__(self, *args, **kwargs):
         # gqteaWinToga passes the Button that was pressed; ignore it.
         self._closed, self._busy, self._cancel, self._last_out = False, False, None, None
+        self._imported_case = None      # the library case last imported: its tests keep their own inputs
         self.inputs = {}
         self.main_window = toga.Window(title="Vanderbilt USPP Generator (runatom)", size=(920, 700))
         self.main_window.on_close = self._on_close
@@ -69,13 +73,16 @@ class RunatomGenerator:
                                         style=Pack(flex=1), on_change=self._update_exe_status)
         self.exe_status = toga.Label("", style=Pack(color=HINT_COLOR, font_size=9, margin_left=LABEL_WIDTH))
         self.makefile_switch = toga.Switch("Also write a Makefile (to run the case by hand under Linux/WSL)", value=False)
+        self.makefile_hint = toga.Label(MAKEFILE_HINT, style=Pack(color=HINT_COLOR, font_size=9, margin_top=2))
+        self.browse_button = toga.Button("Browse...", on_press=self.on_browse_folder)
+        self.import_case_button = toga.Button("Import library case...", on_press=self.on_import_case)
+        self.import_adat_button = toga.Button("Import .adat file...", on_press=self.on_import_adat)
         header = toga.Box(style=Pack(direction=COLUMN, margin=8), children=[
-            self._row("Job folder", self.folder_input, toga.Button("Browse...", on_press=self.on_browse_folder)),
+            self._row("Job folder", self.folder_input, self.browse_button),
             self._row("runatom program", self.exe_input), self.exe_status,
             toga.Box(style=Pack(direction=ROW, margin_top=4), children=[
-                toga.Button("Import library case...", on_press=self.on_import_case),
-                toga.Button("Import .adat file...", on_press=self.on_import_adat),
-                self.makefile_switch])])
+                self.import_case_button, self.import_adat_button, self.makefile_switch]),
+            self.makefile_hint])
         names = toga.Box(style=Pack(direction=COLUMN, margin=(0, 8)),
                          children=[self._field_row(k) for k in NAME_FIELDS])
         pages = []
@@ -115,6 +122,7 @@ class RunatomGenerator:
         except (OSError, ValueError, KeyError) as exc:
             if not quiet:
                 raise ValueError(f"{folder.name}: {exc}") from None
+            self._show_status(LIBRARY_MISSING)
             return
         self._fill(ri.case_to_fields(case))
         skipped = ri.unrepresentable_tests(case)
@@ -138,7 +146,8 @@ class RunatomGenerator:
         if self._closed:
             return
         (self.activity.start if busy else self.activity.stop)()
-        for button in (self.check_button, self.save_button, self.run_button):
+        for button in (self.check_button, self.save_button, self.run_button,
+                       self.import_case_button, self.import_adat_button, self.browse_button):
             button.enabled = not busy
         self.cancel_button.enabled = busy
         self._show_status(message)
@@ -213,35 +222,33 @@ class RunatomGenerator:
             exe = rr.find_runatom(self.exe_input.value)
             if exe is None:
                 raise ValueError("runatom.exe was not found. Enter its path, or reinstall gqteaWinToga, which ships it.")
+            reform = rr.find_reform(self._reform_beside_runatom())
             self._write_inputs(case, folder)
         except (ValueError, OSError) as exc:
             await self._error("Cannot run runatom", str(exc))
             return
         stages = rr.plan_stages(case)
+        self._last_out = None
+        self._show_results("")
         self._cancel = threading.Event()
         self._set_busy(True, f"Running {len(stages)} stages...")
         loop = asyncio.get_running_loop()
         message = "Run ended"
         try:
-            results = await asyncio.to_thread(rr.run_job, rr.runatom_command(exe), stages, folder,
-                                              self._progress_reporter(loop), self._cancel)
-            stem = ri.file_stems(case)["ps"]
-            self._last_out = folder / f"{stem}.out"
-            try:
-                uspp, note = ro.read_uspp(folder / f"{stem}.uspp"), ""
-            except (OSError, ValueError) as exc:
-                uspp, note = None, f"\n\nThe pseudopotential file could not be read back: {exc}"
-            note += await self._write_cpmd_file(case, folder, f"{stem}.uspp")
-            text = ro.job_summary([(r.stage.label, r.seconds, r.report) for r in results], uspp) + note
-            if not self._closed:
-                self.results_text.value = text
-                self.tabs.current_tab = len(TAB_FIELDS)
-            message = f"Finished: {len(results)} stages in {sum(r.seconds for r in results):.1f} s"
+            outcome = await asyncio.to_thread(
+                rr.run_case_job, rr.runatom_command(exe), rr.reform_command(reform) if reform else None,
+                stages, folder, rr.formatted_name(case), self._progress_reporter(loop), self._cancel)
+            self._show_results(self._outcome_text(outcome, folder))
+            seconds = sum(r.seconds for r in outcome.results)
+            if outcome.error is None:
+                self._last_out = folder / f"{ri.file_stems(case)['ps']}.out"
+                message = f"Finished: {len(outcome.results)} stages in {seconds:.1f} s"
+            else:
+                self._last_out = folder / f"{outcome.failed_stage.stem}.out"
+                message = f"Stopped at: {outcome.error.stage_label}"
+                await self._error("runatom stopped", f"{outcome.error}\n\nThe .out file of that stage is in {folder}.")
         except rr.RunatomCancelled:
             message = "Run cancelled; the stage that was running left no output."
-        except rr.RunatomError as exc:
-            message = f"Stopped at: {exc.stage_label}"
-            await self._error("runatom stopped", f"{exc}\n\nThe .out file of that stage is in {folder}.")
         except OSError as exc:
             message = "runatom could not be started"
             await self._error("runatom could not be started", str(exc))
@@ -251,21 +258,41 @@ class RunatomGenerator:
         finally:
             self._set_busy(False, message)
 
-    async def _write_cpmd_file(self, case, folder: Path, uspp_name: str) -> str:
-        """Write the formatted copy for CPMD with reform.exe; return the Results text about it."""
+    def _reform_beside_runatom(self):
+        """reform.exe next to a typed runatom path, or None."""
         typed = (self.exe_input.value or "").strip()
-        sibling = str(Path(typed).with_name("reform.exe")) if typed and Path(typed).name else None
-        reform = rr.find_reform(sibling)
-        if reform is None:
-            return ("\n\nreform.exe was not found, so no formatted file for CPMD was written "
-                    "(the binary .uspp is complete).")
-        name = rr.formatted_name(case)
-        try:
-            await asyncio.to_thread(rr.write_formatted, rr.reform_command(reform), folder, uspp_name, name)
-        except (rr.RunatomError, ValueError, OSError) as exc:
-            return f"\n\nThe formatted file for CPMD was not written: {exc}"
-        return (f"\n\nCPMD: {name} is the formatted pseudopotential. Copy it to CPMD's PP_LIBRARY_PATH "
-                f"(or the run directory) and use the &ATOMS species line\n  {rr.cpmd_atom_line(name)}")
+        return str(Path(typed).with_name("reform.exe")) if typed and Path(typed).name else None
+
+    @staticmethod
+    def _outcome_text(outcome: rr.JobOutcome, folder: Path) -> str:
+        """The Results tab: the completed stages, the CPMD file or why there is none, then the stop."""
+        uspp, parts = None, []
+        generated = next((r.stage for r in outcome.results if r.stage.kind == "pseudo"), None)
+        if generated is not None:
+            try:
+                uspp = ro.read_uspp(folder / generated.uspp_file)
+            except (OSError, ValueError) as exc:
+                parts.append(f"The pseudopotential file could not be read back: {exc}")
+        summary = ro.job_summary([(r.stage.label, r.seconds, r.report) for r in outcome.results], uspp)
+        if outcome.formatted is not None:
+            name = outcome.formatted.name
+            parts.append(f"CPMD: {name} is the formatted pseudopotential. Copy it to CPMD's PP_LIBRARY_PATH "
+                         f"(or the run directory) and use the &ATOMS species line\n  {rr.cpmd_atom_line(name)}")
+        elif outcome.formatted_note:
+            parts.append(outcome.formatted_note)
+        if outcome.error is not None:
+            parts.append(f"Stopped at {outcome.failed_stage.label}: {outcome.error.message}")
+        return "\n\n".join(p for p in [summary] + parts if p)
+
+    def _show_results(self, text: str):
+        """The Results tab's text (written only on change); a non-empty text brings the tab forward."""
+        if self._closed:
+            return
+        if self.results_text.value != text:
+            self.results_text.value = text
+        current = self.tabs.current_tab                  # a Toga OptionItem, or an index in the tests
+        if text and getattr(current, "index", current) != len(TAB_FIELDS):
+            self.tabs.current_tab = len(TAB_FIELDS)
 
     def on_cancel(self, widget):
         if self._cancel is not None:

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
-from runatomInput import MAX_FORTRAN_NAME, CaseInputs, file_stems
+from runatomInput import MAX_FORTRAN_NAME, MAX_REFORM_NAME, CaseInputs, file_stems
 from runatomOutput import OutReport, parse_out
 
 DEFAULT_STAGE_TIMEOUT = 120.0     # s; the slowest measured stage takes 0.7 s
@@ -266,9 +266,10 @@ def run_job(command: Sequence[str], stages: Sequence[Stage], workdir,
 
 REFORM_ENV_VAR = "GQTEA_REFORM"
 VENDOR_REFORM = VENDOR_DIR / "bin" / "reform.exe"
-MAX_REFORM_NAME = 36          # reform.f reads its file names with format a36
 REFORM_DONE = "pseudopotential has been written out"
 FORMATTED_LABEL = "Formatted file for CPMD"
+REFORM_MISSING_NOTE = ("reform.exe was not found, so no formatted file for CPMD was written "
+                       "(the binary .uspp is complete).")
 
 
 def find_reform(explicit: Optional[str] = None) -> Optional[str]:
@@ -314,3 +315,51 @@ def write_formatted(command: Sequence[str], workdir, uspp_name: str, formatted: 
     if b"\r\n" in data:            # MinGW gfortran writes CRLF; CPMD runs on Linux
         target.write_bytes(data.replace(b"\r\n", b"\n"))
     return target
+
+
+@dataclass
+class JobOutcome:
+    results: List[StageResult]           # completed stages, in order
+    error: Optional[RunatomError]        # the stage error that stopped the job, or None
+    failed_stage: Optional[Stage]        # the stage that raised it, or None
+    formatted: Optional[Path]            # CPMD formatted file written after the generation stage, or None
+    formatted_note: str                  # "" or why no formatted file was written
+
+
+def clean_job_outputs(stages: Sequence[Stage], workdir, formatted_name: str) -> None:
+    """Delete every product of every planned stage and the formatted file (missing files are fine)."""
+    names = [name for stage in stages for name in stage.products()] + [formatted_name]
+    _remove(Path(workdir), list(dict.fromkeys(names)))
+
+
+def run_case_job(command: Sequence[str], reform_command: Optional[Sequence[str]], stages: Sequence[Stage],
+                 workdir, formatted_name: str, progress: Optional[Callable[[dict], None]] = None,
+                 cancel: Optional[threading.Event] = None, timeout: float = DEFAULT_STAGE_TIMEOUT) -> JobOutcome:
+    """The window's job: clean, run every stage, convert for CPMD right after the generation.
+
+    A stage error ends the job and is returned with the stages done so far, so a
+    transferability test that fails never hides the pseudopotential already
+    generated. RunatomCancelled is raised.
+    """
+    workdir = Path(workdir)
+    clean_job_outputs(stages, workdir, formatted_name)
+    outcome = JobOutcome([], None, None, None, "")
+    for index, stage in enumerate(stages):
+        try:
+            result = run_stage(command, stage, workdir, progress, cancel, timeout, index, len(stages))
+        except RunatomError as exc:
+            outcome.error, outcome.failed_stage = exc, stage
+            return outcome
+        outcome.results.append(result)
+        if stage.kind != "pseudo":
+            continue
+        if cancel is not None and cancel.is_set():
+            raise RunatomCancelled(f"{stage.label}: cancelled")
+        if reform_command is None:
+            outcome.formatted_note = REFORM_MISSING_NOTE
+            continue
+        try:
+            outcome.formatted = write_formatted(reform_command, workdir, stage.uspp_file, formatted_name, timeout)
+        except (RunatomError, ValueError, OSError) as exc:
+            outcome.formatted_note = f"The formatted file for CPMD was not written: {exc}"
+    return outcome

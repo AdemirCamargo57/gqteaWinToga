@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 LABEL_COLUMN = 38           # labels start here, or 2 columns after the data
 MAX_FORTRAN_NAME = 40       # runatom's file-name arguments are character*40
+MAX_REFORM_NAME = 36        # reform.f reads its file names with format a36
 SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 _FORMAT_ITEM = re.compile(r"^(\d*)([iafe])(\d+)(?:\.(\d+))?$")
