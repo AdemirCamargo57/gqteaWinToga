@@ -288,10 +288,17 @@ In auto-py-to-exe, under *Additional Files*, add:
 - `third_party/uspp-736/bin/runatom.exe` with destination `uspp/`
 - `third_party/uspp-736/bin/reform.exe` with destination `uspp/`
 - `third_party/uspp-736/Work` with destination `uspp/Work` (the input library)
-- `third_party/uspp-736/Source`, `third_party/uspp-736/Utils`,
-  `third_party/uspp-736/patches`, `third_party/uspp-736/AA-README` and
-  `third_party/uspp-736/Source/LICENSE` with destination `uspp/` (GPL v2
-  requires shipping the source with the programs)
+- `third_party/uspp-736/Source` with destination `uspp/Source`
+- `third_party/uspp-736/Utils` with destination `uspp/Utils`
+- `third_party/uspp-736/patches` with destination `uspp/patches`
+- `third_party/uspp-736/Doc` with destination `uspp/Doc` (the manual points
+  users to `Doc/INPUT_AE`, `Doc/INPUT_GEN` and `Doc/TUTORIAL`)
+- the files `third_party/uspp-736/AA-README`, `third_party/uspp-736/Source/LICENSE`
+  and `third_party/uspp-736/PROVENANCE.md` with destination `uspp/`
+
+GPL v2 requires shipping the source with the programs, so keep the folders
+under their own names (a flat `uspp/` would merge their README, Makefile and
+LICENSE files).
 
 At run time each program is looked for in this order:
 1. the path typed in the window (`reform.exe` next to it);

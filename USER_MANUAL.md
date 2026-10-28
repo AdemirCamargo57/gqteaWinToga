@@ -1077,6 +1077,7 @@ Workflow:
 2. Start from a library case (**Import library case...**: the `Work` folder of USPP holds tested inputs for 45 elements) or from the Ti example loaded when the window opens.
 3. Edit the tabs **All-electron**, **Pseudopotential** and **Tests**. Type values separated by spaces; the tool writes them in the fixed columns `runatom` reads, so spacing does not matter.
 4. **Check** runs every test that `runatom` makes before it starts. **Run** writes the inputs and runs, in order: the all-electron reference, the pseudopotential generation and, for each test, the all-electron test configuration and the transferability test.
+   **Save inputs** writes the checked input files to the job folder without running. **Import .adat file...** loads one all-electron or generation input into its tab (a test input is refused, with an explanation). The **Also write a Makefile (to run the case by hand under Linux/WSL)** switch writes a Makefile for running the case outside the window.
 5. Read the **Results** tab (below). **Open .out** shows the full report of a stage, with its plots of log derivatives, wavefunctions and Q functions.
 
 Fields (see also `Doc/INPUT_AE`, `Doc/INPUT_GEN` and `Doc/TUTORIAL` in the USPP library):
@@ -1123,7 +1124,7 @@ The Results tab prints this line with the actual file name.
 Limitations:
 
 - Reference wavefunctions taken from another configuration (`keyee` < 0), Dirac generation (`irel` 1) and export to UPF are not supported.
-- Library cases whose transferability tests use a different shell list from the generation input cannot be edited as tests in the window. The window names them when you import them. They still run and validate programmatically.
+- Library cases whose transferability tests use a different shell list from the generation input cannot be edited as tests in the window. The window names them when you import them. These tests are not loaded into the window (the status line names them) and are not run when you press **Run**; the library's own files for them stay in the case folder.
 - A few cases of the USPP library are defective as shipped (for example `023-V`, `041-Nb` and `034-Se`); they are listed in `third_party/uspp-736/PROVENANCE.md`.
 
 ### Structural Tools
