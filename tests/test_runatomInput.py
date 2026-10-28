@@ -89,3 +89,91 @@ class TestFormatLine:
         lines = ri.format_line("5f10.5", values, "rinner")
         assert len(lines) == 2
         assert ri.read_record(lines[0], "5f10.5") + ri.read_record(lines[1], "5f10.5", 2) == values
+
+
+from runatom_fixtures import LIBRARY_DIR
+
+LIBRARY_INPUTS = sorted(p for p in LIBRARY_DIR.rglob("*.adat") if "History" not in p.parts)
+UNREADABLE = {"V_ps.adat": 2}           # upstream defect, see PROVENANCE.md
+CASE_DIRS = sorted(p.parent for p in LIBRARY_DIR.rglob("Makefile") if p.parent.parent != LIBRARY_DIR)
+
+
+def _ti_case():
+    return ri.read_case_folder(LIBRARY_DIR / "000-Ex" / "000-Ex-ca-sp-test")
+
+
+class TestAdatFiles:
+    def test_library_is_large_enough_to_mean_something(self):
+        assert len(LIBRARY_INPUTS) > 400
+
+    @pytest.mark.parametrize("path", LIBRARY_INPUTS, ids=lambda p: f"{p.parent.name}/{p.name}")
+    def test_every_library_input_round_trips(self, path):
+        text = path.read_text(encoding="latin-1")
+        if path.name in UNREADABLE:
+            with pytest.raises(ri.AdatError) as info:
+                ri.parse_adat(text)
+            assert info.value.line_number == UNREADABLE[path.name]
+            return
+        parsed = ri.parse_adat(text)
+        assert ri.parse_adat(ri.format_adat(parsed)) == parsed
+
+    def test_written_file_uses_lf_and_ends_with_newline(self):
+        text = ri.format_adat(_ti_case().ps)
+        assert "\r" not in text and text.endswith("\n")
+
+    def test_npf_line_only_when_a_projector_is_smooth(self):
+        ps = _ti_case().ps
+        assert "npf,ptryc" in ri.format_adat(ps)
+        plain = ri.replace(ps, betas=[ri.replace(b, iptype=1) for b in ps.betas])
+        text = ri.format_adat(plain)
+        assert "npf,ptryc" not in text
+        assert ri.parse_adat(text).lloc == ps.lloc   # the local line was not shifted
+
+    def test_per_l_rinner_line_when_rinner_is_zero(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "026-Fe" / "026-Fe-gpw-n-campos")
+        assert case.ps.rinner1 == 0.0 and len(case.ps.rinner) == 2 * case.ps.nang - 1
+
+
+class TestCaseFolders:
+    @pytest.mark.parametrize("folder", CASE_DIRS, ids=lambda p: p.name)
+    def test_every_library_case_reads(self, folder):
+        if (folder / "V_ps.adat").exists():
+            with pytest.raises(ri.AdatError):
+                ri.read_case_folder(folder)
+            return
+        case = ri.read_case_folder(folder)
+        assert case.ae.controls.ifae == 1 and case.ps.controls.ifpsp == 2
+
+    def test_tests_named_cf1_cf2_are_found(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "000-Ex" / "000-Ex-ca-sp-tests")
+        assert [t.name for t in case.tests] == ["s2d2", "s1d2"]
+
+    def test_tests_become_occupation_changes(self):
+        case = _ti_case()
+        assert case.symbol == "ti" and case.generation_name == "s2d1"
+        (test,) = case.tests
+        assert test.name == "s2d2" and test.xion == 0.0 and test.occupations == {320: 2.0}
+        derived = ri.test_ae_input(case, test)
+        assert {s.nnlz: s.wwnl for s in derived.shells}[320] == 2.0
+
+    def test_tests_with_their_own_shell_list_keep_their_input(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
+        own = [t for t in case.tests if t.ae_input is not None]
+        assert own, "expected at least one test with its own shell list"
+        assert all(t.occupations == {} for t in own)
+        assert ri.test_ae_input(case, own[0]) is own[0].ae_input
+
+    def test_written_case_reads_back(self, tmp_path):
+        case = _ti_case()
+        written = ri.write_case(case, tmp_path)
+        assert sorted(p.name for p in written) == ["ti_ae_s2d1.adat", "ti_ae_s2d2.adat",
+                                                   "ti_ps.adat", "ti_test_s2d2.adat"]
+        (tmp_path / "Makefile").write_text(ri.makefile_text(case), newline="\n")
+        again = ri.read_case_folder(tmp_path)
+        assert again.ae == case.ae and again.ps == case.ps
+        assert [(t.name, t.xion, t.occupations) for t in again.tests] == [("s2d2", 0.0, {320: 2.0})]
+
+    def test_makefile_lists_every_stage(self):
+        text = ri.makefile_text(_ti_case())
+        assert "ATOM= ti" in text and "CFG= s2d1" in text and "CFT1= s2d2" in text
+        assert "${PROG} ${TST1}.adat" in text
