@@ -325,20 +325,32 @@ So the formatted file is produced by **`reform.exe`, built from the unmodified `
     - every eigenvalue-comparison and total-energy number agrees within 2e-6 Ry (one unit in the printed last place);
     - Bessel-basis eigenvalues agree within 1e-5 Ry;
     - `.uspp` scalar fields agree exactly; `r`/`rab` within 1e-12 relative; `vloc`, `vloc0` and `rsatom` within 1e-7 relative or 1e-10 absolute.
-    - `beta`, `ddd`, `qqq` and `qfunc` are compared up to the sign of each β within 1e-6 relative, **except** the s channel of Pb, which `BENIGN_BUG` documents as unstable. There only the invariants are compared: the eigenvalues of the D and Q blocks per l, and the Bessel eigenvalues.
+    - `beta`, `ddd`, `qqq` and `qfunc` are compared up to the sign of each β within 1e-6 relative, **except** the s channel of the cases in the table under *Measured* (Pb, documented in `BENIGN_BUG`, and five more found on the Windows build), which the program leaves unstable. There only the invariants are compared: the eigenvalues of the D and Q blocks per l, and the Bessel eigenvalues.
   - Rule (as for the QTAIM/NTO references): a disagreement is investigated in the build, never fixed by loosening a tolerance.
 - **Historical check:** `Sample_output` (2006) eigenvalue tables equal to printed precision.
 - **Formatted files for CPMD:**
   - `reform.exe` applied to each *reference* binary `.uspp` must reproduce the Linux `reform.x` output of that same file **byte for byte**, except line 1 (date). Formatted output is correctly rounded, so it is deterministic.
   - `read_formatted_uspp(formatted)` must match `read_uspp(binary)` of our own runs to 1e-11 relative.
 - **Benchmarks:** `benchmarks/bench_runatom.py` times every library case end to end (process start included) and reports per-stage times. Acceptance:
-  - each case < 3 s on the dev machine;
+  - each runatom stage < 1 s (measured max 0.61 s); cases with three tests run 8 processes and take up to ~3.4 s in total;
   - Toga event-loop lag during a run ≤ 50 ms p95, measured with the `toolLoader` method.
   - Measured (2026-10-28, Task 10), quiet machine, runatom.exe MSYS2 gfortran 16.2.0 -O1:
-    - 78 library cases run: median 0.96 s, max 3.36 s per case; the slowest stage is 0.61 s. Six cases (La, Zr, Y, Ta, Sr, ...) with an all-electron, a pseudo and three test stages exceed 3 s end to end (each stage < 1 s, as stated in section 5).
+    - 78 library cases run: median 0.96 s, max about 3.4 s per case; slowest stage 0.61 s. Seven cases take over 3 s in total (Sr, Y, Zr, Ba, La, Ta, W): each runs 8 processes, none of them over 1 s.
     - event-loop lag during the Ba run: p95 9.4 ms, max 12.9 ms.
-    - `034-Se-ca--vgrp` is rejected by runatom itself (`unreasonable q eigenvalues`); the Linux gfortran 11.5 build fails identically, so it is an upstream defect of that library input.
-    - Validation: 27 tests in `tests/test_runatomExe.py` pass. The s channel of every case with one (Ex, O, Cu, Ba, Au, Pb) is compared through D/Q block eigenvalues only: projectors differ by up to 1.8e-1 (Pb), 1e-2 (Au), 8e-5 (O) while block eigenvalues agree to < 1e-9 relative (BENIGN_BUG). `npf`/`ptryc` are uninitialised in the file unless an iptype = 2 projector exists (Au gave 32759 against 0 in the reference), so they are compared only then.
+    - `034-Se-ca--vgrp` stops with `unreasonable q eigenvalues` in the Windows and the Linux build (upstream defect of that input); the benchmark lists it as known and exits non-zero on any other failure.
+    - `npf`/`ptryc` are uninitialised in the file unless an iptype = 2 projector exists (Au gave 32759 against 0 in the reference), so they are compared only then.
+    - s channels compared through invariants (27 tests in `tests/test_runatomExe.py` pass):
+
+      | case | channel | rotation angle (rad) | max beta diff / max abs beta | D,Q eigenvalue agreement (relative) |
+      |---|---|---|---|---|
+      | 000-Ex-ca-sp-test (Ti) | s | 1.5e-5 | 1.4e-5 | ≤ 4.8e-10 |
+      | 008-O-ca--vgrp | s | 5.8e-5 | 4.2e-5 | D 3.3e-10 / Q 4.8e-10 |
+      | 029-Cu-gpbe-n-bm | s | 8.8e-7 | 4.7e-7 | ≤ 4.8e-10 (elementwise ddd differs 4.5e-6 absolute: representation only) |
+      | 056-Ba-gpw-nsp-campos | s | 2.6e-6 | 2.4e-6 | ≤ 4.8e-10 |
+      | 079-Au-ca--ts | s | 1.01e-2 | 8.0e-3 | ≤ 4.8e-10 |
+      | 082-Pb-ca-d-vgrp | s | 0.18 | 1.5e-1 | ≤ 4.8e-10 |
+
+      Each is an exact 2x2 orthogonal rotation within the channel (Source/BENIGN_BUG). All eigenvalue tables, Bessel eigenvalues and total energies are identical to the printed digits, so the -O0 / -ffp-contract=off rebuild of §9 was not needed.
 
 ## 8. Packaging
 

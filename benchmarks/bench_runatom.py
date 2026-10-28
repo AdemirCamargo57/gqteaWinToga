@@ -17,6 +17,10 @@ import runatomInput as ri        # noqa: E402
 import runatomRunner as rr       # noqa: E402
 
 
+# runatom stops with 'unreasonable q eigenvalues' (q-matrix eigenvalue > 50), in the Windows and the Linux build
+KNOWN_UPSTREAM_FAILURES = {"034-Se-ca--vgrp"}
+
+
 def library_cases():
     for makefile in sorted(rr.library_dir().rglob("Makefile")):
         folder = makefile.parent
@@ -26,7 +30,7 @@ def library_cases():
 
 
 def time_library(exe: str):
-    times, failed = [], []
+    times, failed, known_failed = [], [], []
     for folder in library_cases():
         with tempfile.TemporaryDirectory() as tmp:
             shutil.copytree(folder, tmp, dirs_exist_ok=True)
@@ -34,17 +38,21 @@ def time_library(exe: str):
             started = time.perf_counter()
             try:
                 results = rr.run_job(rr.runatom_command(exe), rr.plan_stages(case), tmp)
-            except rr.RunatomError as problem:      # a defective upstream input, e.g. 034-Se
-                print(f"{folder.name:34s} failed: {problem}")
-                failed.append(folder.name)
+            except rr.RunatomError as problem:
+                known = folder.name in KNOWN_UPSTREAM_FAILURES
+                print(f"{folder.name:34s} {'known upstream failure' if known else 'UNEXPECTED FAILURE'}: {problem}")
+                (known_failed if known else failed).append(folder.name)
                 continue
             total = time.perf_counter() - started
         times.append(total)
         stages = ", ".join(f"{r.stage.kind} {r.seconds:.2f}" for r in results)
         print(f"{folder.name:34s} {total:6.2f} s  ({stages})")
     print(f"\n{len(times)} cases: median {statistics.median(times):.2f} s, max {max(times):.2f} s")
+    if known_failed:
+        print(f"{len(known_failed)} known upstream failure(s): {', '.join(known_failed)}")
     if failed:
-        print(f"{len(failed)} case(s) rejected by runatom itself (the Linux build fails the same way): {', '.join(failed)}")
+        print(f"{len(failed)} UNEXPECTED failure(s): {', '.join(failed)}")
+    return failed
 
 
 async def measure_lag(exe: str, folder: Path):
@@ -73,6 +81,8 @@ if __name__ == "__main__":
     exe = rr.find_runatom()
     if exe is None:
         sys.exit("runatom.exe not found")
-    time_library(exe)
+    unexpected = time_library(exe)
     if "--lag" in sys.argv:
         asyncio.run(measure_lag(exe, rr.library_dir() / "056-Ba" / "056-Ba-gpw-nsp-campos"))
+    if unexpected:
+        sys.exit(1)

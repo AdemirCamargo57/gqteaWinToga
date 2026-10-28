@@ -111,15 +111,18 @@ def test_reformatted_inputs_give_an_identical_pseudopotential(runs, name, tmp_pa
     original = ro.uspp_records((work / f"{stem}.uspp").read_bytes())
     rewritten = ro.uspp_records((tmp_path / f"{stem}.uspp").read_bytes())
     assert len(original) == len(rewritten)
-    nbeta = len(ro.read_uspp(work / f"{stem}.uspp").l)
-    defined = _npf_is_defined(ro.read_uspp(work / f"{stem}.uspp").iptype)
-    for index, (a, b) in enumerate(zip(original, rewritten), start=1):
-        if index == 1:
+    data = ro.read_uspp(work / f"{stem}.uspp")
+    # The iptype record (iptype(1:nbeta), npf, ptryc) comes right before the (rcloc, vloc0) record,
+    # the one of 8*(mesh+1) bytes. npf and ptryc are uninitialised unless a projector has iptype 2.
+    masked = None
+    if not _npf_is_defined(data.iptype):
+        masked = next(k for k, record in enumerate(original) if len(record) == 8 * (data.mesh + 1)) - 1
+    for index, (a, b) in enumerate(zip(original, rewritten)):
+        if index == 0:
             continue                              # record 1 holds the run date
-        if not defined and len(a) == 4 * nbeta + 12 and a[:4 * nbeta] == b[:4 * nbeta] and not any(
-                int.from_bytes(a[4 * k:4 * k + 4], "little") == 2 for k in range(nbeta)):
-            a, b = a[:4 * nbeta], b[:4 * nbeta]   # iptype record: npf, ptryc are uninitialised
-        assert a == b, f"record {index}"
+        if index == masked:
+            a, b = a[:-12], b[:-12]
+        assert a == b, f"record {index + 1}"
 
 
 def test_sample_output_of_2006_is_reproduced(runs):
