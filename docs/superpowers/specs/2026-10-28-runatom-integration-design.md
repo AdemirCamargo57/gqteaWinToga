@@ -334,6 +334,11 @@ So the formatted file is produced by **`reform.exe`, built from the unmodified `
 - **Benchmarks:** `benchmarks/bench_runatom.py` times every library case end to end (process start included) and reports per-stage times. Acceptance:
   - each case < 3 s on the dev machine;
   - Toga event-loop lag during a run ≤ 50 ms p95, measured with the `toolLoader` method.
+  - Measured (2026-10-28, Task 10), quiet machine, runatom.exe MSYS2 gfortran 16.2.0 -O1:
+    - 78 library cases run: median 0.96 s, max 3.36 s per case; the slowest stage is 0.61 s. Six cases (La, Zr, Y, Ta, Sr, ...) with an all-electron, a pseudo and three test stages exceed 3 s end to end (each stage < 1 s, as stated in section 5).
+    - event-loop lag during the Ba run: p95 9.4 ms, max 12.9 ms.
+    - `034-Se-ca--vgrp` is rejected by runatom itself (`unreasonable q eigenvalues`); the Linux gfortran 11.5 build fails identically, so it is an upstream defect of that library input.
+    - Validation: 27 tests in `tests/test_runatomExe.py` pass. The s channel of every case with one (Ex, O, Cu, Ba, Au, Pb) is compared through D/Q block eigenvalues only: projectors differ by up to 1.8e-1 (Pb), 1e-2 (Au), 8e-5 (O) while block eigenvalues agree to < 1e-9 relative (BENIGN_BUG). `npf`/`ptryc` are uninitialised in the file unless an iptype = 2 projector exists (Au gave 32759 against 0 in the reference), so they are compared only then.
 
 ## 8. Packaging
 
