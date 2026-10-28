@@ -1,0 +1,6 @@
+compiler: GNU Fortran (Rev6, Built by MSYS2 project) 16.2.0
+flags: -O1 -std=legacy -fallow-argument-mismatch -static
+runatom.exe: Source/*.f + patches/0001-gfortran-intrinsic-idate.patch; imports: KERNEL32.dll, api-ms-win-crt-convert-l1-1-0.dll, api-ms-win-crt-environment-l1-1-0.dll, api-ms-win-crt-filesystem-l1-1-0.dll, api-ms-win-crt-heap-l1-1-0.dll, api-ms-win-crt-locale-l1-1-0.dll, api-ms-win-crt-math-l1-1-0.dll, api-ms-win-crt-private-l1-1-0.dll, api-ms-win-crt-runtime-l1-1-0.dll, api-ms-win-crt-stdio-l1-1-0.dll, api-ms-win-crt-string-l1-1-0.dll, api-ms-win-crt-time-l1-1-0.dll, api-ms-win-crt-utility-l1-1-0.dll
+reform.exe: Utils/reform.f (unmodified); imports: KERNEL32.dll, api-ms-win-crt-convert-l1-1-0.dll, api-ms-win-crt-environment-l1-1-0.dll, api-ms-win-crt-filesystem-l1-1-0.dll, api-ms-win-crt-heap-l1-1-0.dll, api-ms-win-crt-locale-l1-1-0.dll, api-ms-win-crt-math-l1-1-0.dll, api-ms-win-crt-private-l1-1-0.dll, api-ms-win-crt-runtime-l1-1-0.dll, api-ms-win-crt-stdio-l1-1-0.dll, api-ms-win-crt-string-l1-1-0.dll, api-ms-win-crt-time-l1-1-0.dll, api-ms-win-crt-utility-l1-1-0.dll
+runatom.exe sha256: 1bdaf54d4e1af5a7783b15ab01f32299e3a916b589d373ffa09d6c2268063167
+reform.exe sha256: ce2265e70ccdac4eacd7eea002a0cb60fbacca8a9739c9618941fab4e5ca7618
