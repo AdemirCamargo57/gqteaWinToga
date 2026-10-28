@@ -1077,14 +1077,18 @@ Workflow:
 2. Start from a library case (**Import library case...**: the `Work` folder of USPP holds tested inputs for 45 elements) or from the Ti example loaded when the window opens.
 3. Edit the tabs **All-electron**, **Pseudopotential** and **Tests**. Type values separated by spaces; the tool writes them in the fixed columns `runatom` reads, so spacing does not matter.
 4. **Check** runs every test that `runatom` makes before it starts. **Run** writes the inputs and runs, in order: the all-electron reference, the pseudopotential generation and, for each test, the all-electron test configuration and the transferability test.
-   **Save inputs** writes the checked input files to the job folder without running. **Import .adat file...** loads one all-electron or generation input into its tab (a test input is refused, with an explanation). The **Also write a Makefile (to run the case by hand under Linux/WSL)** switch writes a Makefile for running the case outside the window.
+   **Save inputs** writes the checked input files to the job folder without running. **Import .adat file...** loads one all-electron or generation input into its tab (a test input is refused, with an explanation). The **Also write a Makefile (to run the case by hand under Linux/WSL)** switch writes a Makefile for running the case outside the window. The Makefile assumes a USPP source tree: the job folder three levels below the tree's root (`ROOT=../../..`) and the program built there as `Bin/runatom.x`.
 5. Read the **Results** tab (below). **Open .out** shows the full report of a stage, with its plots of log derivatives, wavefunctions and Q functions.
+
+Every run first deletes the output files of the previous run in the job folder, so nothing shown or left there comes from an earlier run. If a stage fails, an error dialog names it; the **Results** tab still shows the stages that finished, followed by `Stopped at <stage>: <reason>`, and **Open .out** opens the report of the stage that failed. The formatted file for CPMD is written right after the generation stage, so a transferability test that fails does not hide the new pseudopotential: the `.uspp` file and its formatted copy stay in the folder.
 
 Fields (see also `Doc/INPUT_AE`, `Doc/INPUT_GEN` and `Doc/TUTORIAL` in the USPP library):
 
 - **All-electron**: print and plot switches and the logarithmic-derivative window; convergence settings (`thresh`, `tol`, `damp`, `maxit`); the nuclear charge `z`, the ionic charge `xion` and the functional `exfact` (0 CA, -1 Wigner, -2 HL, -3 GL, 1 BLYP, 2 B88, 3 BP86, 4 PW91, 5 PBE); the radial mesh (`rmax`, `aasf`, `bbsf`) and `irel`; and one shell per line as `nnlz wwnl ee` (for example `320 1.0 -0.2` is 3d, one electron, starting guess -0.2 Ry).
 - **Pseudopotential**: numbers of core and valence states and angular momenta; the core-correction switch and radii (`ifpcor`, `rinner`, `rpcor`); the local-potential radius `rcloc` and one `rc` per l; one projector per line (`l keyee eeread iptype`, plus `npf ptryc` when some projector has `iptype` 2); the local channel; the Q-function settings (`ifqopt nqf qtryc`) and Q constraints.
 - **Tests**: one test per line as `name xion nnlz=occupation ...`. Shells not listed keep their occupation from the generation.
+
+What a test inherits. A test you type or change takes everything except its name, `xion` and occupations from the other tabs: its all-electron stage uses the **All-electron** tab (print and plot switches, convergence settings, functional, mesh, shells and their `ee` guesses), and its test stage uses the **Pseudopotential** tab's controls (`ifprt`, `ilogd`, the logarithmic-derivative window, `thresh tol damp maxit`), its Bessel line and its partition (`ncores nvales nang`). A test imported with a library case keeps the library's own all-electron and test inputs instead (several library cases tune `damp`, `maxit` or the `ee` guesses per test and need them to converge), as long as its row on the **Tests** tab and the generation's shell list are unchanged.
 
 Rules worth knowing:
 
@@ -1093,7 +1097,8 @@ Rules worth knowing:
 - File names are limited to 40 characters, so keep the symbol and the configuration names short.
 - A large q-matrix eigenvalue gives a "mild" (above 5) or "severe" (above 20) warning, and `runatom` stops above 50.
 - If a run reports negative densities, reduce `rinner` or add Q constraints.
-- If a test does not converge, lower `damp` to 0.1-0.2.
+- If a test does not converge ("potential could not be converged"), lower `damp`, the third value of the **thresh tol damp maxit** field, to 0.1-0.2: on the **All-electron** tab when the test's all-electron stage fails, on the **Pseudopotential** tab when its transferability-test stage fails. (An unchanged imported library test uses its own values; see *What a test inherits*.)
+- The CPMD file name `<symbol>_ps_formatted.uspp` may have at most 36 characters, the limit of `reform`; **Check** reports a longer one.
 
 Results tab:
 
@@ -1102,29 +1107,40 @@ Results tab:
 - the table of all-electron against pseudopotential eigenvalues, with every difference above 1 mRy flagged;
 - the ghost-state check;
 - a summary of the `.uspp` file written;
-- the CPMD line to use with the formatted pseudopotential.
+- the CPMD line to use with the formatted pseudopotential, or why no formatted file was written;
+- after a failure, `Stopped at <stage>: <reason>`.
 
 Files written in the job folder:
 
-- `<symbol>_ae_<config>.adat`, `.out`, `.ae` - all-electron run;
-- `<symbol>_ps.adat`, `.out`, `.uspp` - generation; the `.uspp` file is the pseudopotential (binary);
+- `<symbol>_ae_<config>.adat`, `.out`, `.ae`, `.atwf`, `.logd` - all-electron run;
+- `<symbol>_ps.adat`, `.out`, `.uspp`, `.atwf`, `.logd` - generation; the `.uspp` file is the pseudopotential (binary);
 - `<symbol>_ps_formatted.uspp` - the same pseudopotential as a formatted text file, for CPMD;
-- `<symbol>_test_<name>.adat`, `.out` - transferability tests.
+- `<symbol>_ae_<name>.adat`, `.out`, `.ae`, `.atwf`, `.logd` - all-electron run of each test configuration;
+- `<symbol>_test_<name>.adat`, `.out`, `.atwf`, `.logd` - transferability tests.
+
+The `.atwf` files hold the wavefunctions for plotting and the `.logd` files the logarithmic derivatives.
 
 ##### Using the pseudopotential in CPMD
 
-CPMD reads the formatted file, which `reform.exe` (also shipped with the program) writes after a successful generation. Put `<symbol>_ps_formatted.uspp` in the CPMD run folder or in the folder named by `PP_LIBRARY_PATH`, and in the `&ATOMS` section give the species line
+CPMD reads the formatted file, which `reform.exe` (also shipped with the program) writes right after the generation stage. In the `&ATOMS` section, the species line is followed, as for every species, by the `LMAX` line and then the number of atoms and their coordinates:
 
 ```
 *<symbol>_ps_formatted.uspp FORMATTED
+   LMAX=D
+   <number of atoms>
+   <coordinates, one atom per line>
 ```
 
-The Results tab prints this line with the actual file name.
+- `LMAX` is `nang` - 1 of the generation: s, p and d projectors (`nang` = 3) give `LMAX=D`.
+- The `&DFT` functional must be the one the pseudopotential was generated with (`exfact`): for example `FUNCTIONAL PBE` for `exfact` 5.
+- Put the file in the CPMD run directory or in CPMD's pseudopotential folder, named by the environment variable `CPMD_PP_LIBRARY_PATH` or `PP_LIBRARY_PATH` depending on the CPMD version; see your CPMD version's manual.
+
+The Results tab prints the species line with the actual file name.
 
 Limitations:
 
 - Reference wavefunctions taken from another configuration (`keyee` < 0), Dirac generation (`irel` 1) and export to UPF are not supported.
-- Library cases whose transferability tests use a different shell list from the generation input cannot be edited as tests in the window. The window names them when you import them. These tests are not loaded into the window (the status line names them) and are not run when you press **Run**; the library's own files for them stay in the case folder.
+- Library cases whose transferability tests use a different shell list from the generation input cannot be edited as tests in the window. These tests are not loaded into the window (the status line names them when you import the case) and are not run when you press **Run**; the library's own files for them stay in the case folder.
 - A few cases of the USPP library are defective as shipped (for example `023-V`, `041-Nb` and `034-Se`); they are listed in `third_party/uspp-736/PROVENANCE.md`.
 
 ### Structural Tools

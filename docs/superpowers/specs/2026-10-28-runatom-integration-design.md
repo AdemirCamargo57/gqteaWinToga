@@ -260,6 +260,14 @@ The build script copies `Source/` to a temporary folder, applies the patch and c
   | `runtime_error` | any other non-zero status | stderr tail |
   | `missing_output` | status 0 but an expected file is absent | — |
 
+**As implemented** (differences from the design above):
+
+- There is no default job folder: the user chooses one (**Browse...**), and Run refuses to start without it.
+- The stage timeout is fixed at 120 s (`DEFAULT_STAGE_TIMEOUT`); it is not exposed in the window.
+- The button that runs the checks is named **Check**.
+- The window runs `runatomRunner.run_case_job`, not `run_job`. It first deletes every product of every planned stage and the formatted CPMD file. It then runs reform right after the generation stage. A stage error ends the job and is returned with the stages done so far; it is not raised.
+- A failed transferability test therefore keeps the generation results, the `.uspp` file and its CPMD formatted copy. Results shows the completed stages and then `Stopped at <stage>: <reason>`. `run_job` remains for the tests and the benchmark.
+
 ## 6. Output processing
 
 After each stage, the runner calls `parse_out`. The Results tab shows:

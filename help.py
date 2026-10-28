@@ -2473,17 +2473,37 @@ WORKFLOW
 5. Results shows each stage's time, warnings, the all-electron vs pseudo
    eigenvalue table (differences above 1 mRy are flagged), and a ghost-state
    check. Open .out shows the full report with its plots of log derivatives,
-   wavefunctions and Q functions.
+   wavefunctions and Q functions. If a stage fails, Results still shows the
+   stages that finished, then "Stopped at <stage>: <reason>", and Open .out
+   opens the failed stage's report. A failed transferability test keeps the
+   new pseudopotential and its CPMD file: they are written right after the
+   generation stage. Every run first deletes the output files of the previous
+   one, so nothing in the folder is left over from an earlier run.
 
 FILES (in the job folder)
-<symbol>_ae_<config>.adat/.out/.ae   all-electron run
-<symbol>_ps.adat/.out/.uspp          generation; .uspp is the pseudopotential
-                                     (binary, gfortran little-endian records)
+<symbol>_ae_<config>.adat/.out/.ae/.atwf/.logd   all-electron run
+<symbol>_ps.adat/.out/.uspp/.atwf/.logd          generation; .uspp is the
+                                     pseudopotential (binary, gfortran
+                                     little-endian records)
 <symbol>_ps_formatted.uspp           the same pseudopotential, formatted, for
-                                     CPMD (written by USPP's reform). In the
-                                     CPMD input, &ATOMS line:
-                                       *<symbol>_ps_formatted.uspp FORMATTED
-<symbol>_test_<name>.adat/.out       transferability test
+                                     CPMD (written by USPP's reform)
+<symbol>_ae_<name>.adat/.out/.ae/.atwf/.logd     all-electron run of a test
+<symbol>_test_<name>.adat/.out/.atwf/.logd       transferability test
+.atwf holds the wavefunctions for plotting, .logd the logarithmic derivatives.
+
+USING THE FILE IN CPMD
+In &ATOMS, as for every species, the species line is followed by the LMAX line
+and then the number of atoms and their coordinates:
+  *<symbol>_ps_formatted.uspp FORMATTED
+   LMAX=D
+   <number of atoms>
+   <x y z of each atom>
+LMAX is nang - 1 of the generation (s, p and d projectors: nang = 3, LMAX=D).
+The &DFT functional must be the one the pseudopotential was generated with
+(exfact), e.g. FUNCTIONAL PBE for exfact 5. Put the file in the run directory
+or in CPMD's pseudopotential folder (environment variable CPMD_PP_LIBRARY_PATH
+or PP_LIBRARY_PATH, depending on the CPMD version; see your CPMD version's
+manual).
 
 FIELDS (see also Doc/INPUT_AE, Doc/INPUT_GEN and Doc/TUTORIAL of USPP)
 All-electron:  ifprt ifplw ilogd; rlogd emin emax nnt; thresh tol damp maxit;
@@ -2495,7 +2515,15 @@ Pseudopotential: ncores nvales nang; Bessel-basis ghost check; keyps (3)
                l keyee eeread iptype; npf ptryc (when some iptype is 2);
                lloc keyee eloc iploctype; ifqopt nqf qtryc; Q constraints.
 Tests:         one per line: name xion nnlz=occupation ...  Shells not listed
-               keep the generation occupation.
+               keep the generation occupation. A test you add or change takes
+               everything else from the other tabs: its all-electron stage
+               uses the All-electron tab (controls, functional, mesh, shells
+               and their ee guesses) and its test stage uses the
+               Pseudopotential tab's ifprt and ilogd, rlogd emin emax nnt,
+               thresh tol damp maxit, Bessel line and ncores nvales nang.
+               A test imported with a library case keeps the library's own
+               all-electron and test inputs (damp, maxit, ee, ...) as long as
+               its row and the generation's shell list are unchanged.
 
 RULES WORTH KNOWING
 - GGA functionals (exfact 1-5) need ifqopt = 3; runatom refuses -1, 0, 1 and 2,
@@ -2506,7 +2534,13 @@ RULES WORTH KNOWING
 - A large q-matrix eigenvalue gives a "mild" (> 5) or "severe" (> 20) warning;
   runatom stops above 50.
 - If a run reports negative densities, reduce rinner or add Q constraints.
-- If a test does not converge, lower damp to 0.1-0.2.
+- If a test does not converge ("potential could not be converged"), lower damp,
+  the third value of "thresh tol damp maxit", to 0.1-0.2: on the All-electron
+  tab when the test's all-electron stage fails, on the Pseudopotential tab
+  when its test stage fails (a library test changed on the Tests tab takes
+  these values from the tabs).
+- The CPMD file name <symbol>_ps_formatted.uspp may have at most 36 characters
+  (reform's limit).
 
 Not supported: reference wavefunctions from another configuration (keyee < 0),
 Dirac generation (irel 1), UPF export.

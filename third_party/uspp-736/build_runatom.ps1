@@ -1,5 +1,7 @@
 <#
-Builds bin\runatom.exe from the unmodified USPP 7.3.6 source in Source\.
+Builds bin\runatom.exe and bin\reform.exe from the unmodified USPP 7.3.6 source
+(Source\*.f for runatom, Utils\reform.f for reform, the converter that writes the
+formatted pseudopotential CPMD reads).
 
 Needs MSYS2 UCRT64 with gcc-fortran and binutils (see PROVENANCE.md).
 The idate patch is applied to a temporary copy; Source\ is never changed.
