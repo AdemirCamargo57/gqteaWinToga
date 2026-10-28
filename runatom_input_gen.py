@@ -221,37 +221,41 @@ class RunatomGenerator:
         self._cancel = threading.Event()
         self._set_busy(True, f"Running {len(stages)} stages...")
         loop = asyncio.get_running_loop()
+        message = "Run ended"
         try:
             results = await asyncio.to_thread(rr.run_job, rr.runatom_command(exe), stages, folder,
                                               self._progress_reporter(loop), self._cancel)
+            stem = ri.file_stems(case)["ps"]
+            self._last_out = folder / f"{stem}.out"
+            try:
+                uspp, note = ro.read_uspp(folder / f"{stem}.uspp"), ""
+            except (OSError, ValueError) as exc:
+                uspp, note = None, f"\n\nThe pseudopotential file could not be read back: {exc}"
+            note += await self._write_cpmd_file(case, folder, f"{stem}.uspp")
+            text = ro.job_summary([(r.stage.label, r.seconds, r.report) for r in results], uspp) + note
+            if not self._closed:
+                self.results_text.value = text
+                self.tabs.current_tab = len(TAB_FIELDS)
+            message = f"Finished: {len(results)} stages in {sum(r.seconds for r in results):.1f} s"
         except rr.RunatomCancelled:
-            self._set_busy(False, "Run cancelled; the stage that was running left no output.")
-            return
+            message = "Run cancelled; the stage that was running left no output."
         except rr.RunatomError as exc:
-            self._set_busy(False, f"Stopped at: {exc.stage_label}")
+            message = f"Stopped at: {exc.stage_label}"
             await self._error("runatom stopped", f"{exc}\n\nThe .out file of that stage is in {folder}.")
-            return
         except OSError as exc:
-            self._set_busy(False, "runatom could not be started")
+            message = "runatom could not be started"
             await self._error("runatom could not be started", str(exc))
-            return
-        stem = ri.file_stems(case)["ps"]
-        self._last_out = folder / f"{stem}.out"
-        try:
-            uspp, note = ro.read_uspp(folder / f"{stem}.uspp"), ""
-        except (OSError, ValueError) as exc:
-            uspp, note = None, f"\n\nThe pseudopotential file could not be read back: {exc}"
-        note += await self._write_cpmd_file(case, folder, f"{stem}.uspp")
-        text = ro.job_summary([(r.stage.label, r.seconds, r.report) for r in results], uspp) + note
-        if not self._closed:
-            self.results_text.value = text
-            self.tabs.current_tab = len(TAB_FIELDS)
-        self._set_busy(False, f"Finished: {len(results)} stages in {sum(r.seconds for r in results):.1f} s")
+        except Exception as exc:        # nothing may escape the handler or leave the window busy
+            message = "The run failed unexpectedly"
+            await self._error("runatom run failed unexpectedly", f"{type(exc).__name__}: {exc}")
+        finally:
+            self._set_busy(False, message)
 
     async def _write_cpmd_file(self, case, folder: Path, uspp_name: str) -> str:
         """Write the formatted copy for CPMD with reform.exe; return the Results text about it."""
         typed = (self.exe_input.value or "").strip()
-        reform = rr.find_reform(str(Path(typed).with_name("reform.exe")) if typed else None)
+        sibling = str(Path(typed).with_name("reform.exe")) if typed and Path(typed).name else None
+        reform = rr.find_reform(sibling)
         if reform is None:
             return ("\n\nreform.exe was not found, so no formatted file for CPMD was written "
                     "(the binary .uspp is complete).")

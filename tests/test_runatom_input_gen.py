@@ -148,6 +148,28 @@ def test_progress_is_thinned_and_marshalled(tmp_path):
     assert 1 <= len(posted) <= 3 and posted[0][0]["message"] == "starting"
 
 
+def test_an_unexpected_error_never_leaves_the_window_busy(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise KeyError("unexpected")
+    monkeypatch.setattr(gen.rr, "find_runatom", lambda explicit=None: "runatom.exe")
+    monkeypatch.setattr(gen.rr, "run_job", boom)
+    w, _ = _window(tmp_path)
+    asyncio.run(w.on_run(None))
+    assert not w._busy and w.run_button.enabled and not w.activity.running
+    assert w.errors and "unexpected" in w.errors[0][1]
+
+
+def test_a_bare_drive_as_runatom_path_does_not_break_the_cpmd_step(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_RUNATOM_MODE", "ok")
+    monkeypatch.setattr(gen.rr, "find_runatom", lambda explicit=None: "runatom.exe")
+    monkeypatch.setattr(gen.rr, "runatom_command", lambda exe: FAKE)
+    monkeypatch.setattr(gen.rr, "find_reform", lambda explicit=None: None)
+    w, _ = _window(tmp_path)
+    w.exe_input.value = "C:\\"
+    asyncio.run(w.on_run(None))
+    assert "Pseudopotential generation: finished" in w.results_text.value and not w._busy
+
+
 def test_closing_the_window_cancels_a_run(tmp_path):
     w, _ = _window(tmp_path)
     w._cancel = threading.Event()
