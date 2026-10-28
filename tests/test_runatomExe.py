@@ -145,5 +145,19 @@ def test_unreadable_library_input_is_reported_as_an_input_problem(tmp_path):
     assert info.value.kind == "input_format"
 
 
+@pytest.mark.parametrize("folder", ["020-Ca/020-Ca-gpw-nsp-campos", "078-Pt/078-Pt-gpw-n-campos",
+                                    "029-Cu/029-Cu-gpw-n-campos"])
+def test_imported_library_case_runs_from_the_window_fields(folder, tmp_path):
+    # These cases tune damp, maxit, ee or the test input per test; the window's fields hold only
+    # name, xion and occupations, so the imported inputs must be attached back to run at all.
+    imported = ri.read_case_folder(LIBRARY_DIR / folder)
+    case = ri.attach_imported_tests(ri.case_from_fields(ri.case_to_fields(imported)), imported)
+    assert ri.check_case(case) == []
+    ri.write_case(case, tmp_path)
+    stages = rr.plan_stages(case)
+    results = rr.run_job(rr.runatom_command(EXE), stages, tmp_path)
+    assert len(results) == len(stages) and stages[-1].kind == "test"
+
+
 def test_every_reference_case_is_fast(runs):
     assert max(seconds for _, _, seconds in runs.values()) < 10.0

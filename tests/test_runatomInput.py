@@ -163,6 +163,21 @@ class TestCaseFolders:
         assert all(t.occupations == {} for t in own)
         assert ri.test_ae_input(case, own[0]) is own[0].ae_input
 
+    def test_a_tuned_occupation_test_keeps_its_all_electron_input(self):
+        # Ca test 1: the same shells as the generation, but its own damp (and title)
+        case = ri.read_case_folder(LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos")
+        test = next(t for t in case.tests if t.name == "1")
+        assert test.ae_input is not None and test.test_input is not None
+        assert test.ae_input.controls.damp != case.ae.controls.damp
+        assert ri.test_ae_input(case, test) is test.ae_input
+        assert "1" not in ri.unrepresentable_tests(case)
+        rows = [line.split()[0] for line in ri.case_to_fields(case)["tests"].splitlines()]
+        assert "1" in rows
+
+    def test_an_untuned_test_stays_derived(self):
+        (test,) = _ti_case().tests
+        assert test.ae_input is None
+
     def test_written_case_reads_back(self, tmp_path):
         case = _ti_case()
         written = ri.write_case(case, tmp_path)
@@ -177,6 +192,7 @@ class TestCaseFolders:
         text = ri.makefile_text(_ti_case())
         assert "ATOM= ti" in text and "CFG= s2d1" in text and "CFT1= s2d2" in text
         assert "${PROG} ${TST1}.adat" in text
+        assert "# It assumes a USPP source tree" in text and "Bin/runatom.x" in text.split("ATOM=")[0]
 
 
 class TestFields:
@@ -195,10 +211,38 @@ class TestFields:
                              ids=lambda p: p.name)
     def test_fields_round_trip_every_library_case(self, folder):
         case = ri.read_case_folder(folder)
+        skipped = set(ri.unrepresentable_tests(case))
+        kept = [t for t in case.tests if t.name not in skipped]
         expected = ri.replace(
             case, ps=ri.replace(case.ps, controls=ri.replace(case.ps.controls, title=case.ae.controls.title)),
-            tests=[ri.replace(t, test_input=None) for t in case.tests if t.ae_input is None])
-        assert ri.case_from_fields(ri.case_to_fields(case)) == expected
+            tests=[ri.replace(t, test_input=None, ae_input=None) for t in kept])
+        from_fields = ri.case_from_fields(ri.case_to_fields(case))
+        assert from_fields == expected                  # the fields hold name, xion and occupations only
+        # the window adds the library's own inputs back to every unchanged row
+        assert ri.attach_imported_tests(from_fields, case).tests == kept
+
+    def test_attached_tests_keep_the_library_inputs_only_while_unchanged(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos")
+        fields = ri.case_to_fields(case)
+        rows = fields["tests"].splitlines()
+        first = rows[0].split()
+        rows[0] = "  ".join([first[0], "0.5"] + first[2:])              # xion changed in row 1 only
+        changed = ri.attach_imported_tests(ri.case_from_fields(dict(fields, tests="\n".join(rows))), case)
+        assert changed.tests[0].ae_input is None and changed.tests[0].test_input is None
+        assert changed.tests[1:] == case.tests[1:]
+
+    def test_no_library_inputs_without_an_import_or_after_a_shell_change(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos")
+        derived = ri.case_from_fields(ri.case_to_fields(case))
+        assert ri.attach_imported_tests(derived, None) == derived
+        other_shells = ri.replace(derived, ae=ri.replace(derived.ae, shells=derived.ae.shells[:-1]))
+        assert ri.attach_imported_tests(other_shells, case) == other_shells
+
+    def test_tests_with_another_shell_list_are_not_attached(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
+        own = next(t for t in case.tests if t.name in ri.unrepresentable_tests(case))
+        typed = ri.replace(ri.case_from_fields(ri.case_to_fields(case)), tests=[ri.TestConfig(own.name, own.xion, {})])
+        assert ri.attach_imported_tests(typed, case).tests[0].ae_input is None
 
     def test_tests_with_their_own_shell_list_are_named_not_lost_silently(self):
         case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
@@ -244,6 +288,19 @@ class TestChecks:
     def test_long_file_names_are_refused(self):
         case = ri.replace(_ti_case(), generation_name="a" * 40)
         assert any("40 characters" in p for p in ri.check_case(case))
+
+    def test_formatted_file_name_must_fit_reform(self):
+        case = ri.replace(_ti_case(), symbol="x" * 19)        # x..x_ps_formatted.uspp: 37 characters
+        problems = ri.check_case(case)
+        assert len(problems) == 1 and "36" in problems[0] and "_formatted.uspp" in problems[0]
+        assert ri.check_case(ri.replace(_ti_case(), symbol="x" * 18)) == []
+
+    def test_a_tuned_test_is_checked_on_its_own_input(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos")
+        test = next(t for t in case.tests if t.ae_input is not None)
+        bad = ri.replace(test, ae_input=ri.replace(test.ae_input, xion=test.ae_input.xion + 1.0))
+        problems = ri.check_case(ri.replace(case, tests=[bad]))
+        assert any(p.startswith(f"Test {test.name}:") and "add up to" in p for p in problems)
 
     def test_unknown_shell_in_a_test(self):
         case = _ti_case()

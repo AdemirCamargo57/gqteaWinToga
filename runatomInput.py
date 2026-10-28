@@ -445,8 +445,8 @@ def read_case_folder(folder) -> CaseInputs:
             raise AdatError(exc.line_number, f"{name}: {exc}") from None
 
     ae, ps = load(f"{symbol}_ae_{generation}.adat"), load(f"{symbol}_ps.adat")
+    case = CaseInputs(symbol, generation, ae, ps, [])
     reference = {s.nnlz: s.wwnl for s in ae.shells}
-    tests = []
     for key in test_keys:
         name = variables[key]
         if not (folder / f"{symbol}_test_{name}.adat").exists():
@@ -455,11 +455,40 @@ def read_case_folder(folder) -> CaseInputs:
         test_file = load(f"{symbol}_test_{name}.adat")
         if [s.nnlz for s in test_ae.shells] != [s.nnlz for s in ae.shells]:
             # 12 library cases test configurations with another shell list: keep their own input
-            tests.append(TestConfig(name, test_ae.xion, {}, test_file, test_ae))
+            case.tests.append(TestConfig(name, test_ae.xion, {}, test_file, test_ae))
             continue
         changed = {s.nnlz: s.wwnl for s in test_ae.shells if s.wwnl != reference[s.nnlz]}
-        tests.append(TestConfig(name, test_ae.xion, changed, test_file))
-    return CaseInputs(symbol, generation, ae, ps, tests)
+        test = TestConfig(name, test_ae.xion, changed, test_file)
+        if test_ae != test_ae_input(case, test):
+            # the library tunes damp, maxit, ee, rlogd or the title per test: keep its own input
+            test.ae_input = test_ae
+        case.tests.append(test)
+    return case
+
+
+def _same_shells(a: AEInput, b: AEInput) -> bool:
+    return [s.nnlz for s in a.shells] == [s.nnlz for s in b.shells]
+
+
+def attach_imported_tests(case: CaseInputs, imported: Optional[CaseInputs]) -> CaseInputs:
+    """`case` with every test still as imported replaced by the imported test.
+
+    The window's Tests field holds only name, xion and occupations. A library test
+    also carries its own all-electron and test inputs (damp, maxit, eigenvalue
+    guesses...), which several library cases need to converge. A test keeps them
+    while the generation's shell list and the test's xion and occupations are
+    unchanged; tests the user added or changed are derived from the tabs.
+    """
+    if imported is None or not _same_shells(case.ae, imported.ae):
+        return case
+    skipped = set(unrepresentable_tests(imported))
+    library = {t.name: t for t in imported.tests if t.name not in skipped}
+    tests = []
+    for test in case.tests:
+        own = library.get(test.name)
+        unchanged = own is not None and own.xion == test.xion and own.occupations == test.occupations
+        tests.append(own if unchanged else test)
+    return replace(case, tests=tests)
 
 
 def makefile_text(case: CaseInputs) -> str:
@@ -484,6 +513,8 @@ def makefile_text(case: CaseInputs) -> str:
                   f"\t${{PROG}} ${{TST{k}}}.adat ${{TST{k}}}.out ${{AET{k}}}.ae ${{TST{k}}}.atwf ${{TST{k}}}.logd ${{PSP}}.uspp"]
     rules += ["", "clean:", "\t- rm *.out *.ae *.atwf *.logd *.uspp", ""]
     header = ["# Written by gqteaWinToga (Vanderbilt USPP Generator) for USPP 7.3.6.",
+              "# It assumes a USPP source tree: this folder three levels below its root",
+              "# (ROOT=../../..) and runatom built there as Bin/runatom.x.",
               "# make: generate the pseudopotential; make test: run the transferability tests."]
     return "\n".join(header + head + names + rules)
 
@@ -597,15 +628,16 @@ def case_to_fields(case: CaseInputs) -> Dict[str, str]:
     fields = {"symbol": case.symbol, "generation": case.generation_name, "title": case.ae.controls.title}
     fields.update(ae_fields(case.ae))
     fields.update(ps_fields(case.ps))
+    skipped = set(unrepresentable_tests(case))
     fields["tests"] = "\n".join(          # only occupation changes fit this field
         "  ".join([t.name, _number(t.xion)] + [f"{n}={_number(w)}" for n, w in t.occupations.items()])
-        for t in case.tests if t.ae_input is None)
+        for t in case.tests if t.name not in skipped)
     return fields
 
 
 def unrepresentable_tests(case: CaseInputs) -> List[str]:
-    """Tests whose all-electron input has its own shell list: the Tests field cannot hold them."""
-    return [t.name for t in case.tests if t.ae_input is not None]
+    """Tests whose all-electron input has another shell list: the Tests field cannot hold them."""
+    return [t.name for t in case.tests if t.ae_input is not None and not _same_shells(t.ae_input, case.ae)]
 
 
 def _values(fields: Dict[str, str], key: str):
@@ -783,6 +815,10 @@ def check_case(case: CaseInputs) -> List[str]:
     if len(longest) + len(".atwf") > MAX_FORTRAN_NAME:
         return [f"The file name {longest}.atwf is longer than {MAX_FORTRAN_NAME} characters, which "
                 "runatom cannot read; shorten the symbol or the configuration names."]
+    formatted = f"{stems['ps']}_formatted.uspp"         # runatomRunner.formatted_name
+    if len(formatted) > MAX_REFORM_NAME:
+        return [f"The CPMD file name {formatted} is longer than {MAX_REFORM_NAME} characters, which "
+                "reform cannot read; shorten the element symbol."]
     try:      # check the values runatom will read, after the column-exact round trip
         ae = parse_adat(format_adat(case.ae))
         ps = parse_adat(format_adat(case.ps))

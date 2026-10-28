@@ -108,7 +108,8 @@ class RunatomGenerator:
 
     # --- widgets <-> fields ------------------------------------------------
     def _collect_case(self) -> ri.CaseInputs:
-        return ri.case_from_fields({key: widget.value or "" for key, widget in self.inputs.items()})
+        fields = {key: widget.value or "" for key, widget in self.inputs.items()}
+        return ri.attach_imported_tests(ri.case_from_fields(fields), self._imported_case)
 
     def _fill(self, fields):
         for key, text in fields.items():
@@ -124,11 +125,13 @@ class RunatomGenerator:
                 raise ValueError(f"{folder.name}: {exc}") from None
             self._show_status(LIBRARY_MISSING)
             return
+        self._imported_case = case
         self._fill(ri.case_to_fields(case))
         skipped = ri.unrepresentable_tests(case)
         note = (f" Tests with their own shell list were not imported: {', '.join(skipped)}."
                 if skipped else "")
-        self._show_status(f"Loaded {folder.name}. Test settings now follow the Pseudopotential tab.{note}")
+        self._show_status(f"Loaded {folder.name}. Its tests keep the library's own settings "
+                          f"while their row on the Tests tab is unchanged.{note}")
 
     def _update_exe_status(self, widget):
         exe = rr.find_runatom(self.exe_input.value)

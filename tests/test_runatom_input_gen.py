@@ -79,6 +79,19 @@ def test_collect_case_reads_the_widgets(tmp_path):
     assert w._collect_case() == ri.case_from_fields(ri.case_to_fields(case))
 
 
+def test_an_imported_case_keeps_its_tests_own_inputs_while_their_rows_are_unchanged(tmp_path):
+    w, _ = _window(tmp_path)
+    folder = LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos"
+    w._load_case(folder)
+    imported = ri.read_case_folder(folder)
+    assert "keep the library's own settings" in w.status_label.text
+    assert w._collect_case().tests == imported.tests
+    rows = w.inputs["tests"].value.splitlines()
+    w.inputs["tests"].value = "\n".join(rows[:-1] + [rows[-1] + "  999=0"])     # last row changed
+    tests = w._collect_case().tests
+    assert tests[:-1] == imported.tests[:-1] and tests[-1].ae_input is None and tests[-1].test_input is None
+
+
 def test_run_writes_inputs_runs_every_stage_and_shows_results(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_RUNATOM_MODE", "ok")
     monkeypatch.setenv("FAKE_REFORM_MODE", "ok")
