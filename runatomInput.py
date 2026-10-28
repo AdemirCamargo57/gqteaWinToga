@@ -117,5 +117,7 @@ def format_line(fmt: str, values: Sequence, label: str) -> List[str]:
     for start in range(0, max(len(values), 1), len(fields)):
         chunk = values[start:start + len(fields)]
         lines.append("".join(write_field(k, w, d, v) for (k, w, d), v in zip(fields, chunk)))
-    lines[0] = lines[0].ljust(max(LABEL_COLUMN, len(lines[0]) + 2)) + f"{label} ({fmt})"
+    full_width = sum(width for _, width, _ in fields)   # every column one line of the format reads
+    column = max(LABEL_COLUMN, full_width + 2, len(lines[0]) + 2)
+    lines[0] = lines[0].ljust(column) + f"{label} ({fmt})"
     return lines

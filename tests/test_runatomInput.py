@@ -79,6 +79,11 @@ class TestFormatLine:
         assert line.index("ifae") >= ri.LABEL_COLUMN
         assert ri.read_record(line, "6i5", 5) == [1, 0, 0, 0, 3]
 
+    def test_label_after_the_full_format_even_for_a_partial_record(self):
+        (line,) = ri.format_line("5f10.5", [1.0, 2.0], "rinner")
+        assert line.index("rinner") >= 52
+        assert ri.read_record(line, "5f10.5") == [1.0, 2.0, 0.0, 0.0, 0.0]
+
     def test_format_reversion_continues_on_a_new_line(self):
         values = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6]  # nang = 4: 7 rinner values, format 5f10.5
         lines = ri.format_line("5f10.5", values, "rinner")
