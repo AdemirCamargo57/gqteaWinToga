@@ -855,6 +855,13 @@ class TestCaseFolders:
         derived = ri.test_ae_input(case, test)
         assert {s.nnlz: s.wwnl for s in derived.shells}[320] == 2.0
 
+    def test_tests_with_their_own_shell_list_keep_their_input(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
+        own = [t for t in case.tests if t.ae_input is not None]
+        assert own, "expected at least one test with its own shell list"
+        assert all(t.occupations == {} for t in own)
+        assert ri.test_ae_input(case, own[0]) is own[0].ae_input
+
     def test_written_case_reads_back(self, tmp_path):
         case = _ti_case()
         written = ri.write_case(case, tmp_path)
@@ -1006,11 +1013,13 @@ class TestInput:
 
 @dataclass
 class TestConfig:
-    """A transferability test: the generation configuration with other occupations."""
+    """A transferability test: the generation configuration with other occupations,
+    or (library cases) a test configuration with its own shell list."""
     name: str
     xion: float
     occupations: Dict[int, float]                # nnlz -> electrons; others unchanged
     test_input: Optional[TestInput] = None       # None: derived from the generation input
+    ae_input: Optional[AEInput] = None           # its own all-electron input (other shells); wins over occupations
 
 
 @dataclass
@@ -1146,6 +1155,8 @@ def file_stems(case: CaseInputs) -> Dict[str, object]:
 
 
 def test_ae_input(case: CaseInputs, test: TestConfig) -> AEInput:
+    if test.ae_input is not None:
+        return test.ae_input
     shells = [replace(s, wwnl=test.occupations.get(s.nnlz, s.wwnl)) for s in case.ae.shells]
     return replace(case.ae, xion=test.xion, shells=shells)
 
@@ -1207,10 +1218,13 @@ def read_case_folder(folder) -> CaseInputs:
         if not (folder / f"{symbol}_test_{name}.adat").exists():
             continue
         test_ae = load(f"{symbol}_ae_{name}.adat")
+        test_file = load(f"{symbol}_test_{name}.adat")
         if [s.nnlz for s in test_ae.shells] != [s.nnlz for s in ae.shells]:
-            raise ValueError(f"test {name}: its shells differ from the generation configuration's")
+            # 12 library cases test configurations with another shell list: keep their own input
+            tests.append(TestConfig(name, test_ae.xion, {}, test_file, test_ae))
+            continue
         changed = {s.nnlz: s.wwnl for s in test_ae.shells if s.wwnl != reference[s.nnlz]}
-        tests.append(TestConfig(name, test_ae.xion, changed, load(f"{symbol}_test_{name}.adat")))
+        tests.append(TestConfig(name, test_ae.xion, changed, test_file))
     return CaseInputs(symbol, generation, ae, ps, tests)
 
 
@@ -1267,7 +1281,7 @@ git commit -m "feat(uspp): runatom input model, .adat writer/reader and library 
 - Produces:
   - `FORM_FIELDS: Dict[str, Tuple[label, kinds, multiline, hint]]` (kinds: string of `i`/`f`, `f*` = one or more floats, `s` = text, `t` = test rows);
   - `parse_line_values(text, kinds, name) -> list`, `parse_rows(text, kinds, name) -> List[list]`;
-  - `case_to_fields(case) -> Dict[str, str]`, `case_from_fields(fields) -> CaseInputs`, `ae_fields(ae)`, `ps_fields(ps)`;
+  - `case_to_fields(case) -> Dict[str, str]` (occupation-based tests only), `unrepresentable_tests(case) -> List[str]`, `case_from_fields(fields) -> CaseInputs`, `ae_fields(ae)`, `ps_fields(ps)`;
   - `radial_mesh_size(z, rmax, aasf, bbsf) -> int`;
   - `check_ae(ae) -> List[str]`, `check_ps(ps, ae) -> List[str]`, `check_case(case) -> List[str]`;
   - capacity constants `MAX_MESH` … `MAX_POLY_TERMS`, `XC_FUNCTIONALS`.
@@ -1295,8 +1309,13 @@ class TestFields:
         case = ri.read_case_folder(folder)
         expected = ri.replace(
             case, ps=ri.replace(case.ps, controls=ri.replace(case.ps.controls, title=case.ae.controls.title)),
-            tests=[ri.replace(t, test_input=None) for t in case.tests])
+            tests=[ri.replace(t, test_input=None) for t in case.tests if t.ae_input is None])
         assert ri.case_from_fields(ri.case_to_fields(case)) == expected
+
+    def test_tests_with_their_own_shell_list_are_named_not_lost_silently(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
+        skipped = ri.unrepresentable_tests(case)
+        assert skipped and all(name not in ri.case_to_fields(case)["tests"].split() for name in skipped)
 
 
 class TestChecks:
@@ -1463,10 +1482,15 @@ def case_to_fields(case: CaseInputs) -> Dict[str, str]:
     fields = {"symbol": case.symbol, "generation": case.generation_name, "title": case.ae.controls.title}
     fields.update(ae_fields(case.ae))
     fields.update(ps_fields(case.ps))
-    fields["tests"] = "\n".join(
+    fields["tests"] = "\n".join(          # only occupation changes fit this field
         "  ".join([t.name, _number(t.xion)] + [f"{n}={_number(w)}" for n, w in t.occupations.items()])
-        for t in case.tests)
+        for t in case.tests if t.ae_input is None)
     return fields
+
+
+def unrepresentable_tests(case: CaseInputs) -> List[str]:
+    """Tests whose all-electron input has its own shell list: the Tests field cannot hold them."""
+    return [t.name for t in case.tests if t.ae_input is not None]
 
 
 def _values(fields: Dict[str, str], key: str):
@@ -1653,7 +1677,7 @@ def check_case(case: CaseInputs) -> List[str]:
     problems += [f"Pseudopotential: {p}" for p in check_ps(ps, ae)]
     known = {s.nnlz for s in ae.shells}
     for test in case.tests:
-        unknown = sorted(set(test.occupations) - known)
+        unknown = sorted(set(test.occupations) - known) if test.ae_input is None else []
         if unknown:
             problems.append(f"Test {test.name}: shells {unknown} are not in the all-electron shell list.")
             continue
@@ -3525,7 +3549,10 @@ class RunatomGenerator:
                 raise ValueError(f"{folder.name}: {exc}") from None
             return
         self._fill(ri.case_to_fields(case))
-        self._show_status(f"Loaded {folder.name}. Test settings now follow the Pseudopotential tab.")
+        skipped = ri.unrepresentable_tests(case)
+        note = (f" Tests with their own shell list were not imported: {', '.join(skipped)}."
+                if skipped else "")
+        self._show_status(f"Loaded {folder.name}. Test settings now follow the Pseudopotential tab.{note}")
 
     def _update_exe_status(self, widget):
         exe = rr.find_runatom(self.exe_input.value)
