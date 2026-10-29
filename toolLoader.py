@@ -47,7 +47,6 @@ TOOL_TABS: Tuple[Tuple[str, Tuple[ToolSpec, ...]], ...] = (
         ToolSpec("ORCA Input Builder", "orca_input_builder", "ORCAInputBuilderUI"),
         ToolSpec("gqteaMD Input Builder", "gqteaMDinputBuilder", "GqteaMDInputBuilderUI"),
         ToolSpec("Gaussian Fukui Input Builder", "fukuiInputBuilder", "FukuiInputBuilderUI"),
-        ToolSpec("Vanderbilt USPP Generator (runatom)", "runatom_input_gen", "RunatomGenerator"),
     )),
     ("Structural", (
         ToolSpec("Radial Distribution Function", "radialDistribution", "RadialFunctionUI"),
@@ -65,6 +64,7 @@ TOOL_TABS: Tuple[Tuple[str, Tuple[ToolSpec, ...]], ...] = (
         ToolSpec("3D Molecular Viewer", "molecularViewer", "MolecularViewerUI"),
         ToolSpec("Plots", "plotter", "PlotterUI"),
         ToolSpec("Analysis of Fukui Functions", "fukuiFunctionAnalyze", "FukuiFunctionAnalyzeUI"),
+        ToolSpec("Vanderbilt USPP Generator (runatom)", "runatom_input_gen", "RunatomGenerator"),
         ToolSpec("Molecular Axis Alignment", "molecularAxisAlignment", "MolecularAxisAlignmentUI"),
         ToolSpec("Select Frames", "selectFrames", "SelectFramesUI"),
         ToolSpec("Frame selection by interatomic distance range", "rangeFramesSelection", "RangeFramesSelectionUI"),
@@ -105,11 +105,11 @@ def _frozen_build_imports():  # pragma: no cover - never called
     import bond, allBondAnalysis, bondAngle, allAnglesAnalysis, dihedralAngle
     import allDihedralAnalysis, hbond, MolGeomComparator
     import cpmdInput, spectraSH, collision, cpx_input_builder, orca_input_builder
-    import gqteaMDinputBuilder, fukuiInputBuilder, runatom_input_gen
+    import gqteaMDinputBuilder, fukuiInputBuilder
     import radialDistribution, meanResidenceTime_statistical, meanResidenceTime_classical
     import autocorrelationFunction, single_solute_solvent_box, mixtureSolventBox, sharedWallBox
     import classicalRate
-    import molecularViewer, plotter, fukuiFunctionAnalyze, molecularAxisAlignment
+    import molecularViewer, plotter, fukuiFunctionAnalyze, runatom_input_gen, molecularAxisAlignment
     import selectFrames, rangeFramesSelection, cpmdInputToXYZ, sh_geom_analyzer
     import cpTrajec2xyz, cpxForces, coordinateConverter, unitConverter
 

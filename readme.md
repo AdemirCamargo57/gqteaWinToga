@@ -7,7 +7,7 @@ interface built with [Toga](https://toga.readthedocs.io/) and collects several
 specialized tools for CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping, and
 trajectory analysis workflows.
 
-The current application title identifies the toolkit as **gQTEA-1.5.7 Molecular
+The current application title identifies the toolkit as **gQTEA-1.6.0 Molecular
 Analysis Toolkit**.
 
 ## Capabilities
@@ -34,7 +34,6 @@ distributions.
 - ORCA input builder
 - gqteaMD input builder
 - Gaussian Fukui input builder (one Gaussian 16 linked job: optimization of N, then `Geom=Check` single points on N+1 and N-1; plus a formchk script)
-- Vanderbilt USPP generator (runs `runatom`)
 
 ### Structural Analysis
 
@@ -58,6 +57,7 @@ distributions.
 - QTAIM topology analysis (QTAIM tab of the 3D molecular viewer) of the electron density from Gaussian `.fchk`/`.fch`: critical points (3,-3), (3,-1), (3,+1), (3,+3) with rho, Laplacian, Hessian eigenvalues, ellipticity and energy densities G, K, V, H; bond and ring paths; Poincare-Hopf check; text report; 3D view and Multiwfn-style 2D plane map, both exportable as images. Algorithms and defaults follow Multiwfn and are validated against Multiwfn 2026.7.15 (no external program at run time)
 - Natural transition orbitals (NTO tab of the 3D molecular viewer) of CIS/TDA/TD excited states from a Gaussian `.fchk`/`.fch` and the job's output (restricted and unrestricted): pair weights, hole and particle isosurfaces, cube files, an NTO `.fchk`, a text report and a GaussView-style UV-Vis spectrum of all states (f sticks and broadened ε, saved as JSON); Multiwfn's definition, validated against Multiwfn 2026.7.15 (no external program at run time)
 - CPMD energy plotting
+- Vanderbilt USPP generator (runs the bundled `runatom` to make ultrasoft pseudopotentials, with transferability tests and a formatted file for CPMD)
 - Molecular axis alignment
 - Frame selection
 - Frame selection by interatomic distance range

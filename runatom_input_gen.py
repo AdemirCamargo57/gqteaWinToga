@@ -1,4 +1,4 @@
-"""Inputs > Vanderbilt USPP Generator: prepare, check and run runatom (USPP 7.3.6).
+"""Tools > Vanderbilt USPP Generator: prepare, check and run runatom (USPP 7.3.6).
 
 The window only moves text between widgets and a dict of field values.
 runatomInput turns that dict into checked, column-exact input files,
