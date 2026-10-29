@@ -75,9 +75,26 @@ def find_runatom(explicit: Optional[str] = None) -> Optional[str]:
     return _find_program(explicit, ENV_VAR, "runatom.exe", VENDOR_EXE, ("runatom.exe", "runatom.x"))
 
 
+def library_dirs() -> List[Path]:
+    """Where the USPP input library (Work/) may be, most preferred first.
+
+    Frozen (PyInstaller onedir): <install dir>/third_party/uspp-736/Work, the
+    same under the bundle's data folder (_internal/ since PyInstaller 6), then
+    <bundle>/uspp/Work (the layout readme.md documents). From source: the
+    repository copy. Never relative to the current working directory."""
+    if not getattr(sys, "frozen", False):
+        return [VENDOR_DIR / "Work"]
+    install = Path(sys.executable).resolve().parent
+    bundle = Path(getattr(sys, "_MEIPASS", install))
+    relative = Path("third_party") / VENDOR_DIR.name / "Work"
+    candidates = [install / relative, bundle / relative, bundle / FROZEN_SUBDIR / "Work"]
+    return list(dict.fromkeys(candidates))
+
+
 def library_dir() -> Path:
-    bundle = _bundle_dir()
-    return bundle / "Work" if bundle is not None else VENDOR_DIR / "Work"
+    """The first existing library folder, or the preferred one when none exists."""
+    candidates = library_dirs()
+    return next((c for c in candidates if c.is_dir()), candidates[0])
 
 
 def runatom_command(exe: str) -> List[str]:

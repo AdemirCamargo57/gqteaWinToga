@@ -195,10 +195,54 @@ class TestFindRunatom:
         monkeypatch.setattr(sys, "frozen", True, raising=False)
         monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
         assert rr.find_runatom() == str(exe)
-        assert rr.library_dir() == tmp_path / rr.FROZEN_SUBDIR / "Work"
 
     def test_nothing_found(self, tmp_path, monkeypatch):
         monkeypatch.delenv(rr.ENV_VAR, raising=False)
         monkeypatch.setattr(rr, "VENDOR_EXE", tmp_path / "missing.exe")
         monkeypatch.setattr(rr.shutil, "which", lambda name: None)
         assert rr.find_runatom() is None
+
+
+class TestLibraryDir:
+    """The Work/ library folder the Import library case dialog opens in."""
+
+    @staticmethod
+    def _onedir(tmp_path, monkeypatch):
+        """A PyInstaller 6 onedir install: <app>/gqteaWinToga.exe, data in <app>/_internal."""
+        install = tmp_path / "gQTEA"
+        bundle = install / "_internal"
+        bundle.mkdir(parents=True)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(install / "gqteaWinToga.exe"))
+        monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+        return install, bundle
+
+    def test_from_source_it_is_the_repository_copy(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert rr.library_dir() == rr.VENDOR_DIR / "Work"
+        assert rr.library_dir().is_dir()
+
+    def test_frozen_prefers_the_install_folder(self, tmp_path, monkeypatch):
+        install, bundle = self._onedir(tmp_path, monkeypatch)
+        for root in (install / "third_party" / "uspp-736", bundle / "third_party" / "uspp-736", bundle / "uspp"):
+            (root / "Work").mkdir(parents=True)
+        assert rr.library_dir() == install / "third_party" / "uspp-736" / "Work"
+
+    def test_frozen_falls_back_to_the_bundle_data_folder(self, tmp_path, monkeypatch):
+        _, bundle = self._onedir(tmp_path, monkeypatch)
+        (bundle / "third_party" / "uspp-736" / "Work").mkdir(parents=True)
+        (bundle / "uspp" / "Work").mkdir(parents=True)
+        assert rr.library_dir() == bundle / "third_party" / "uspp-736" / "Work"
+
+    def test_frozen_keeps_the_documented_uspp_layout(self, tmp_path, monkeypatch):
+        _, bundle = self._onedir(tmp_path, monkeypatch)
+        (bundle / "uspp" / "Work").mkdir(parents=True)
+        assert rr.library_dir() == bundle / "uspp" / "Work"
+
+    def test_frozen_ignores_the_working_directory(self, tmp_path, monkeypatch):
+        install, _ = self._onedir(tmp_path, monkeypatch)
+        elsewhere = tmp_path / "elsewhere"
+        (elsewhere / "third_party" / "uspp-736" / "Work").mkdir(parents=True)
+        monkeypatch.chdir(elsewhere)
+        assert rr.library_dir() == install / "third_party" / "uspp-736" / "Work"
+        assert not rr.library_dir().exists()

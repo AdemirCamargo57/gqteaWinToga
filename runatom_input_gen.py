@@ -311,8 +311,10 @@ class RunatomGenerator:
             self.folder_input.value = str(path)
 
     async def on_import_case(self, widget):
+        library = rr.library_dir()
         path = await self.main_window.dialog(toga.SelectFolderDialog(
-            "Library case folder (a folder with a Makefile)", initial_directory=rr.library_dir()))
+            "Library case folder (a folder with a Makefile)",
+            initial_directory=library if library.is_dir() else None))
         if path:
             try:
                 self._load_case(Path(path))

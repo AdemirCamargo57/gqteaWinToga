@@ -74,6 +74,26 @@ def test_every_form_field_has_a_widget():
     assert set(ri.FORM_FIELDS) == set(gen.NAME_FIELDS) | {k for _, keys in gen.TAB_FIELDS for k in keys}
 
 
+class FolderDialog:
+    def __init__(self, title, initial_directory=None):
+        self.title, self.initial_directory = title, initial_directory
+
+
+def test_import_library_case_opens_in_the_library(tmp_path, monkeypatch):
+    w, _ = _window(tmp_path)
+    monkeypatch.setattr(gen.toga, "SelectFolderDialog", FolderDialog)
+    asyncio.run(w.on_import_case(None))
+    assert w.main_window.dialogs[-1].initial_directory == rr.library_dir() == LIBRARY_DIR
+
+
+def test_import_library_case_without_a_library_opens_the_default_folder(tmp_path, monkeypatch):
+    w, _ = _window(tmp_path)
+    monkeypatch.setattr(gen.toga, "SelectFolderDialog", FolderDialog)
+    monkeypatch.setattr(gen.rr, "library_dir", lambda: tmp_path / "missing")
+    asyncio.run(w.on_import_case(None))
+    assert w.main_window.dialogs[-1].initial_directory is None
+
+
 def test_collect_case_reads_the_widgets(tmp_path):
     w, case = _window(tmp_path)
     assert w._collect_case() == ri.case_from_fields(ri.case_to_fields(case))

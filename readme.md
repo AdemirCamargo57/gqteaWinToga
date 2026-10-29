@@ -300,6 +300,17 @@ GPL v2 requires shipping the source with the programs, so keep the folders
 under their own names (a flat `uspp/` would merge their README, Makefile and
 LICENSE files).
 
+**Import library case...** opens its folder dialog in the input library
+(`Work`). The library is found relative to the installed application, never
+the current working directory. It may be in any of these places, checked in
+this order:
+1. `<install folder>/third_party/uspp-736/Work`, next to `gqteaWinToga.exe`;
+2. `<bundle>/third_party/uspp-736/Work` (the `_internal` folder of a
+   PyInstaller 6 onedir build);
+3. `<bundle>/uspp/Work`, the destination listed above.
+
+If none of them exists, the dialog opens in the Windows default folder.
+
 At run time each program is looked for in this order:
 1. the path typed in the window (`reform.exe` next to it);
 2. `%GQTEA_RUNATOM%` / `%GQTEA_REFORM%`;
