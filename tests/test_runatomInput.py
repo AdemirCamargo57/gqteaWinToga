@@ -306,6 +306,15 @@ class TestChecks:
         case = _ti_case()
         assert any("radial mesh" in p for p in ri.check_case(ri.replace(case, ae=ri.replace(case.ae, rmax=1e6))))
 
+    @pytest.mark.parametrize("ifqopt, nqf, fixes, refused", [
+        (2, 4, 0, False), (3, 5, 0, True), (3, 6, 0, False), (3, 6, 1, True), (3, 7, 1, False), (2, 4, 1, True),
+    ])
+    def test_nqf_needs_more_terms_than_psqf2s_constraints(self, ifqopt, nqf, fixes, refused):
+        # pssubs.f psqf2: ncon = 4 (ifqopt 2) or 6 (ifqopt 3); nqf > ncon - 1, and > ncon with constraints
+        case = _ti_case()
+        ps = ri.replace(case.ps, ifqopt=ifqopt, nqf=nqf, fixes=[ri.QFix(1, 0.5, 0.0)] * fixes)
+        assert any("nqf" in p for p in ri.check_ps(ps, case.ae)) == refused
+
     def test_log_derivative_index_matches_runatom(self):
         # runatom.exe on the starter H input with rlogd 0: "klogd = 2 not allowed with mesh = 417"
         assert ri.radial_mesh_size(1.0, 0.0, 0.0, 0.0) == 417

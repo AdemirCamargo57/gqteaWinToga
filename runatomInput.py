@@ -820,6 +820,15 @@ def check_ps(ps: PSInput, ae: AEInput) -> List[str]:
         problems.append("ifqopt must be -1 (no pseudization), 0, 1, 2 or 3.")
     if 1 <= ps.ifqopt <= 3 and not 3 < ps.nqf <= MAX_POLY_TERMS:
         problems.append(f"ifqopt {ps.ifqopt} needs 3 < nqf <= {MAX_POLY_TERMS}.")
+    elif ps.ifqopt in (2, 3) and any(b.iptype != 3 for b in ps.betas):
+        # pssubs.f psqf2 (skipped for pairs of iptype-3 projectors, scgsubs.f): ncon = 4 or 6
+        # conditions at rinner; nqf > ncon - 1, and > ncon for a constrained projector
+        ncon = 4 if ps.ifqopt == 2 else 6
+        constrained = any(1 <= f.ibeta <= len(ps.betas) and ps.betas[f.ibeta - 1].iptype != 3 for f in ps.fixes)
+        least = ncon + 1 if constrained else ncon
+        if ps.nqf < least:
+            problems.append(f"ifqopt {ps.ifqopt} needs nqf >= {least}"
+                            f"{' with Q-function constraints' if constrained else ''} (runatom's psqf2).")
     if ps.fixes and ps.ifqopt < 2:
         problems.append("Q-function constraints need ifqopt 2 or 3.")
     if len(ps.fixes) > len(ps.betas):
