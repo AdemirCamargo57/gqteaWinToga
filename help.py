@@ -232,6 +232,30 @@ class AtomicData:
     }
     DEFAULT_VDW_RADIUS = 2.00
 
+    # Neutral-atom ground configurations (NIST Atomic Spectra Database) where
+    # they differ from Madelung (n + l) filling, up to uranium: {symbol:
+    # {(n, l): electrons}}, overriding only the shells listed (0 empties one).
+    # The USPP generator's computed starter builds its shell list from these.
+    ground_state_exceptions = {
+        "Cr": {(3, 2): 5, (4, 0): 1},
+        "Cu": {(3, 2): 10, (4, 0): 1},
+        "Nb": {(4, 2): 4, (5, 0): 1},
+        "Mo": {(4, 2): 5, (5, 0): 1},
+        "Ru": {(4, 2): 7, (5, 0): 1},
+        "Rh": {(4, 2): 8, (5, 0): 1},
+        "Pd": {(4, 2): 10, (5, 0): 0},
+        "Ag": {(4, 2): 10, (5, 0): 1},
+        "La": {(4, 3): 0, (5, 2): 1},
+        "Ce": {(4, 3): 1, (5, 2): 1},
+        "Gd": {(4, 3): 7, (5, 2): 1},
+        "Pt": {(5, 2): 9, (6, 0): 1},
+        "Au": {(5, 2): 10, (6, 0): 1},
+        "Ac": {(5, 3): 0, (6, 2): 1},
+        "Th": {(5, 3): 0, (6, 2): 2},
+        "Pa": {(5, 3): 2, (6, 2): 1},
+        "U": {(5, 3): 3, (6, 2): 1},
+    }
+
 class Fonts:
     font_1 = {'color':  'darkred','weight': 'normal','size': 16}
     font_2 = {'color':  'darkred','weight': 'normal','size': 12}
