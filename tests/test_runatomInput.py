@@ -238,6 +238,27 @@ class TestFields:
         other_shells = ri.replace(derived, ae=ri.replace(derived.ae, shells=derived.ae.shells[:-1]))
         assert ri.attach_imported_tests(other_shells, case) == other_shells
 
+    @pytest.mark.parametrize("key, value", [
+        ("ae_atom", "20  0  5"),                  # exfact 4 -> 5
+        ("ae_atom", "20.5  0.5  4"),              # z
+        ("ae_mesh", "0  0  0  0"),                # rmax, aasf, bbsf and irel
+        ("ae_mesh", "90  6  40  2"),              # rmax only
+    ], ids=["exfact", "z", "mesh-irel", "rmax"])
+    def test_a_changed_generation_gets_derived_tests(self, key, value):
+        # runatom refuses a test whose all-electron input disagrees with the generation it tests
+        case = ri.read_case_folder(LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos")
+        changed = ri.case_from_fields(dict(ri.case_to_fields(case), **{key: value}))
+        attached = ri.attach_imported_tests(changed, case)
+        assert all(t.ae_input is None and t.test_input is None for t in attached.tests)
+
+    def test_a_changed_partition_gets_derived_tests(self):
+        case = ri.read_case_folder(LIBRARY_DIR / "020-Ca" / "020-Ca-gpw-nsp-campos")
+        derived = ri.case_from_fields(ri.case_to_fields(case))
+        for ps in (ri.replace(derived.ps, ncores=derived.ps.ncores + 1, nvales=derived.ps.nvales - 1),
+                   ri.replace(derived.ps, nang=derived.ps.nang - 1)):
+            attached = ri.attach_imported_tests(ri.replace(derived, ps=ps), case)
+            assert all(t.ae_input is None and t.test_input is None for t in attached.tests)
+
     def test_tests_with_another_shell_list_are_not_attached(self):
         case = ri.read_case_folder(LIBRARY_DIR / "011-Na" / "011-Na-ca-n-campos")
         own = next(t for t in case.tests if t.name in ri.unrepresentable_tests(case))

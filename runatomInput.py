@@ -470,16 +470,26 @@ def _same_shells(a: AEInput, b: AEInput) -> bool:
     return [s.nnlz for s in a.shells] == [s.nnlz for s in b.shells]
 
 
+def _same_generation(a: CaseInputs, b: CaseInputs) -> bool:
+    """The all-electron and partition values a library test's own inputs were made for."""
+    def key(c: CaseInputs):
+        return (c.ae.z, c.ae.exfact + 0.0, c.ae.irel, c.ae.rmax, c.ae.aasf, c.ae.bbsf,
+                c.ps.ncores, c.ps.nvales, c.ps.nang)
+    return _same_shells(a.ae, b.ae) and key(a) == key(b)
+
+
 def attach_imported_tests(case: CaseInputs, imported: Optional[CaseInputs]) -> CaseInputs:
     """`case` with every test still as imported replaced by the imported test.
 
     The window's Tests field holds only name, xion and occupations. A library test
     also carries its own all-electron and test inputs (damp, maxit, eigenvalue
     guesses...), which several library cases need to converge. A test keeps them
-    while the generation's shell list and the test's xion and occupations are
-    unchanged; tests the user added or changed are derived from the tabs.
+    while the generation (shell list, z, exfact, irel, mesh, partition) and the
+    test's xion and occupations are unchanged: runatom refuses a test whose inputs
+    disagree with the pseudopotential it tests. Tests the user added or changed
+    are derived from the tabs.
     """
-    if imported is None or not _same_shells(case.ae, imported.ae):
+    if imported is None or not _same_generation(case, imported):
         return case
     skipped = set(unrepresentable_tests(imported))
     library = {t.name: t for t in imported.tests if t.name not in skipped}
