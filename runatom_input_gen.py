@@ -10,16 +10,20 @@ import asyncio
 import os
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW
 
+import runatomDefaults as rd
 import runatomInput as ri
 import runatomOutput as ro
 import runatomRunner as rr
-from help import HelpGqteaWin
+from help import AtomicData, HelpGqteaWin
+from periodicTable import PeriodicTableWindow
 
 STATUS_INTERVAL = 0.1          # s between two status-line updates during a run
 LABEL_WIDTH = 240
@@ -37,6 +41,66 @@ TAB_FIELDS = (
                          "ps_qfunc", "ps_fixes")),
     ("Tests", ("tests",)),
 )
+UNDO_DEPTH = 10                # defaults fills that Undo defaults can step back through
+PICKER_HINT = ("Click an element to fill the generator's inputs with suggested values. Every field "
+               f"stays editable. Elements up to U (Z = {rd.MAX_DEFAULTS_Z}) can be chosen.")
+SELECTABLE_ELEMENTS = frozenset(s for s, z in AtomicData.atomic_numbers.items() if z <= rd.MAX_DEFAULTS_Z)
+IMPORTED_PREFIX = "Imported: "
+
+
+class RunatomElementController:
+    """The periodic table's controller (the contract of periodicTable.PeriodicTableWindow)."""
+
+    def __init__(self, on_select):
+        self.selected_element = None
+        self.views = []
+        self.periodic_table_window = None
+        self._on_select = on_select
+
+    def register_view(self, view):
+        if view not in self.views:
+            self.views.append(view)
+            if self.selected_element:
+                view.on_element_changed(self.selected_element)
+
+    def unregister_view(self, view):
+        if view in self.views:
+            self.views.remove(view)
+
+    def show_element(self, symbol):
+        """Follow the element the form now holds (a pick, an import, an undo)."""
+        self.selected_element = symbol
+        for view in list(self.views):
+            view.on_element_changed(symbol)
+
+    def select_element(self, symbol):
+        """A click in the periodic table; the highlight moves only once the fill happens."""
+        self._on_select(symbol)
+
+    def open_picker(self, *, hint, marked, selectable):
+        if self.periodic_table_window is not None and self.periodic_table_window.window is not None:
+            self.periodic_table_window.window.show()
+        else:
+            self.periodic_table_window = PeriodicTableWindow(self, hint=hint, marked=marked,
+                                                             selectable=selectable)
+
+    def close_picker(self):
+        if self.periodic_table_window is not None:
+            self.periodic_table_window.close()
+            self.periodic_table_window = None
+
+
+@dataclass
+class _DefaultsSnapshot:
+    """Everything a defaults fill changes, as it was before it (for Undo defaults)."""
+    fields: Dict[str, str]
+    imported_case: Optional[ri.CaseInputs]
+    element: Optional[str]
+    options: List[rd.Suggestion]
+    items: List[str]
+    choice: Optional[str]
+    note: str
+    baseline: Dict[str, str]
 
 
 class RunatomGenerator:
@@ -44,6 +108,7 @@ class RunatomGenerator:
         # gqteaWinToga passes the Button that was pressed; ignore it.
         self._closed, self._busy, self._cancel, self._last_out = False, False, None, None
         self._imported_case = None      # the library case last imported: its tests keep their own inputs
+        self._init_defaults_state()
         self.inputs = {}
         self.main_window = toga.Window(title="Vanderbilt USPP Generator (runatom)", size=(920, 700))
         self.main_window.on_close = self._on_close
@@ -83,8 +148,18 @@ class RunatomGenerator:
             toga.Box(style=Pack(direction=ROW, margin_top=4), children=[
                 self.import_case_button, self.import_adat_button, self.makefile_switch]),
             self.makefile_hint])
+        self.element_button = toga.Button("Choose element...", on_press=self.on_choose_element)
+        self.element_label = toga.Label("", style=Pack(width=30, margin=(4, 6, 0, 6), font_weight="bold"))
+        self.choice_selection = toga.Selection(items=[], on_change=self.on_choice_change, style=Pack(flex=1))
+        self.undo_button = toga.Button("Undo defaults", on_press=self.on_undo, enabled=False,
+                                       style=Pack(margin_left=6))
+        self.element_note = toga.Label("", style=Pack(color=HINT_COLOR, font_size=9, margin_left=LABEL_WIDTH))
+        element_row = toga.Box(style=Pack(direction=COLUMN, margin_bottom=4), children=[
+            self._row("Element (suggested values)", self.element_button, self.element_label,
+                      self.choice_selection, self.undo_button),
+            self.element_note])
         names = toga.Box(style=Pack(direction=COLUMN, margin=(0, 8)),
-                         children=[self._field_row(k) for k in NAME_FIELDS])
+                         children=[element_row] + [self._field_row(k) for k in NAME_FIELDS])
         pages = []
         for title, keys in TAB_FIELDS:
             page = toga.Box(style=Pack(direction=COLUMN, margin=8), children=[self._field_row(k) for k in keys])
@@ -107,9 +182,11 @@ class RunatomGenerator:
         self._update_exe_status(None)
 
     # --- widgets <-> fields ------------------------------------------------
+    def _current_fields(self) -> Dict[str, str]:
+        return {key: widget.value or "" for key, widget in self.inputs.items()}
+
     def _collect_case(self) -> ri.CaseInputs:
-        fields = {key: widget.value or "" for key, widget in self.inputs.items()}
-        return ri.attach_imported_tests(ri.case_from_fields(fields), self._imported_case)
+        return ri.attach_imported_tests(ri.case_from_fields(self._current_fields()), self._imported_case)
 
     def _fill(self, fields):
         for key, text in fields.items():
@@ -117,7 +194,7 @@ class RunatomGenerator:
             if widget is not None and widget.value != text:
                 widget.value = text
 
-    def _load_case(self, folder: Path, quiet: bool = False):
+    def _load_case(self, folder: Path, quiet: bool = False, follow: bool = True):
         try:
             case = ri.read_case_folder(folder)
         except (OSError, ValueError, KeyError) as exc:
@@ -127,11 +204,165 @@ class RunatomGenerator:
             return
         self._imported_case = case
         self._fill(ri.case_to_fields(case))
+        self._baseline = self._current_fields()
         skipped = ri.unrepresentable_tests(case)
         note = (f" Tests with their own shell list were not imported: {', '.join(skipped)}."
                 if skipped else "")
         self._show_status(f"Loaded {folder.name}. Its tests keep the library's own settings "
                           f"while their row on the Tests tab is unchanged.{note}")
+        if follow:
+            self._follow_imported_case(case, folder)
+
+    # --- element defaults ---------------------------------------------------
+    def _init_defaults_state(self):
+        """The element row's state (no widgets), shared by __init__ and the headless tests."""
+        self._syncing = False               # True while the window itself writes the choice Selection
+        self._baseline: Dict[str, str] = {}  # the fields as last filled: anything else is an edit
+        self._undo_stack: List[_DefaultsSnapshot] = []
+        self._element: Optional[str] = None
+        self._options: List[rd.Suggestion] = []
+        self._choice_items: List[str] = []
+        self._choice: Optional[str] = None
+        self.element_controller = RunatomElementController(self.element_selected)
+
+    def _form_edited(self) -> bool:
+        return self._current_fields() != self._baseline
+
+    @staticmethod
+    def _set_text(label, text: str):
+        if label.text != text:
+            label.text = text
+
+    def _start(self, coroutine):
+        """Run a handler's async part as a task (Toga's own async handlers would replay our writes)."""
+        return asyncio.ensure_future(coroutine)
+
+    def _show_choices(self, options: List[rd.Suggestion], choice: Optional[str], extra: Optional[str] = None):
+        self._options = list(options)
+        items = [o.label for o in options] + ([extra] if extra else [])
+        self._syncing = True
+        try:
+            if items != self._choice_items:
+                self.choice_selection.items = items
+                self._choice_items = items
+            if choice is not None and self.choice_selection.value != choice:
+                self.choice_selection.value = choice
+        finally:
+            self._syncing = False
+        self._choice = choice
+
+    def _update_undo_button(self):
+        enabled = bool(self._undo_stack) and not self._busy
+        if self.undo_button.enabled != enabled:
+            self.undo_button.enabled = enabled
+
+    def _push_undo(self):
+        self._undo_stack.append(_DefaultsSnapshot(
+            self._current_fields(), self._imported_case, self._element, list(self._options),
+            list(self._choice_items), self._choice, self.element_note.text, dict(self._baseline)))
+        del self._undo_stack[:-UNDO_DEPTH]
+        self._update_undo_button()
+
+    def _follow_imported_case(self, case: ri.CaseInputs, folder: Path):
+        """After an import, the element row names its element and lists that element's suggestions."""
+        try:
+            symbol = rd.element_symbol(case.ae.z)
+            options, _ = rd.suggestions(symbol, rr.library_dirs())
+        except (KeyError, ValueError):
+            return
+        self._element = symbol
+        self.element_controller.show_element(symbol)
+        self._set_text(self.element_label, symbol)
+        same = next((o.label for o in options if o.folder is not None and o.kind == "library"
+                     and Path(o.folder).resolve() == Path(folder).resolve()), None)
+        imported = None if same else IMPORTED_PREFIX + Path(folder).name
+        self._show_choices(options, same or imported, imported)
+        self._set_text(self.element_note, f"From {Path(folder).name}. Every field stays editable.")
+
+    def on_choose_element(self, widget):
+        self.element_controller.open_picker(hint=PICKER_HINT, selectable=SELECTABLE_ELEMENTS,
+                                            marked=frozenset(rd.library_elements(rr.library_dirs())))
+
+    def element_selected(self, symbol: str):
+        self._start(self._apply_element(symbol))
+
+    def on_choice_change(self, widget):
+        if self._syncing:
+            return
+        option = next((o for o in self._options if o.label == widget.value), None)
+        if option is not None and option.label != self._choice:
+            self._start(self._apply_choice(option))
+
+    async def _confirm_replace(self, symbol: str) -> bool:
+        if not self._form_edited():
+            return True
+        return bool(await self.main_window.dialog(toga.QuestionDialog(
+            "Replace the inputs?", f"Replace the current inputs with the suggested values for {symbol}? "
+                                   "Undo defaults brings the current ones back.")))
+
+    async def _warn(self, title: str, message: str):
+        if not self._closed:
+            await self.main_window.dialog(toga.InfoDialog(title, message))
+
+    async def _apply_element(self, symbol: str):
+        if self._busy:
+            return
+        try:
+            options, _ = rd.suggestions(symbol, rr.library_dirs())
+        except ValueError as exc:
+            await self._error("No suggested values", str(exc))
+            return
+        if not await self._confirm_replace(symbol):
+            return
+        self._push_undo()
+        self._element = symbol
+        self._show_choices(options, options[0].label)
+        await self._apply_suggestion(options[0])
+
+    async def _apply_choice(self, option: rd.Suggestion):
+        if self._busy or not await self._confirm_replace(self._element):
+            self._show_choices(self._options, self._choice, self._extra_item())
+            return
+        self._push_undo()
+        self._choice = option.label
+        await self._apply_suggestion(option)
+
+    def _extra_item(self) -> Optional[str]:
+        return next((i for i in self._choice_items if i.startswith(IMPORTED_PREFIX)), None)
+
+    async def _apply_suggestion(self, option: rd.Suggestion):
+        if option.kind == "library":
+            self._load_case(Path(option.folder), follow=False)
+        else:
+            self._imported_case = None
+            self._fill(option.fields)
+            self._show_status(option.note)
+        self._baseline = self._current_fields()
+        self.element_controller.show_element(self._element)
+        self._set_text(self.element_label, self._element)
+        self._set_text(self.element_note, option.note)
+        self._update_undo_button()
+        if option.warnings:
+            donor = Path(option.folder).parent.name.split("-")[1] if option.kind == "template" else None
+            title = f"Values copied from {donor}" if donor else f"Suggested values for {self._element}"
+            await self._warn(title, "\n\n".join(option.warnings))
+
+    def on_undo(self, widget):
+        if self._busy or not self._undo_stack:
+            return
+        snapshot = self._undo_stack.pop()
+        self._fill(snapshot.fields)
+        self._imported_case = snapshot.imported_case
+        self._element = snapshot.element
+        extra = next((i for i in snapshot.items if i.startswith(IMPORTED_PREFIX)), None)
+        self._show_choices(snapshot.options, snapshot.choice, extra)
+        self._set_text(self.element_note, snapshot.note)
+        self._set_text(self.element_label, snapshot.element or "")
+        if snapshot.element:
+            self.element_controller.show_element(snapshot.element)
+        self._baseline = snapshot.baseline
+        self._update_undo_button()
+        self._show_status("The inputs are back as they were before the last suggested values.")
 
     def _update_exe_status(self, widget):
         exe = rr.find_runatom(self.exe_input.value)
@@ -149,10 +380,11 @@ class RunatomGenerator:
         if self._closed:
             return
         (self.activity.start if busy else self.activity.stop)()
-        for button in (self.check_button, self.save_button, self.run_button,
-                       self.import_case_button, self.import_adat_button, self.browse_button):
+        for button in (self.check_button, self.save_button, self.run_button, self.import_case_button,
+                       self.import_adat_button, self.browse_button, self.element_button, self.choice_selection):
             button.enabled = not busy
         self.cancel_button.enabled = busy
+        self._update_undo_button()
         self._show_status(message)
 
     def _apply_progress(self, info: dict):
@@ -332,8 +564,10 @@ class RunatomGenerator:
             return
         if isinstance(data, ri.AEInput):
             self._fill(ri.ae_fields(data))
+            self._baseline = self._current_fields()
         elif isinstance(data, ri.PSInput):
             self._fill(ri.ps_fields(data))
+            self._baseline = self._current_fields()
         else:
             await self._error("File not imported", "Test inputs are written from the Pseudopotential tab; "
                                                     "import the test's all-electron file and list it on the Tests tab.")
@@ -353,6 +587,7 @@ class RunatomGenerator:
         self._closed = True        # a run still going finishes without touching the window
         if self._cancel is not None:
             self._cancel.set()
+        self.element_controller.close_picker()
         return True
 
     def closeTopLevel(self, widget):
