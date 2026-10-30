@@ -718,6 +718,23 @@ def radial_mesh_size(z: float, rmax: float, aasf: float, bbsf: float) -> int:
     return mesh + 1 if mesh % 2 == 0 else mesh
 
 
+def log_derivative_index(z: float, rlogd: float, aasf: float, bbsf: float) -> int:
+    """klogd, the mesh point of rlogd (rinit); runatom stops unless 10 <= klogd < mesh."""
+    aasf, bbsf = aasf or 6.0, bbsf or 40.0
+    a = math.exp(-aasf) / z
+    return 2 + int(math.log(max(rlogd, 0.0) / a + 1.0) / (1.0 / bbsf))
+
+
+def _rlogd_problem(rlogd: float, ae: "AEInput") -> Optional[str]:
+    if ae.z <= 0:
+        return None
+    klogd = log_derivative_index(ae.z, rlogd, ae.aasf, ae.bbsf)
+    if klogd < 10 or klogd >= radial_mesh_size(ae.z, ae.rmax, ae.aasf, ae.bbsf):
+        return (f"rlogd = {rlogd:g} falls on radial mesh point {klogd}; runatom needs a point from 10 to "
+                "below the last one, even without log derivatives (give rlogd about 2 bohr).")
+    return None
+
+
 def check_ae(ae: AEInput) -> List[str]:
     """runatom's own all-electron checks (rwsubs.f readin, initsubs.f rinit) plus this tool's limits."""
     problems = []
@@ -743,6 +760,9 @@ def check_ae(ae: AEInput) -> List[str]:
         mesh = radial_mesh_size(ae.z, ae.rmax, ae.aasf, ae.bbsf)
         if mesh > MAX_MESH:
             problems.append(f"The radial mesh would have {mesh} points; runatom allows {MAX_MESH}. Lower rmax or bbsf.")
+    rlogd = _rlogd_problem(ae.controls.rlogd, ae)
+    if rlogd:
+        problems.append(rlogd)
     c = ae.controls
     if min(c.thresh, c.tol, c.damp) < 0 or c.maxit < 0:
         problems.append("thresh, tol, damp and maxit cannot be negative.")
@@ -766,6 +786,9 @@ def check_ps(ps: PSInput, ae: AEInput) -> List[str]:
         problems.append(f"rinner = 0 needs {n_l} per-L values.")
     if rinner and max(rinner) > ps.controls.rlogd:
         problems.append(f"rinner ({max(rinner):g}) must not exceed rlogd ({ps.controls.rlogd:g}).")
+    rlogd = _rlogd_problem(ps.controls.rlogd, ae)       # the generation run uses the all-electron mesh
+    if rlogd:
+        problems.append(rlogd)
     if len(ps.rc) != ps.nang:
         problems.append(f"Give {ps.nang} rc values, one per l.")
     if not 1 <= len(ps.betas) <= MAX_BETAS:

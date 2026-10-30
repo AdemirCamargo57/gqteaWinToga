@@ -306,6 +306,21 @@ class TestChecks:
         case = _ti_case()
         assert any("radial mesh" in p for p in ri.check_case(ri.replace(case, ae=ri.replace(case.ae, rmax=1e6))))
 
+    def test_log_derivative_index_matches_runatom(self):
+        # runatom.exe on the starter H input with rlogd 0: "klogd = 2 not allowed with mesh = 417"
+        assert ri.radial_mesh_size(1.0, 0.0, 0.0, 0.0) == 417
+        assert ri.log_derivative_index(1.0, 0.0, 0.0, 0.0) == 2
+
+    def test_rlogd_must_give_a_usable_log_derivative_point(self):
+        # rinit stops when klogd < 10 or klogd == mesh, whether or not log derivatives are asked for
+        case = _ti_case()
+        for rlogd in (0.0, 1e-6):
+            ae = ri.replace(case.ae, controls=ri.replace(case.ae.controls, rlogd=rlogd))
+            assert any("rlogd" in p for p in ri.check_ae(ae))
+        ps = ri.replace(case.ps, controls=ri.replace(case.ps.controls, rlogd=0.0), rinner1=0.0,
+                        rinner=[0.0] * 5)
+        assert any("rlogd" in p for p in ri.check_ps(ps, case.ae))
+
     def test_long_file_names_are_refused(self):
         case = ri.replace(_ti_case(), generation_name="a" * 40)
         assert any("40 characters" in p for p in ri.check_case(case))
