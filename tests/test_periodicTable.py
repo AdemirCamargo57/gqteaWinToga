@@ -8,8 +8,11 @@ import pytest
 from help import AtomicData
 from periodicTable import (
     BLOCK_COLORS,
+    DEFAULT_HINT,
     PERIODIC_TABLE_LAYOUT,
     PeriodicTableWindow,
+    button_enabled,
+    button_style_kwargs,
     element_block,
     table_symbols,
 )
@@ -132,3 +135,36 @@ def test_changing_the_selection_releases_the_previous_button():
 
     assert view.element_buttons["O"].style.background_color == BLOCK_COLORS["p"]
     assert view.element_buttons["N"].style.background_color != BLOCK_COLORS["p"]
+
+
+# ------------------------------------------------------------------
+# Options: hint, marked elements, selectable elements
+# ------------------------------------------------------------------
+def test_default_buttons_look_as_before():
+    """No option given: the Design tab's picker is unchanged."""
+    style = button_style_kwargs("C", None)
+
+    assert style == {"width": PeriodicTableWindow.BUTTON_SIZE, "height": PeriodicTableWindow.BUTTON_SIZE,
+                     "font_size": 7, "background_color": BLOCK_COLORS["p"]}
+    assert "design canvas" in DEFAULT_HINT
+
+
+def test_marked_elements_are_bold_and_the_others_are_not():
+    assert button_style_kwargs("Ti", {"Ti"})["font_weight"] == "bold"
+    assert "font_weight" not in button_style_kwargs("C", {"Ti"})
+
+
+def test_a_marked_button_keeps_its_weight_when_selected():
+    view = _headless_window()
+    view.element_buttons["Ti"].style.font_weight = "bold"
+
+    view.on_element_changed("Ti")
+    view.on_element_changed("C")
+
+    assert view.element_buttons["Ti"].style.font_weight == "bold"
+    assert view.element_buttons["Ti"].style.background_color == BLOCK_COLORS["d"]
+
+
+def test_only_selectable_elements_are_enabled():
+    assert button_enabled("U", None) and button_enabled("Np", None)
+    assert button_enabled("U", {"U"}) and not button_enabled("Np", {"U"})

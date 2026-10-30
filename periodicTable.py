@@ -10,70 +10,63 @@ That second direction is the point of the split: the picker and the canvas
 never reference each other, they only talk to the controller, so a click here
 reaches the canvas window immediately without the two windows being coupled.
 """
-from typing import Dict, List, Optional
+from typing import AbstractSet, Dict, Optional
 
 import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, LEFT, ROW
 
-# The periodic table as it is drawn: 18 columns per row, ``None`` for a gap.
-# The two f-block rows sit below a blank spacer row, the way a printed table
-# lays them out. A test asserts this contains all 118 elements exactly once.
-PERIODIC_TABLE_LAYOUT: List[List[Optional[str]]] = [
-    ["H", None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, "He"],
-    ["Li", "Be", None, None, None, None, None, None, None, None, None, None, "B", "C", "N", "O", "F", "Ne"],
-    ["Na", "Mg", None, None, None, None, None, None, None, None, None, None, "Al", "Si", "P", "S", "Cl", "Ar"],
-    ["K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br", "Kr"],
-    ["Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe"],
-    ["Cs", "Ba", "La", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn"],
-    ["Fr", "Ra", "Ac", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og"],
-    [None] * 18,
-    [None, None, None, "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", None],
-    [None, None, None, "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr", None],
-]
+# The layout data lives in the Toga-free periodicTableData; re-exported here
+# for the window and for everything that imported it from this module.
+from periodicTableData import (  # noqa: F401
+    BLOCK_COLORS,
+    PERIODIC_TABLE_LAYOUT,
+    SELECTED_ELEMENT_COLOR,
+    element_block,
+    group_and_period,
+    table_symbols,
+)
 
-# Block colours, so the table reads as a periodic table rather than a wall of
-# identical squares.
-BLOCK_COLORS = {
-    "s": "#ffd9d9",
-    "p": "#d9e8ff",
-    "d": "#e2f5df",
-    "f": "#f3e2ff",
-}
-SELECTED_ELEMENT_COLOR = "#ffe066"
+DEFAULT_HINT = ("Click an element to select it. The design canvas starts using it "
+                "immediately, so you can leave this window open while you draw.")
+MARKED_LEGEND = "Bold: a tested case is in the USPP library."
+BUTTON_SIZE = 32
 
 
-def table_symbols() -> List[str]:
-    """Every element in the layout, in reading order."""
-    return [symbol for row in PERIODIC_TABLE_LAYOUT for symbol in row if symbol]
+def button_style_kwargs(symbol: str, marked: Optional[AbstractSet[str]]) -> dict:
+    """The Pack style of one element button; marked elements are bold."""
+    style = {"width": BUTTON_SIZE, "height": BUTTON_SIZE, "font_size": 7,
+             "background_color": BLOCK_COLORS[element_block(symbol)]}
+    if marked and symbol in marked:
+        style["font_weight"] = "bold"
+    return style
 
 
-def element_block(symbol: str) -> str:
-    """Which block of the periodic table an element belongs to."""
-    for row_index, row in enumerate(PERIODIC_TABLE_LAYOUT):
-        if symbol not in row:
-            continue
-        column = row.index(symbol)
-        if row_index >= 8:
-            return "f"
-        if column <= 1 or symbol == "He":
-            return "s"
-        if column >= 12:
-            return "p"
-        return "d"
-    return "p"
+def button_enabled(symbol: str, selectable: Optional[AbstractSet[str]]) -> bool:
+    """Every element is pressable unless a selectable set leaves it out."""
+    return selectable is None or symbol in selectable
 
 
 class PeriodicTableWindow:
-    """A window of 118 element buttons that drives a design controller."""
+    """A window of 118 element buttons that drives a design controller.
+
+    ``hint`` replaces the instruction line, ``marked`` draws those elements in
+    bold with a legend, ``selectable`` disables every element outside it. With
+    none of them the window is the Design tab's picker, unchanged.
+    """
 
     TITLE = "Periodic Table"
     WINDOW_SIZE = (660, 480)
-    BUTTON_SIZE = 32
+    BUTTON_SIZE = BUTTON_SIZE
     HINT_COLOR = "#666666"
 
-    def __init__(self, controller):
+    def __init__(self, controller, *, hint: Optional[str] = None,
+                 marked: Optional[AbstractSet[str]] = None,
+                 selectable: Optional[AbstractSet[str]] = None):
         self.controller = controller
+        self.hint = DEFAULT_HINT if hint is None else hint
+        self.marked = marked
+        self.selectable = selectable
         self.element_buttons: Dict[str, toga.Button] = {}
         self.selected_label = toga.Label(
             "", style=Pack(font_size=11, font_weight="bold", margin=(8, 0, 4, 0))
@@ -98,8 +91,7 @@ class PeriodicTableWindow:
         content = toga.Box(style=Pack(direction=COLUMN, margin=12))
         content.add(
             toga.Label(
-                "Click an element to select it. The design canvas starts using it "
-                "immediately, so you can leave this window open while you draw.",
+                self.hint,
                 style=Pack(font_size=9, color=self.HINT_COLOR, margin=(0, 0, 8, 0)),
             )
         )
@@ -115,17 +107,20 @@ class PeriodicTableWindow:
                 button = toga.Button(
                     symbol,
                     on_press=self._make_handler(symbol),
-                    style=Pack(
-                        width=self.BUTTON_SIZE,
-                        height=self.BUTTON_SIZE,
-                        font_size=7,
-                        background_color=BLOCK_COLORS[element_block(symbol)],
-                    ),
+                    enabled=button_enabled(symbol, self.selectable),
+                    style=Pack(**button_style_kwargs(symbol, self.marked)),
                 )
                 self.element_buttons[symbol] = button
                 row_box.add(button)
             content.add(row_box)
 
+        if self.marked:
+            content.add(
+                toga.Label(
+                    MARKED_LEGEND,
+                    style=Pack(font_size=9, color=self.HINT_COLOR, margin=(6, 0, 0, 0)),
+                )
+            )
         content.add(self.selected_label)
         return content
 
