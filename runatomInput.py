@@ -544,6 +544,11 @@ XC_FUNCTIONALS = {0.0: "Ceperley-Alder (LDA)", -1.0: "Wigner (LDA)", -2.0: "Hedi
                   2.0: "CA + Becke88 (GGA)", 3.0: "CA + Becke88 + Perdew86 (GGA)",
                   4.0: "Perdew-Wang 91 (GGA)", 5.0: "PBE (GGA)"}
 
+
+def xc_label(exfact: float) -> str:
+    """The functional's name; the library's '-0.' (CA) never reads as '-0'."""
+    return XC_FUNCTIONALS.get(exfact + 0.0, f"exfact {exfact + 0.0:g}")
+
 FORM_FIELDS = {
     "symbol": ("Element symbol (file names)", "s", False, "e.g. ti gives ti_ae_<configuration>.adat and ti_ps.adat"),
     "generation": ("Generation configuration", "s", False, "a short name such as s2d1"),
