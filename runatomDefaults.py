@@ -307,3 +307,211 @@ def rank_variants(variants: Sequence[LibraryVariant]) -> List[LibraryVariant]:
                  else len(FUNCTIONAL_PREFERENCE))
         return order, v.irel != 2, -v.n_tests, v.folder.name
     return sorted(variants, key=rank)
+
+
+# --- same-group templates and the suggestions the window offers --------------
+STARTER_LABEL = "Computed starter (radii blank)"
+COPIED_PS_KEYS = ("ps_print", "ps_logd", "ps_conv", "ps_bessel", "ps_keyps", "ps_rinner", "ps_rcloc", "ps_rc")
+PROJECTOR_PS_KEYS = ("ps_betas", "ps_npf", "ps_local", "ps_qfunc", "ps_fixes")
+
+
+@dataclass(frozen=True)
+class Suggestion:
+    kind: str                    # "library", "template" or "starter"
+    label: str                   # the window's Selection item
+    fields: Dict[str, str]       # every form field
+    folder: Optional[Path]       # the library case, or the template's donor case
+    note: str                    # one line for the window
+    warnings: Tuple[str, ...]    # shown in a dialog after the fields are filled
+
+
+def template_donors(symbol: str, roots: Sequence[Path]) -> List[str]:
+    """Library elements of the same group, nearest period first, the heavier on a tie."""
+    group, period = group_and_period(symbol)
+    candidates = [s for s in library_elements(roots)
+                  if s != symbol and group_and_period(s)[0] == group]
+    return sorted(candidates, key=lambda s: (abs(group_and_period(s)[1] - period),
+                                             -AtomicData.atomic_numbers[s]))
+
+
+def _shifted(nnlz: int, periods: int) -> int:
+    """The same shell n periods away; a shell that cannot exist (l >= n) becomes the lowest one of that l."""
+    n, l = nnlz // 100 + periods, (nnlz // 10) % 10
+    return (max(n, l + 1) * 10 + l) * 10
+
+
+@dataclass(frozen=True)
+class _ValenceMap:
+    ae: ri.AEInput                  # the starter's shells, core first, valence in the donor's order
+    ncores: int
+    index: Dict[int, int]           # donor valence position -> template position (1-based)
+    dropped: Dict[int, Tuple[int, float]]   # donor position -> (shifted nnlz, donor's ee) of dropped shells
+
+
+def _template_ae(symbol: str, donor: ri.CaseInputs) -> Tuple[Optional[_ValenceMap], str]:
+    """The starter atom with the donor's valence list, n shifted by the period difference.
+
+    The template keeps exactly the starter's shells (whose all-electron run is known
+    to converge); only which of them are valence, and in what order, follows the
+    donor. A donor valence shell the target holds no electron in (Ca's empty 3d for
+    Mg) is dropped: it need not be bound in the target. Returns (map, "") or
+    (None, the reason the donor's valence list does not fit).
+    """
+    starter = starter_ae_input(symbol)
+    z = round(starter.z)
+    _, valence, _ = split_core_valence(z, ground_state_configuration(z))
+    periods = group_and_period(symbol)[1] - group_and_period(element_symbol(donor.ae.z))[1]
+    donor_valence = donor.ae.shells[donor.ps.ncores:]
+    mapped = [_shifted(s.nnlz, periods) for s in donor_valence]
+    if len(set(mapped)) != len(mapped):
+        return None, f"the donor's valence shells do not map one to one onto {symbol}'s"
+    own = {s.nnlz: s for s in starter.shells}
+    semicore = {_nnlz(s) for s in _semicore_shells(symbol, valence)}
+    missing = [_nnlz(s) for s in valence if _nnlz(s) not in mapped and _nnlz(s) not in semicore
+               and own[_nnlz(s)].wwnl > 0]
+    if missing:
+        names = " ".join(shell_name(n) for n in missing)
+        return None, (f"{symbol}'s occupied {names} valence shell has no counterpart among the donor's "
+                      f"valence shells ({' '.join(shell_name(s.nnlz) for s in donor_valence)})")
+    index, dropped, kept = {}, {}, []
+    for position, (nnlz, shell) in enumerate(zip(mapped, donor_valence), 1):
+        if nnlz in own and own[nnlz].wwnl > 0:
+            kept.append(own[nnlz])
+            index[position] = len(kept)
+        else:
+            dropped[position] = (nnlz, shell.ee)
+    core = [s for s in starter.shells if s not in kept]
+    return _ValenceMap(ri.replace(starter, shells=core + kept), len(core), index, dropped), ""
+
+
+def _remapped_ps(donor: ri.CaseInputs, valence: _ValenceMap) -> ri.PSInput:
+    """The donor's generation input with its valence references moved to the template's positions;
+    a reference to a dropped shell becomes keyee 0 with that shell's energy from the donor input."""
+    def remap(keyee: int, energy: float) -> Tuple[int, float]:
+        if keyee <= 0:
+            return keyee, energy
+        if keyee in valence.dropped:
+            return 0, valence.dropped[keyee][1]
+        return valence.index[keyee], energy
+    betas = [ri.replace(b, keyee=k, eeread=e) for b in donor.ps.betas for k, e in [remap(b.keyee, b.eeread)]]
+    keyee_loc, eloc = remap(donor.ps.keyee_loc, donor.ps.eloc)
+    return ri.replace(donor.ps, ncores=valence.ncores, nvales=len(valence.ae.shells) - valence.ncores,
+                      betas=betas, keyee_loc=keyee_loc, eloc=eloc)
+
+
+def _psqf2_minimum(ps: ri.PSInput) -> int:
+    """The least nqf runatom's psqf2 accepts for ifqopt 3 (see runatomInput.check_ps)."""
+    constrained = any(1 <= f.ibeta <= len(ps.betas) and ps.betas[f.ibeta - 1].iptype != 3 for f in ps.fixes)
+    return 7 if constrained else 6
+
+
+def template_fields(symbol: str, donor_folder: Path, donor: ri.CaseInputs) -> Tuple[Dict[str, str], List[str]]:
+    """The starter of `symbol` with the pseudopotential tab of a same-group library case."""
+    donor_symbol = element_symbol(donor.ae.z)
+    periods = group_and_period(symbol)[1] - group_and_period(donor_symbol)[1]
+    where = ("the same period" if periods == 0 else
+             f"{abs(periods)} period{'s' if abs(periods) > 1 else ''} {'below' if periods > 0 else 'above'}")
+    fields = starter_fields(symbol)
+    donor_ps = ri.ps_fields(donor.ps)
+    fields.update({key: donor_ps[key] for key in COPIED_PS_KEYS})
+    valence, reason = _template_ae(symbol, donor)
+    copied = "rc, rcloc, rinner, rpcor" + (", the projectors and the local potential" if valence else "")
+    warnings = [
+        f"{symbol} has no case in the USPP library. The All-electron tab was computed from its "
+        f"configuration (PBE, scalar-relativistic). The Pseudopotential tab ({copied}) was copied unchanged "
+        f"from {donor_symbol} ({donor_folder.name}, {ri.xc_label(donor.ae.exfact)}, same group, {where}). "
+        f"These values were chosen for {donor_symbol}, not {symbol}: they are a starting point, not a tested "
+        "pseudopotential. Review them, add transferability tests (Tests tab) and compare with all-electron "
+        "results before production use."]
+    if valence is None:
+        partition = fields["ps_partition"].split()
+        fields["ps_partition"] = f"{partition[0]}  {partition[1]}  {donor.ps.nang}"
+        warnings.append("Only the radii and controls were copied: " + reason + ", so the projectors, the "
+                        "local potential and the Q-function settings were left blank. Enter them on the "
+                        "Pseudopotential tab.")
+    else:
+        ps = _remapped_ps(donor, valence)
+        fields.update(ri.ae_fields(valence.ae))
+        for position, (nnlz, energy) in sorted(valence.dropped.items()):
+            users = [k for k, b in enumerate(donor.ps.betas, 1) if b.keyee == position]
+            local = donor.ps.keyee_loc == position
+            if users or local:
+                what = ", ".join([f"projector {k}" for k in users] + (["the local potential"] if local else []))
+                source = shell_name(donor.ae.shells[donor.ps.ncores + position - 1].nnlz)
+                warnings.append(f"{donor_symbol}'s {what} took its reference energy from {donor_symbol}'s "
+                                f"{source} shell, which is {shell_name(nnlz)} in {symbol} and holds no electron "
+                                f"there; it now uses eeread = {energy:g} Ry ({donor_symbol}'s eigenvalue guess "
+                                "for that shell). Review it.")
+        if ps.ifqopt != 3:
+            least = _psqf2_minimum(ps)
+            warnings.append(f"ifqopt was set to 3 ({donor_symbol}'s case uses {ps.ifqopt}): runatom accepts "
+                            "only ifqopt 3 for GGA functionals such as PBE.")
+            if ps.nqf < least:
+                warnings.append(f"nqf was raised from {ps.nqf} to {least}, the least runatom accepts "
+                                "for ifqopt 3.")
+            ps = ri.replace(ps, ifqopt=3, nqf=max(ps.nqf, least))
+        remapped = ri.ps_fields(ps)
+        fields["ps_partition"] = remapped["ps_partition"]
+        fields.update({key: remapped[key] for key in PROJECTOR_PS_KEYS})
+    if donor.ae.exfact + 0.0 != PBE:
+        warnings.append(f"{donor_symbol}'s case was made for {ri.xc_label(donor.ae.exfact)}; this template is "
+                        "PBE, so its radii and reference energies were tuned for another functional.")
+    try:
+        problems = ri.check_case(ri.case_from_fields(fields))
+    except ValueError as exc:
+        problems = [str(exc)]
+    warnings += [f"Check: {p}" for p in problems]
+    return fields, warnings
+
+
+def _starter_warnings(symbol: str) -> List[str]:
+    z = AtomicData.atomic_numbers[symbol]
+    if STARTER_XION.get(z):
+        return [f"runatom does not converge the neutral {symbol} atom (its 4f state), so the starter is the "
+                f"{STARTER_XION[z]:+g} ion with one 6s electron removed, as the library does for Ti. Change xion "
+                "and the occupations on the All-electron tab for another configuration."]
+    return []
+
+
+def suggestions(symbol: str, roots: Sequence[Path]) -> Tuple[List[Suggestion], List[str]]:
+    """What the window offers for `symbol`, best first, and notes on library cases that were skipped."""
+    _checked_z(symbol)
+    variants, notes = element_variants(symbol, roots)
+    if variants:
+        options = []
+        for variant in rank_variants(variants):
+            warnings = [] if variant.exfact == PBE else [
+                f"No PBE case for {symbol} in the library; loaded {variant.folder.name} "
+                f"({ri.xc_label(variant.exfact)}). Changing exfact to 5 alone is not enough: GGA needs "
+                "ifqopt 3, and the radii were tuned for this functional."]
+            options.append(Suggestion("library", variant.label, ri.case_to_fields(ri.read_case_folder(variant.folder)),
+                                      variant.folder, f"From {variant.folder.name}. Every field stays editable.",
+                                      tuple(warnings)))
+        return options, notes
+
+    skipped = [f"Library case {n}" for n in notes]
+    starter_warnings = _starter_warnings(symbol)
+    options = []
+    for donor_symbol in template_donors(symbol, roots):
+        donor_variants, _ = element_variants(donor_symbol, roots)
+        if not donor_variants:
+            continue
+        donor = rank_variants(donor_variants)[0]
+        fields, warnings = template_fields(symbol, donor.folder, ri.read_case_folder(donor.folder))
+        options.append(Suggestion("template", f"Template from {donor.folder.name}", fields, donor.folder,
+                                  f"Template from {donor.folder.name}: review before use. Every field stays "
+                                  "editable.", tuple(warnings + starter_warnings + skipped)))
+        break
+    if not library_elements(roots):
+        reason = ("The USPP library was not found, so no tested values could be suggested or copied. "
+                  "Enter rc, rcloc, rinner, the projectors and the local potential, or import a case.")
+    elif options:
+        reason = None
+    else:
+        reason = (f"No element of group {group_and_period(symbol)[0]} is in the USPP library, so no radii "
+                  "could be copied. Enter rc, rcloc, rinner, the projectors and the local potential on the "
+                  "Pseudopotential tab, or import a case.")
+    starter_note = "Computed starter: the Pseudopotential tab is still to be filled. Every field stays editable."
+    options.append(Suggestion("starter", STARTER_LABEL, starter_fields(symbol), None, starter_note,
+                              tuple(([reason] if reason else []) + starter_warnings + (skipped if not options else []))))
+    return options, notes
