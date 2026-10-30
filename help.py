@@ -2487,8 +2487,9 @@ third_party/uspp-736). No separate installation is needed.
 
 WORKFLOW
 1. Choose a job folder (Browse...). Every input and output file is written there.
-2. Start from a library case (Import library case...: the Work/ folder of USPP
-   holds tested inputs for 45 elements) or from the Ti example loaded at start.
+2. Start from an element (Choose element..., see SUGGESTED VALUES), from a
+   library case (Import library case...: the Work/ folder of USPP holds tested
+   inputs for 45 elements) or from the Ti example loaded at start.
 3. Edit the tabs. Type values separated by spaces; the tool writes them in the
    fixed columns runatom reads, so spacing does not matter.
 4. Check runs every test runatom makes before it starts; Run writes the inputs and
@@ -2503,6 +2504,39 @@ WORKFLOW
    new pseudopotential and its CPMD file: they are written right after the
    generation stage. Every run first deletes the output files of the previous
    one, so nothing in the folder is left over from an earlier run.
+
+SUGGESTED VALUES (Element row)
+Choose element... opens a periodic table; click an element up to U (Z = 92) and
+every field is filled. Bold elements have tested cases in the library. Every
+field stays editable; nothing is filled again while you type. The list beside
+the button offers, best first:
+- Library cases (45 elements): the case unmodified, PBE first, then PW91, other
+  GGA, LDA. When the element has no PBE case, a dialog says which functional
+  was loaded.
+- Template from <case> (an element without a library case): the All-electron
+  tab is computed for the element (below); the Pseudopotential tab is copied
+  UNCHANGED from the nearest library element of the same group (nearest
+  period; on a tie the heavier one), its valence list moved by the period
+  difference. A dialog names the donor and lists every change made: a valence
+  shell the element has no electron in is dropped and its projectors keep the
+  donor's energy as eeread; ifqopt is set to 3 for PBE (nqf raised to 6 when
+  needed); and every problem Check finds. The radii were chosen for the donor:
+  a template is a starting point, not a tested pseudopotential. Add tests and
+  compare with all-electron results before production use. If the donor's
+  valence shells cannot hold the element's (the 4f of Ce-Lu, Pa, U), only the
+  radii are copied and the projectors are left blank.
+- Computed starter: the All-electron tab only; the radii, projectors and local
+  potential are left blank (groups 7 and 18 have no library element, so they
+  get only this).
+The computed All-electron tab: the neutral atom's ground configuration (NIST,
+Madelung otherwise), PBE (exfact 5), scalar-relativistic (irel 2), semicore
+(n-1)s and (n-1)p in the valence for groups 1-2 from Na and groups 3-6 from Sc,
+and eigenvalue guesses that are runatom's own converged values. Dy, Ho and Er
+start as +1 ions (one 6s electron removed): runatom never converges the 4f
+state of these neutral atoms. Every starter converges with the shipped
+runatom.exe.
+If the form was edited by hand, a dialog asks before it is replaced. Undo
+defaults brings back the inputs as they were before each of the last 10 fills.
 
 FILES (in the job folder)
 <symbol>_ae_<config>.adat/.out/.ae/.atwf/.logd   all-electron run
@@ -2553,6 +2587,10 @@ RULES WORTH KNOWING
 - GGA functionals (exfact 1-5) need ifqopt = 3; runatom refuses -1, 0, 1 and 2,
   although Doc/TUTORIAL suggests starting with -1.
 - The radial mesh may have at most 1000 points (lower rmax or bbsf).
+- rlogd must fall on mesh point 10 or above even when no log derivatives are
+  asked for (about 2 bohr is safe); runatom stops otherwise.
+- ifqopt 2 needs nqf >= 4 and ifqopt 3 needs nqf >= 6 (one more with Q
+  constraints), unless every projector has iptype 3.
 - File names are limited to 40 characters, so keep the symbol and configuration
   names short.
 - A large q-matrix eigenvalue gives a "mild" (> 5) or "severe" (> 20) warning;

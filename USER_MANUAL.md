@@ -3515,7 +3515,7 @@ Use **Tools > Vanderbilt USPP Generator (runatom)** to generate an ultrasoft pse
 Workflow:
 
 1. Choose a **job folder** (**Browse...**). Every input and output file is written there.
-2. Start from a library case (**Import library case...**: the `Work` folder of USPP holds tested inputs for 45 elements) or from the Ti example loaded when the window opens.
+2. Start from an element (**Choose element...**, see *Choosing an element* below), from a library case (**Import library case...**: the `Work` folder of USPP holds tested inputs for 45 elements) or from the Ti example loaded when the window opens.
 3. Edit the tabs **All-electron**, **Pseudopotential** and **Tests**. Type values separated by spaces; the tool writes them in the fixed columns `runatom` reads, so spacing does not matter.
 4. **Check** runs every test that `runatom` makes before it starts. **Run** writes the inputs and runs, in order: the all-electron reference, the pseudopotential generation and, for each test, the all-electron test configuration and the transferability test.
    **Save inputs** writes the checked input files to the job folder without running. **Import .adat file...** loads one all-electron or generation input into its tab (a test input is refused, with an explanation). The **Also write a Makefile (to run the case by hand under Linux/WSL)** switch writes a Makefile for running the case outside the window. The Makefile assumes a USPP source tree: the job folder three levels below the tree's root (`ROOT=../../..`) and the program built there as `Bin/runatom.x`.
@@ -3523,18 +3523,52 @@ Workflow:
 
 Every run first deletes the output files of the previous run in the job folder, so nothing shown or left there comes from an earlier run. If a stage fails, an error dialog names it; the **Results** tab still shows the stages that finished, followed by `Stopped at <stage>: <reason>`, and **Open .out** opens the report of the stage that failed. The formatted file for CPMD is written right after the generation stage, so a transferability test that fails does not hide the new pseudopotential: the `.uspp` file and its formatted copy stay in the folder.
 
+##### Choosing an element (suggested values)
+
+**Choose element...** (the **Element** row, above the name fields) opens a periodic table. Click any element up to uranium (Z = 92; heavier elements are greyed out) and every field of the window is filled with suggested values. Elements drawn in bold have tested cases in the USPP library. Every field stays editable, and nothing is filled again while you type.
+
+The list beside the button offers, best first:
+
+- **Library cases** (45 elements). The case exactly as it is in the library, ranked PBE first, then PW91, other GGA functionals, LDA. When the element has no PBE case, a dialog says which functional was loaded: changing `exfact` to 5 alone is not enough, because GGA needs `ifqopt` 3 and the radii were tuned for the other functional.
+- **Template from `<case>`** (an element without a library case). The **All-electron** tab is computed for the element (below). The **Pseudopotential** tab is copied *unchanged* from the nearest library element of the same group (the nearest period; on a tie, the heavier element), with its valence list moved by the period difference. Lanthanides and actinides count as group 3. A dialog titled *Values copied from `<donor>`* names the donor case and its functional and lists every change made:
+  - a valence shell that the element holds no electron in (for example Ca's empty 3d for Mg) is dropped, and the projectors that took their reference energy from it keep the donor's energy as `eeread`;
+  - `ifqopt` is set to 3 for PBE, and `nqf` raised to 6 when the donor's was lower;
+  - every problem **Check** finds.
+
+  The radii were chosen for the donor, not for this element. A template is a starting point, not a tested pseudopotential: add transferability tests and compare with all-electron results before using it in production. If the donor's valence shells cannot hold the element's own (the 4f of Ce-Lu, Pa and U), only the radii and controls are copied, and the projectors, local potential and Q-function line are left blank.
+- **Computed starter (radii blank)**: the **All-electron** tab only. Groups 7 (Mn, Tc, Re) and 18 (He-Rn) have no library element, so they get only this, with a dialog saying so.
+
+The computed **All-electron** tab: the neutral atom's ground configuration (NIST; Madelung order where NIST agrees with it), PBE (`exfact` 5), scalar-relativistic (`irel` 2), and semicore (n-1)s and (n-1)p in the valence for groups 1-2 from Na and groups 3-6 from Sc. The eigenvalue guesses are `runatom`'s own converged eigenvalues (stored with the program), because Slater-rule estimates miss open d and f shells by up to a factor of 100 and `runatom` then fails. A few atoms use a larger mesh or stronger mixing damping, already filled in. Dy, Ho and Er start as +1 ions (one 6s electron removed), because `runatom` never converges the 4f state of these neutral atoms; a dialog says so. Every computed starter converges with the shipped `runatom.exe` (the test suite runs all 92).
+
+If you edited the form by hand, a dialog asks before your values are replaced. **Undo defaults** restores the inputs as they were before each of the last 10 fills: fields, library tests, the list's choice and the highlighted element.
+
+How the templates fare as copied (Run with the shipped `runatom.exe`; from `benchmarks/report_runatom_templates.py`):
+
+| Outcome | Elements |
+|---|---|
+| Generate as copied | Co, Ge, Br, Rb, Pd, In, Sb, Cs, Hf, Hg, At, Ra, Ac, Th |
+| Generation stops: q-matrix eigenvalue too large or unreasonable | Be, Mg, Fr |
+| Generation stops: negative density while descreening | V, Sn, Te, Po |
+| Generation stops: a state or the potential does not converge | Mo, I |
+| Radii only (projectors left blank) | Ce-Lu, Pa, U |
+| Computed starter only | He, Ne, Ar, Kr, Xe, Rn, Mn, Tc, Re |
+
+Even a template that generates still needs tests before it can be trusted.
+
 Fields (see also `Doc/INPUT_AE`, `Doc/INPUT_GEN` and `Doc/TUTORIAL` in the USPP library):
 
 - **All-electron**: print and plot switches and the logarithmic-derivative window; convergence settings (`thresh`, `tol`, `damp`, `maxit`); the nuclear charge `z`, the ionic charge `xion` and the functional `exfact` (0 CA, -1 Wigner, -2 HL, -3 GL, 1 BLYP, 2 B88, 3 BP86, 4 PW91, 5 PBE); the radial mesh (`rmax`, `aasf`, `bbsf`) and `irel`; and one shell per line as `nnlz wwnl ee` (for example `320 1.0 -0.2` is 3d, one electron, starting guess -0.2 Ry).
 - **Pseudopotential**: numbers of core and valence states and angular momenta; the core-correction switch and radii (`ifpcor`, `rinner`, `rpcor`); the local-potential radius `rcloc` and one `rc` per l; one projector per line (`l keyee eeread iptype`, plus `npf ptryc` when some projector has `iptype` 2); the local channel; the Q-function settings (`ifqopt nqf qtryc`) and Q constraints.
 - **Tests**: one test per line as `name xion nnlz=occupation ...`. Shells not listed keep their occupation from the generation.
 
-What a test inherits. A test you type or change takes everything except its name, `xion` and occupations from the other tabs: its all-electron stage uses the **All-electron** tab (print and plot switches, convergence settings, functional, mesh, shells and their `ee` guesses), and its test stage uses the **Pseudopotential** tab's controls (`ifprt`, `ilogd`, the logarithmic-derivative window, `thresh tol damp maxit`), its Bessel line and its partition (`ncores nvales nang`). A test imported with a library case keeps the library's own all-electron and test inputs instead (several library cases tune `damp`, `maxit` or the `ee` guesses per test and need them to converge), as long as its row on the **Tests** tab and the generation's shell list are unchanged.
+What a test inherits. A test you type or change takes everything except its name, `xion` and occupations from the other tabs: its all-electron stage uses the **All-electron** tab (print and plot switches, convergence settings, functional, mesh, shells and their `ee` guesses), and its test stage uses the **Pseudopotential** tab's controls (`ifprt`, `ilogd`, the logarithmic-derivative window, `thresh tol damp maxit`), its Bessel line and its partition (`ncores nvales nang`). A test imported with a library case keeps the library's own all-electron and test inputs instead (several library cases tune `damp`, `maxit` or the `ee` guesses per test and need them to converge), as long as its row on the **Tests** tab and the generation are unchanged: the shell list, `z`, `exfact`, `irel`, the mesh (`rmax`, `aasf`, `bbsf`) and `ncores nvales nang`. Change any of these and the imported tests are derived from the tabs like typed ones, because `runatom` refuses a test whose inputs disagree with the pseudopotential it tests.
 
 Rules worth knowing:
 
 - GGA functionals (`exfact` 1 to 5) need `ifqopt` = 3; `runatom` refuses -1, 0, 1 and 2, although `Doc/TUTORIAL` suggests starting with -1.
 - The radial mesh may have at most 1000 points (lower `rmax` or `bbsf`).
+- `rlogd` must fall on radial mesh point 10 or above (and below the last one) even when no logarithmic derivatives are requested; about 2 bohr is safe. **Check** reports it.
+- `ifqopt` 2 needs `nqf` of at least 4 and `ifqopt` 3 at least 6 (one more with Q constraints), unless every projector has `iptype` 3. **Check** reports it.
 - File names are limited to 40 characters, so keep the symbol and the configuration names short.
 - A large q-matrix eigenvalue gives a "mild" (above 5) or "severe" (above 20) warning, and `runatom` stops above 50.
 - If a run reports negative densities, reduce `rinner` or add Q constraints.

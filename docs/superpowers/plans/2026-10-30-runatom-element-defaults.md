@@ -529,6 +529,18 @@ def _remap_keyee(donor_valence, target_valence, keyee):
 - [ ] Write the texts; run `python -m pytest tests/ -q`.
 - [ ] Commit `docs(uspp): element defaults`.
 
+## Implementation notes (2026-10-30): where the implementation departs from rev. 2
+
+Each change was forced by running the shipped `runatom.exe`:
+
+1. **Eigenvalue guesses.** Slater's rules missed converged eigenvalues by 2× to 100× (Nd 4f: −12 Ry guessed against −0.13 Ry), and 39 of 92 starters failed. So the planned check "within a factor of 3 of the library's `ee`" was dropped: the library's own guesses are often 50× off and still converge. The guesses now come from the generated `runatomStarterData.py` (built by `tools/make_runatom_starter_data.py`, bootstrapping through Z, as INPUT_AE suggests). Slater remains only as the fallback for shells not in the table.
+2. **`rlogd`.** `rlogd = 0` makes `rinit` stop (klogd < 10) even with ilogd 0. The starter uses rlogd 2.0, and `check_ae`/`check_ps` now report it (`log_derivative_index`).
+3. **Mesh and damping.** The starter uses rmax 150 and damp 0.2. Twelve atoms (Co, Ag, Ce–Tb, Pa, U) need rmax 400 and damp 0.1–0.2, recorded per atom in `STARTER_SETTINGS`.
+4. **Dy, Ho, Er** do not converge as neutral atoms with any setting tried (the 4f state). The starter uses the +1 ion (`STARTER_XION`), with a warning. The exe test runs all 92 starters.
+5. **Template remap.** The rule "same l and rank" was replaced by **valence position**: `keyee` takes a state's eigenvalue whatever its l (Nb's d projector uses 5p). Donor valence shells the target holds no electron in are **dropped**, because Ca's empty 3d made Mg's all-electron stage fail; their references become keyee 0 with the donor's `ee`. So a template's all-electron input always has exactly the starter's shells.
+6. **`psqf2`.** ifqopt 3 needs nqf ≥ 6 (≥ 7 with a constraint), so the template raises nqf. `check_ps` now mirrors this rule; it was missing.
+7. **Live check.** The window size is unchanged (1025 × 700 logical at 125 %). Bold and disabled picker buttons render, and the Mg template, starter choice, Undo and picker close all work.
+
 ## Self-review
 
 - Q1 → `FUNCTIONAL_PREFERENCE`, ranking tests, starter exfact 5. Q2 → §3.4, Task 4, warning dialog. Q3 → out of scope, recorded. Q4 → `MAX_DEFAULTS_Z`, `selectable`, refusal test. Q5 → §4.3 confirmation + undo stack, Task 6 tests. Q6 → Task 0. Q7 → §3.3 semicore rule, Task 3 tests.
