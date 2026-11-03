@@ -1,4 +1,5 @@
 """Tests for the Gaussian 16 input builder core (gaussianInput, no Toga)."""
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -193,3 +194,37 @@ class TestOtherPanels:
                                     dispersion="GD3BJ", scf_tight=True, nosymm=True, pop_level="Full",
                                     solvation="SMD", solvent="DiMethylSulfoxide"))
         assert len(lines) > 1 and all(len(line) <= fi.ROUTE_WIDTH for line in lines)
+
+
+class TestModRedundant:
+    def test_scan_and_freeze_lines(self):
+        assert gi.parse_modredundant("B 1 2 S 10 0.05\n\nd 1 2 3 4 f\nA 1 2 3 F", n_atoms=4) == [
+            ("B", (1, 2), "S"), ("D", (1, 2, 3, 4), "F"), ("A", (1, 2, 3), "F")]
+
+    @pytest.mark.parametrize("text,fragment", [
+        ("X 1 2 F", "start with B, A or D"),
+        ("B 1 F", "needs 2 atom numbers"),
+        ("A 1 1 2 F", "different atoms"),
+        ("B 0 2 F", "different atoms"),
+        ("B 1 9 F", "atom 9 does not exist (the molecule has 3 atoms)"),
+        ("B 1 2", "end with F (freeze) or S <steps> <step size> (scan)"),
+        ("B 1 2 S 0 0.1", "steps must be a positive integer"),
+        ("B 1 2 S 5 0", "step size must be a non-zero number"),
+        ("B 1 2 S 5 x", "step size must be a non-zero number"),
+    ])
+    def test_problems_name_the_line(self, text, fragment):
+        with pytest.raises(ValueError, match=re.escape(fragment)):
+            gi.parse_modredundant("B 1 2 F\n" + text, n_atoms=3)
+        with pytest.raises(ValueError, match="line 2"):
+            gi.parse_modredundant("B 1 2 F\n" + text, n_atoms=3)
+
+    def test_atom_range_is_not_checked_without_a_molecule(self):
+        assert gi.parse_modredundant("B 1 99 F") == [("B", (1, 99), "F")]
+
+    def test_helper_row_builds_a_line(self):
+        assert gi.modredundant_line("Dihedral", "1, 2 3 4", "Scan", "36", "10.0") == "D 1 2 3 4 S 36 10.0"
+        assert gi.modredundant_line("Bond", "1 2", "Freeze", "", "") == "B 1 2 F"
+
+    def test_helper_row_refuses_what_the_parser_refuses(self):
+        with pytest.raises(ValueError, match="needs 3 atom numbers"):
+            gi.modredundant_line("Angle", "1 2", "Freeze", "", "")

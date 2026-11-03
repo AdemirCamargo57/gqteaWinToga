@@ -8,6 +8,7 @@ inverse used by Open input. The Fukui Job Type is delegated to ``fukuiInput`` un
 ASCII with LF endings and relative checkpoint names: the job runs under Linux from the input's folder.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -402,3 +403,60 @@ def route_lines(step: GaussianStepSpec) -> List[str]:
     keywords, _ = route_keywords(step)
     return fi.build_route(step.print_level, method_keyword(step), basis_keyword(step),
                           " ".join(format_keyword(k) for k in keywords))
+
+
+# ----------------------------------------------------------------------
+# Scan / freeze lines (Opt=ModRedundant)
+# ----------------------------------------------------------------------
+_MODRED_COUNTS = {letter: count for letter, count in gk.MODRED_TYPES.values()}
+
+
+def parse_modredundant(text: str, n_atoms: Optional[int] = None) -> List[Tuple[str, Tuple[int, ...], str]]:
+    """'B 1 2 S 10 0.05' / 'D 1 2 3 4 F' lines -> (letter, atoms, 'S'|'F'); ValueError names the line."""
+    parsed = []
+    for number, raw in enumerate((text or "").splitlines(), start=1):
+        line = raw.strip()
+        if not line:
+            continue
+        where = f"Scan/freeze line {number} ('{line}')"
+        tokens = line.split()
+        letter = tokens[0].upper()
+        if letter not in _MODRED_COUNTS:
+            raise ValueError(f"{where}: start with B, A or D (bond, angle, dihedral).")
+        count = _MODRED_COUNTS[letter]
+        atom_tokens = tokens[1:1 + count]
+        if len(atom_tokens) != count or not all(t.isdigit() for t in atom_tokens):
+            raise ValueError(f"{where}: {letter} needs {count} atom numbers.")
+        atoms = tuple(int(t) for t in atom_tokens)
+        if len(set(atoms)) != count or min(atoms) < 1:
+            raise ValueError(f"{where}: give {count} different atoms, numbered from 1.")
+        if n_atoms is not None and max(atoms) > n_atoms:
+            raise ValueError(f"{where}: atom {max(atoms)} does not exist (the molecule has {n_atoms} atoms).")
+        rest = [t.upper() for t in tokens[1 + count:]]
+        if rest == ["F"]:
+            action = "F"
+        elif len(rest) == 3 and rest[0] == "S":
+            if not rest[1].isdigit() or int(rest[1]) < 1:
+                raise ValueError(f"{where}: the number of steps must be a positive integer.")
+            try:
+                size = float(rest[2])
+            except ValueError:
+                size = 0.0
+            if size == 0.0 or not math.isfinite(size):
+                raise ValueError(f"{where}: the step size must be a non-zero number.")
+            action = "S"
+        else:
+            raise ValueError(f"{where}: end with F (freeze) or S <steps> <step size> (scan).")
+        parsed.append((letter, atoms, action))
+    return parsed
+
+
+def modredundant_line(kind: str, atoms_text: str, action: str, steps_text: str, size_text: str) -> str:
+    """The Molecule panel's helper row -> one line, checked by the same rules as typed lines."""
+    letter, _ = gk.MODRED_TYPES[kind]
+    atoms = [t for t in re.split(r"[\s,]+", (atoms_text or "").strip()) if t]
+    code = gk.MODRED_ACTIONS[action]
+    words = [letter, *atoms, code] + ([steps_text.strip(), size_text.strip()] if code == "S" else [])
+    line = " ".join(w for w in words if w)
+    parse_modredundant(line)
+    return line
