@@ -519,18 +519,240 @@ class GaussianInputBuilderUI:
             _assign(getattr(self, attr), "enabled", enabled)
         _assign(self.fukui_note_label, "text", FUKUI_NOTE if fukui else "")
 
-    # --- action handlers: filled in by Task 10 ---------------------------------
-    async def browse_output_dir(self, widget): pass
-    async def load_geometry(self, widget): pass
-    async def open_input(self, widget): pass
-    async def preview(self, widget): pass
-    async def save_input(self, widget): pass
-    async def defaults(self, widget): pass
+    # --- dialogs ------------------------------------------------------------
+    async def _show_error(self, title: str, message: str):
+        await self.window.dialog(toga.ErrorDialog(title, message))
 
-    def on_step_select(self, widget): pass
-    def add_linked_step(self, widget): pass
-    def remove_step(self, widget): pass
-    def move_step_up(self, widget): pass
-    def move_step_down(self, widget): pass
-    def add_modredundant_line(self, widget): pass
-    def closeTopLevel(self, widget): pass
+    async def _show_info(self, title: str, message: str):
+        await self.window.dialog(toga.InfoDialog(title, message))
+
+    async def _confirm(self, title: str, message: str) -> bool:
+        return bool(await self.window.dialog(toga.QuestionDialog(title, message)))
+
+    async def _ask_open_path(self):
+        return await self.window.dialog(toga.OpenFileDialog(title="Open a Gaussian input",
+                                                            file_types=INPUT_FILE_TYPES))
+
+    def _status(self, text: str) -> None:
+        _assign(self.status_label, "text", text)
+
+    # --- steps --------------------------------------------------------------
+    def _store_current(self) -> bool:
+        """Keep the panels in self.steps; False (and a status message) when a number does not parse."""
+        try:
+            self.steps[self.current_step] = self._collect_step()
+            return True
+        except ValueError as exc:
+            self._status(f"Fix step {self.current_step + 1} first: {exc}")
+            return False
+
+    def _show_step(self, index: int) -> None:
+        self.current_step = index
+        self._step_labels = []                       # force the list (and its selection) to be rewritten
+        self._load_step(self.steps[index])
+        self.refresh()
+
+    def on_step_select(self, widget):
+        if self._syncing or widget.value not in self._step_labels:
+            return
+        index = self._step_labels.index(widget.value)
+        if index == self.current_step:
+            return
+        if not self._store_current():
+            self._syncing = True
+            try:
+                _assign(self.step_selection, "value", self._step_labels[self.current_step])
+            finally:
+                self._syncing = False
+            return
+        self._show_step(index)
+
+    def add_linked_step(self, widget):
+        if not self._store_current():
+            return
+        step = self.steps[self.current_step]
+        if step.job_type == gk.JOB_FUKUI:
+            self._status("The Fukui functions job type is already three linked jobs; it cannot take more steps.")
+            return
+        self.steps.insert(self.current_step + 1, gi.linked_step(step))
+        self._show_step(self.current_step + 1)
+        self._status(f"Step {self.current_step + 1} added: it reads the geometry and orbitals of the checkpoint.")
+
+    def remove_step(self, widget):
+        if len(self.steps) == 1:
+            self._status("This is the only step; there is nothing to remove.")
+            return
+        del self.steps[self.current_step]
+        self._show_step(min(self.current_step, len(self.steps) - 1))
+
+    def _move_step(self, delta: int) -> None:
+        target = self.current_step + delta
+        if not 0 <= target < len(self.steps) or not self._store_current():
+            return
+        self.steps[self.current_step], self.steps[target] = self.steps[target], self.steps[self.current_step]
+        self._show_step(target)
+
+    def move_step_up(self, widget):
+        self._move_step(-1)
+
+    def move_step_down(self, widget):
+        self._move_step(+1)
+
+    # --- molecule -----------------------------------------------------------
+    def add_modredundant_line(self, widget):
+        try:
+            line = gi.modredundant_line(self.modred_type_selection.value, self.modred_atoms_input.value or "",
+                                        self.modred_action_selection.value, self.modred_steps_input.value or "",
+                                        self.modred_size_input.value or "")
+        except ValueError as exc:
+            self._status(str(exc))
+            return
+        text = (self.modredundant_input.value or "").rstrip()
+        self.modredundant_input.value = f"{text}\n{line}" if text else line
+        self._status(f"Added: {line}")
+        self.refresh()
+
+    async def load_geometry(self, widget):
+        try:
+            path = await self.window.dialog(toga.OpenFileDialog(title="Geometry of the molecule",
+                                                                file_types=gi.GEOMETRY_FILE_TYPES))
+            if path:
+                self.apply_geometry_file(path)
+        except ValueError as exc:
+            await self._show_error("Geometry Error", str(exc))
+        except Exception as exc:
+            await self._show_error("File Selection Error", str(exc))
+
+    def apply_geometry_file(self, path):
+        """Fill the geometry (and the charge/multiplicity a .gjf/.fchk gives); keep a typed job name.
+
+        The Fukui ion multiplicities are cleared, never guessed: they belong to the previous molecule.
+        """
+        path = Path(path)
+        text, charge, mult = gi.read_geometry_file(path)
+        self._syncing = True
+        try:
+            _assign(self.geometry_input, "value", text)
+            if charge is not None:
+                _assign(self.charge_input, "value", str(charge))
+            if mult is not None:
+                _assign(self.multiplicity_input, "value", str(mult))
+            _assign(self.fukui_plus_mult_input, "value", "")
+            _assign(self.fukui_minus_mult_input, "value", "")
+            if (self.stem_input.value or "").strip() in ("", gi.fi.DEFAULT_STEM):
+                stem = path.stem[:-2] if path.stem.endswith("_N") else path.stem
+                _assign(self.stem_input, "value", "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in stem))
+            if not (self.output_dir_input.value or "").strip():
+                _assign(self.output_dir_input, "value", str(path.resolve().parent))
+        finally:
+            self._syncing = False
+        self._status(f"Geometry loaded from {path.name}.")
+        self.refresh()
+
+    async def browse_output_dir(self, widget):
+        try:
+            folder = await self.window.dialog(toga.SelectFolderDialog(title="Folder for the Gaussian input"))
+            if folder:
+                self.output_dir_input.value = str(folder)
+        except Exception as exc:
+            await self._show_error("Folder Selection Error", str(exc))
+
+    # --- whole job ------------------------------------------------------------
+    def apply_input_file(self, path) -> List[str]:
+        """Open input...: every step of a Gaussian input into the panels; returns the reader's notes."""
+        spec, notes = gi.read_input_file(path)
+        self.steps = spec.steps
+        self._syncing = True
+        try:
+            _assign(self.stem_input, "value", spec.stem)
+            _assign(self.output_dir_input, "value", spec.output_dir)
+            _assign(self.geometry_input, "value", spec.geometry)
+            _assign(self.formchk_switch, "value", spec.write_formchk)
+        finally:
+            self._syncing = False
+        self._show_step(0)
+        _assign(self.messages_output, "value", "\n".join(f"NOTE: {n}" for n in notes) or "Read without notes.")
+        self._status(f"{Path(path).name}: {len(spec.steps)} step(s) read into the panels.")
+        return notes
+
+    async def open_input(self, widget):
+        try:
+            path = await self._ask_open_path()
+            if path:
+                self.apply_input_file(path)
+        except ValueError as exc:
+            await self._show_error("Open Input Error", str(exc))
+        except Exception as exc:
+            await self._show_error("File Selection Error", str(exc))
+
+    def _prepare(self) -> gi.GaussianJob:
+        return self.builder.prepare(self._collect_inputs())
+
+    def _warnings_text(self, job: gi.GaussianJob) -> str:
+        return "\n".join(f"WARNING: {w}" for w in job.warnings) if job.warnings else "No warnings."
+
+    def _run_instructions(self, job: gi.GaussianJob) -> str:
+        gjf, log = job.input_path.name, job.input_path.with_suffix(".log").name
+        lines = ["Written:", f"  {job.input_path}"] + ([f"  {job.script_path}"] if job.script_path else []) + [
+            "",
+            "Next, in a Linux shell with Gaussian 16 set up (WSL, or the cluster after copying the folder):",
+            f"  cd '{gi.wsl_path(job.input_path.parent)}'      (WSL; on a cluster: the copied folder)",
+            f"  g16 < {gjf} > {log}      (or submit it through the cluster's queue)"]
+        if job.script_path:
+            lines.append(f"  bash {job.script_path.name}")
+        if job.fukui is not None:
+            lines.append(f"Then open {job.fukui.states[0].fchk.name} in Tools > Analysis of Fukui Functions; the N+1 "
+                         "and N-1 files are filled in automatically (copy the three .fchk back first if they were "
+                         "made on a cluster).")
+        elif job.script_path:
+            lines.append("Then open the .fchk in the 3D Molecular Viewer (Orbitals, ESP, QTAIM, NTO, Excitation tabs).")
+        return "\n".join(lines) + "\n\n" + self._warnings_text(job)
+
+    async def preview(self, widget):
+        try:
+            job = self._prepare()
+        except ValueError as exc:
+            await self._show_error("Input Error", str(exc))
+            return
+        self.job = job
+        self.preview_output.value = self.builder.input_text(job)
+        self.messages_output.value = self._warnings_text(job)
+        self.tabs.current_tab = PREVIEW_TAB
+        self._status(f"Preview of {job.input_path.name} (not saved yet).")
+
+    async def save_input(self, widget):
+        try:
+            job = self._prepare()
+        except ValueError as exc:
+            await self._show_error("Input Error", str(exc))
+            return
+        existing = [p.name for p in (job.input_path, job.script_path) if p is not None and p.exists()]
+        if existing and not await self._confirm("Replace Files?", f"{', '.join(existing)} already exist in "
+                                                f"{job.input_path.parent}. Replace them?"):
+            return
+        try:
+            self.builder.write_files(job)
+        except ValueError as exc:
+            await self._show_error("Write Error", str(exc))
+            return
+        self.job = job
+        self.preview_output.value = self.builder.input_text(job)
+        self.messages_output.value = self._run_instructions(job)
+        self.tabs.current_tab = PREVIEW_TAB
+        self._status(f"Saved {job.input_path.name}" + (f" and {job.script_path.name}." if job.script_path else "."))
+
+    async def defaults(self, widget):
+        """Every step back to one default step; the molecule (geometry, charge, multiplicity) is kept."""
+        self._store_current()
+        first = self.steps[0]
+        reference = gi.GaussianStepSpec(charge=first.charge, multiplicity=first.multiplicity)
+        if self.steps != [reference] and not await self._confirm(
+                "Reset to Defaults?", "Every panel of every step goes back to its default (the geometry, "
+                                      "charge and multiplicity are kept). Continue?"):
+            return
+        self.steps = [reference]
+        self._show_step(0)
+        self._status("Panels reset to their defaults.")
+
+    def closeTopLevel(self, widget):
+        self.window.close()
