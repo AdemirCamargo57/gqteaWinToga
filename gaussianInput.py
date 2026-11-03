@@ -471,6 +471,8 @@ def modredundant_line(kind: str, atoms_text: str, action: str, steps_text: str, 
 INPUT_SUFFIX = ".gjf"
 SCRIPT_HEADER = ("# gQTEA Gaussian 16 input builder: convert the checkpoints to formatted",
                  "# checkpoints for the 3D Molecular Viewer's analysis tabs. Run it where Gaussian")
+ASCII_FIELDS = ("title", "extra_link0", "additional_input", "additional_keywords", "method_other",
+                "basis_other", "solvent_other")
 FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "READFC", "RCFC"}
 
 
@@ -576,6 +578,9 @@ def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
             errors.append(f"{FIELD_LABELS[name]}: '{getattr(step, name)}' is not one of the choices.")
     if step.family in gk.FAMILIES and step.method_name not in method_choices(step.family):
         errors.append(f"Method: '{step.method_name}' is not a {step.family} method.")
+    for name in ASCII_FIELDS:
+        if not getattr(step, name).isascii():
+            errors.append(f"{FIELD_LABELS[name]}: use ASCII characters only (Gaussian input files are ASCII).")
     if errors:
         return errors, warnings, None
 
@@ -798,9 +803,13 @@ class GaussianInputBuilder:
             files.append((job.script_path, self.script_text(job)))
         for path, text in files:
             try:
-                with open(path, "w", encoding="ascii", errors="strict", newline="\n") as handle:
-                    handle.write(text)
-            except (OSError, UnicodeEncodeError) as exc:
+                data = text.encode("ascii")     # before open(): a failure must not truncate an existing file
+            except UnicodeEncodeError as exc:
+                raise ValueError(f"Could not write {path}: {exc}") from exc
+            try:
+                with open(path, "wb") as handle:
+                    handle.write(data)
+            except OSError as exc:
                 raise ValueError(f"Could not write {path}: {exc}") from exc
             written.append(path)
         return written

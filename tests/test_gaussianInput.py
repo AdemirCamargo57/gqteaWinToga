@@ -308,6 +308,15 @@ class TestInputText:
         script = job.script_path.read_text()
         assert 'convert "water.chk" "water.fchk"' in script and "3D Molecular Viewer" in script
 
+    def test_unencodable_text_leaves_an_existing_file_untouched(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path))
+        job.steps[0].title = "água"
+        job.input_path.write_text("keep")
+        with pytest.raises(ValueError, match="Could not write"):
+            builder.write_files(job)
+        assert job.input_path.read_text() == "keep"
+
     def test_write_error_is_a_value_error(self, tmp_path):
         builder = gi.GaussianInputBuilder()
         job = builder.prepare(job_spec(tmp_path))
@@ -353,6 +362,19 @@ class TestValidation:
     ])
     def test_step_problem(self, tmp_path, changes, fragment):
         assert fragment in problems(tmp_path, step(**changes))
+
+    @pytest.mark.parametrize("changes,label", [
+        (dict(title="água"), "Title"),
+        (dict(extra_link0="%Chk=á.chk"), "Extra Link 0 lines"),
+        (dict(additional_input="Ω"), "Additional input"),
+        (dict(additional_keywords="Int=ÚltraFine"), "Additional Keywords"),
+        (dict(method_name=gk.OTHER, method_other="B3ßLYP"), "Other method"),
+        (dict(basis=gk.OTHER, basis_other="é"), "Other basis set"),
+        (dict(solvation="SMD", solvent=gk.OTHER, solvent_other="água"), "Other solvent"),
+    ])
+    def test_non_ascii_text_is_refused(self, tmp_path, changes, label):
+        text = problems(tmp_path, step(multiplicity=1, **changes))
+        assert f"{label}: use ASCII characters only (Gaussian input files are ASCII)." in text
 
     def test_job_problems(self, tmp_path):
         text = problems(tmp_path, step(multiplicity=1), stem="bad name", output_dir=str(tmp_path / "nope"),
