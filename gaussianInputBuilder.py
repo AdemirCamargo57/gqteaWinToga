@@ -109,6 +109,7 @@ TAB_TITLES = ("Job Type", "Method", "Molecule", "Title", "Link 0", "General", "G
               "Add. Inp.", "Preview", "Help")
 PREVIEW_TAB = TAB_TITLES.index("Preview")
 INPUT_FILE_TYPES = [suffix.lstrip(".") for suffix in gi.GAUSSIAN_INPUT_SUFFIXES]
+FUKUI_STATUS = ("Fukui functions: three linked jobs (N, N+p, N-q); the controls the job sets itself are greyed out.")
 FUKUI_NOTE = ("The Fukui job writes three linked jobs itself: the title, %Chk/%OldChk, the guess, Add. Inp., "
               "connectivity, the spin prefix and the electronic state are set by it.")
 
@@ -159,6 +160,7 @@ class GaussianInputBuilderUI:
 
     def _panel(self, *children):
         return toga.ScrollContainer(content=toga.Box(children=list(children), style=Pack(direction=COLUMN, margin=10)),
+                                    horizontal=False,
                                     style=Pack(flex=1))
 
     def _field(self, label, widget, hint=None):
@@ -441,6 +443,7 @@ class GaussianInputBuilderUI:
             except ValueError:
                 step = dataclasses.replace(self.steps[self.current_step], job_type=gk.JOB_FUKUI)
             self._load_step(gi.fukui_defaults(step))
+            self._status(FUKUI_STATUS)
         self.refresh()
 
     def refresh(self) -> None:

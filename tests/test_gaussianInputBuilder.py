@@ -142,6 +142,12 @@ class TestRefresh:
         assert ui.scf_tight_switch.value and ui.nosymm_switch.value
         assert ui.route_label.text.startswith("job 1:     #P B3LYP/6-31G(d) SCF=Tight NoSymm Opt")
 
+    def test_choosing_fukui_replaces_the_stale_status(self, tmp_path):
+        ui = make_ui(tmp_path)
+        ui._status("Step 2 added: it reads the geometry and orbitals of the checkpoint.")
+        change(ui, "job_type_selection", gk.JOB_FUKUI)
+        assert ui.status_label.text == gb.FUKUI_STATUS
+
     def test_changes_while_syncing_are_ignored(self, tmp_path):
         ui = make_ui(tmp_path)
         ui._syncing = True
