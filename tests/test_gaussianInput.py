@@ -488,8 +488,13 @@ class TestFukui:
             gi.GaussianInputBuilder().prepare(fukui_job_spec(tmp_path, additional_keywords="Opt=Tight"))
 
     def test_fukui_problems_come_from_fukui_input(self, tmp_path):
-        with pytest.raises(ValueError, match="N\+1 state: enter its spin multiplicity"):
+        with pytest.raises(ValueError, match=r"N\+1 state: enter its spin multiplicity"):
             gi.GaussianInputBuilder().prepare(fukui_job_spec(tmp_path, fukui_plus_multiplicity=None))
+
+    def test_fukui_preview_shows_conflicting_additional_keywords(self, tmp_path):
+        text = gi.route_preview(fukui_job_spec(tmp_path, additional_keywords="Opt=MaxCycles=5 Opt=MaxCycles=7"), 0)
+        assert text.splitlines()[0].startswith("job 1:")
+        assert "earlier Additional Keyword" in text
 
     def test_fukui_defaults(self):
         s = gi.fukui_defaults(step(guess="Read checkpoint", title="t", spin="Unrestricted (U)", chk="a.chk",

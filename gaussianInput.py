@@ -892,8 +892,10 @@ def route_preview(spec: GaussianJobSpec, index: int) -> str:
             f = fukui_spec(spec)
             args = (f.print_level, f.method, f.basis, f.keywords)
             ion_extra = ("Geom=Check", "Guess=Read") if f.guess_read else ("Geom=Check",)
+            errors = fukui_keywords(step)[1]
             return ("job 1:     " + " ".join(fi.build_route(*args, (f.opt_keyword,))) + "\n"
-                    "jobs 2-3:  " + " ".join(fi.build_route(*args, ion_extra)))
+                    "jobs 2-3:  " + " ".join(fi.build_route(*args, ion_extra))
+                    + "".join(f"\n{e}" for e in errors))
         keywords, errors = route_keywords(step)
         route = fi.build_route(step.print_level, method_keyword(step), basis_keyword(step),
                                " ".join(format_keyword(k) for k in keywords))
