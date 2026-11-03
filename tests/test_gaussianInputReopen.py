@@ -150,3 +150,49 @@ class TestReading:
         path.write_text("# hf/sto-3g\n\nt\n\n0 1\nH 0 0 0\nH 0 0 0.74\n\n")
         spec, _ = gi.read_input_file(path)
         assert (spec.stem, spec.output_dir) == ("my_mol", str(tmp_path.resolve()))
+
+
+class TestReviewFixes:
+    H2 = "0 1\nH 0 0 0\nH 0 0 0.74\n\n"
+
+    def test_comment_line_between_link0_and_route(self):
+        spec, _ = gi.read_input_text("%chk=a.chk\n! a note\n# hf/sto-3g\n\nt\n\n" + self.H2)
+        assert spec.steps[0].chk == "a.chk" and spec.steps[0].method_name == gk.NO_CHOICE
+
+    def test_comment_line_inside_the_atom_list(self):
+        spec, _ = gi.read_input_text("# hf/sto-3g\n\nt\n\n0 1\nH 0 0 0\n! second atom\nH 0 0 0.74\n\n")
+        assert len(spec.geometry.splitlines()) == 2 and spec.steps[0].additional_input == ""
+
+    def test_trailing_comment_is_still_stripped(self):
+        spec, _ = gi.read_input_text("# hf/sto-3g ! method\n\nt\n\n" + self.H2)
+        assert spec.steps[0].additional_keywords == ""
+
+    def test_a_second_job_keyword_is_kept(self):
+        spec, notes = gi.read_input_text("# hf/sto-3g nmr freq\n\nt\n\n" + self.H2)
+        s = spec.steps[0]
+        assert s.job_type == gk.JOB_FREQ and "nmr" in s.additional_keywords.lower()
+        assert {"NMR", "FREQ"} <= {gi.keyword_text_name(t).upper() for t in fi.route_tokens(" ".join(gi.route_lines(s)))}
+        assert any("nmr" in n for n in notes)
+
+    def test_opt_with_irc_keeps_the_irc_options(self):
+        spec, _ = gi.read_input_text("# hf/sto-3g opt irc=calcfc\n\nt\n\n" + self.H2)
+        s = spec.steps[0]
+        assert s.job_type == gk.JOB_OPT and "irc=calcfc" in s.additional_keywords
+        route = " ".join(gi.route_lines(s)).upper()
+        assert "IRC" in route and "CALCFC" in route
+
+    def test_unmodelled_cis_options_are_dropped_with_a_plain_note(self):
+        spec, notes = gi.read_input_text("# cis(Direct,NStates=4)/sto-3g\n\nt\n\n" + self.H2)
+        assert spec.steps[0].n_states == 4
+        assert "Step 1: option(s) Direct of CIS have no panel and were dropped; add them back by hand if they matter." in notes
+
+    def test_freeze_flag_coordinate_line_is_refused(self):
+        with pytest.raises(ValueError, match="expected 'Element x y z'"):
+            gi.read_input_text("# hf/sto-3g\n\nt\n\n0 1\nC -1 0.0 0.0 0.0\nH 0 0 0.9\n\n")
+
+    def test_allcheck_step_has_no_title_or_charge(self):
+        text = ("# hf/sto-3g\n\nt\n\n" + self.H2 + "--Link1--\n# hf/sto-3g geom=allcheck guess=read\n\n")
+        spec, _ = gi.read_input_text(text)
+        s = spec.steps[1]
+        assert s.geometry_source == gk.GEOM_ALLCHECK and s.title == "" and s.additional_input == ""
+        assert s.guess == "Read checkpoint" and s.multiplicity is None

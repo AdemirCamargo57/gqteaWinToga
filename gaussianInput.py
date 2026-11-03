@@ -953,8 +953,10 @@ def _int_option(option: str) -> Optional[int]:
     return int(value) if value.isdigit() and int(value) > 0 else None
 
 
-def _bare_method(upper: str) -> Optional[dict]:
-    """Panel fields of a method keyword without prefix (upper case), or None if no panel knows it."""
+def _bare_method(upper: str, original: Optional[str] = None) -> Optional[dict]:
+    """Panel fields of a method keyword without prefix (upper case), or None if no panel knows it.
+
+    ``original`` is the same text in the file's own case (CIS/ZINDO options keep their spelling)."""
     families = {v.upper(): k for k, v in gk.FAMILY_KEYWORDS.items()}
     families["MP4"] = gk.FAMILY_MP4
     if upper in families:
@@ -967,19 +969,19 @@ def _bare_method(upper: str) -> Optional[dict]:
     states = {"CIS": gk.STATE_CIS, "ZINDO": gk.STATE_ZINDO}
     if name in states:
         return {"state": states[name], "family": gk.FAMILY_HF, "method_name": gk.NO_CHOICE,
-                "_options": parse_keyword(upper).options}
+                "_options": parse_keyword(original or upper).options}
     return None
 
 
 def _method_fields(text: str) -> Optional[dict]:
     """'UB3LYP' -> {'spin': 'Unrestricted (U)', 'family': 'DFT', 'method_name': 'B3LYP'}; None if unknown."""
     upper = text.upper()
-    fields = _bare_method(upper)
+    fields = _bare_method(upper, text)
     if fields is not None:
         return {"spin": "Default", **fields}
     for prefix in ("RO", "R", "U"):
         if upper.startswith(prefix):
-            fields = _bare_method(upper[len(prefix):])
+            fields = _bare_method(upper[len(prefix):], text[len(prefix):])
             if fields is not None:
                 return {"spin": gk.reverse(gk.SPIN_PREFIXES)[prefix], **fields}
     return None
@@ -991,6 +993,7 @@ class _RouteReader:
     def __init__(self, step: GaussianStepSpec, notes: List[str], where: str):
         self.step, self.notes, self.where = step, notes, where
         self.jobs: List[str] = []
+        self.job_tokens: List[Tuple[str, str, Optional[int]]] = []   # (job keyword, token, index in extra)
         self.modredundant = False
         self.extra: List[str] = []
         self.handlers = {"OPT": self._opt, "FREQ": self._freq, "IRC": self._irc, "STABLE": self._stable,
@@ -1008,20 +1011,46 @@ class _RouteReader:
             keyword = parse_keyword(token)
             handler = self.handlers.get(keyword.key)
             leftover = handler(keyword) if handler else None
+            index = len(self.extra)
             if leftover is None:
                 self.extra.append(token)
             elif leftover:
                 self.extra.append(format_keyword(RouteKeyword(keyword.name, leftover)))
+            if keyword.key in self.JOB_KEYS:
+                self.job_tokens.append((keyword.key, token, index if len(self.extra) > index else None))
         if not model_seen:
             self.step.family, self.step.method_name, self.step.basis = gk.FAMILY_HF, gk.NO_CHOICE, "STO-3G"
             self.notes.append(f"{self.where}: the route names no method; Gaussian's default HF/STO-3G is used.")
 
+    JOB_KEYS = ("OPT", "FREQ", "IRC", "STABLE", "NMR")
+
+    def kept_extra(self) -> List[str]:
+        return [t for t in self.extra if t is not None]
+
+    def _keep_unused_jobs(self, used: Sequence[str]) -> None:
+        """A job keyword the chosen job type does not write goes back as an Additional Keyword."""
+        dropped = []
+        for key, token, index in self.job_tokens:
+            if key in used:
+                continue
+            if index is not None:
+                self.extra[index] = None             # its leftover options travel inside the whole token
+            self.extra.append(token)
+            dropped.append(token)
+        if dropped:
+            self.notes.append(f"{self.where}: {', '.join(dropped)} cannot share the job type with the other job "
+                              "keywords; kept as Additional Keywords.")
+
     def job_type(self, scan_lines: bool) -> str:
         jobs = self.jobs
         kinds = [j for j in ("OPT", "IRC", "STABLE", "NMR") if j in jobs]
-        if len(kinds) > 1:
-            self.notes.append(f"{self.where}: the route combines {', '.join(kinds)}; only {kinds[0]} is kept as "
-                              "the job type.")
+        if "OPT" in jobs:
+            used = ("OPT", "FREQ")
+        elif "FREQ" in jobs:
+            used = ("FREQ",)
+        else:
+            used = tuple(kinds[:1])
+        self._keep_unused_jobs(used)
         if "OPT" in jobs:
             return gk.JOB_OPT_FREQ if "FREQ" in jobs else (gk.JOB_SCAN if scan_lines else gk.JOB_OPT)
         if "FREQ" in jobs:
@@ -1045,7 +1074,8 @@ class _RouteReader:
             setattr(self.step, name, value)
         dropped = self._state_options(options) if self.step.state in gk.MODEL_STATES else []
         if dropped:
-            self.notes.append(f"{self.where}: option(s) {', '.join(dropped)} of {self.step.state} are not kept.")
+            self.notes.append(f"{self.where}: option(s) {', '.join(dropped)} of {self.step.state} have no panel "
+                              "and were dropped; add them back by hand if they matter.")
         if slash:
             self._basis(basis_text)
         elif not no_basis(self.step):
@@ -1259,6 +1289,8 @@ class _RouteReader:
 def _split_blocks(text: str) -> List[List[str]]:
     blocks, current = [], []
     for raw in (text or "").splitlines():
+        if raw.strip().startswith("!"):
+            continue                                  # a whole-line comment is not a blank line
         line = raw.split("!", 1)[0].rstrip()          # '!' starts a comment in Gaussian input
         if line.strip().lower() == "--link1--":
             blocks.append(current)
@@ -1382,7 +1414,7 @@ def _read_block(lines: Sequence[str], index: int, stem: str, notes: List[str]
             notes.append(f"{where}: Opt=ModRedundant but no coordinate lines follow.")
     step.job_type = reader.job_type(scan_lines)
     step.additional_input = "\n\n".join("\n".join(section) for section in rest)
-    step.additional_keywords = " ".join(reader.extra)
+    step.additional_keywords = " ".join(reader.kept_extra())
     return step, geometry
 
 
