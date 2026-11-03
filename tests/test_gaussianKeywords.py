@@ -5,6 +5,7 @@ import gaussianKeywords as gk
 
 LABEL_TABLES = {
     "OPT_TARGETS": gk.OPT_TARGETS, "FORCE_CONSTANTS": gk.FORCE_CONSTANTS,
+    "IRC_FORCE_CONSTANTS": gk.IRC_FORCE_CONSTANTS,
     "IRC_DIRECTIONS": gk.IRC_DIRECTIONS, "NMR_METHODS": gk.NMR_METHODS, "STATE_SPINS": gk.STATE_SPINS,
     "SPIN_PREFIXES": gk.SPIN_PREFIXES, "DIFFUSE": gk.DIFFUSE, "POLARIZATION": gk.POLARIZATION,
     "DISPERSION": gk.DISPERSION, "GEOMETRY_SOURCES": gk.GEOMETRY_SOURCES, "GUESS_METHODS": gk.GUESS_METHODS,
@@ -57,6 +58,14 @@ def test_solvent_names_hold_no_comma_or_blank_because_they_become_one_route_opti
 def test_fukui_force_constants_exclude_reading_the_checkpoint():
     assert set(gk.FUKUI_FORCE_CONSTANTS) < set(gk.FORCE_CONSTANTS)
     assert not any(gk.FORCE_CONSTANTS[label] in gk.READ_FORCE_CONSTANTS for label in gk.FUKUI_FORCE_CONSTANTS)
+
+
+def test_irc_has_its_own_force_constants_without_readfc():
+    # Gaussian 16 refuses IRC=ReadFC; GaussView writes RCFC for "Read from .CHK". Opt keeps ReadFC.
+    assert gk.IRC_FORCE_CONSTANTS[gk.FC_RCFC] == "RCFC"
+    assert "ReadFC" not in gk.IRC_FORCE_CONSTANTS.values()
+    assert "ReadFC" in gk.FORCE_CONSTANTS.values()
+    assert {"CalcFC", "CalcAll"} < set(gk.IRC_FORCE_CONSTANTS.values())
 
 
 def test_flag_fields_name_route_options():

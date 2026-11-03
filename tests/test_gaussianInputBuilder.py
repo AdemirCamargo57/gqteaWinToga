@@ -44,7 +44,7 @@ def make_ui(tmp_path):
     async def confirm(title, message):
         ui.dialogs.append((title, message))
         return ui.answers.pop(0) if ui.answers else True
-    ui._show_error = ui._show_info = record
+    ui._show_error = record
     ui._confirm = confirm
     return ui
 
@@ -430,7 +430,21 @@ class TestFixRound1:
         ui.step_selection.value = ui._step_labels[0]
         ui.on_step_select(ui.step_selection)
         ui.apply_geometry_file(FUKUI_INPUTS / "phenol_N.gjf")
-        assert "Step 2 keeps their own charge and multiplicity: check them." in ui.status_label.text
+        assert "Step 2 keeps its own charge and multiplicity: check them." in ui.status_label.text
+
+    def test_several_steps_with_their_own_charge_are_named_in_the_plural(self, tmp_path):
+        ui = make_ui(tmp_path)
+        for _ in range(2):
+            ui.add_linked_step(None)
+            change(ui, "geometry_source_selection", gk.GEOM_CHECK)
+        ui.step_selection.value = ui._step_labels[0]
+        ui.on_step_select(ui.step_selection)
+        ui.apply_geometry_file(FUKUI_INPUTS / "phenol_N.gjf")
+        assert "Steps 2, 3 keep their own charge and multiplicity: check them." in ui.status_label.text
+
+    def test_fukui_status_names_what_choosing_it_resets(self):
+        for name in ("Title", "Add. Inp.", "%Chk", "extra Link 0 lines"):
+            assert name in gb.FUKUI_STATUS
 
     def test_all_check_steps_get_no_note(self, tmp_path):
         ui = make_ui(tmp_path)

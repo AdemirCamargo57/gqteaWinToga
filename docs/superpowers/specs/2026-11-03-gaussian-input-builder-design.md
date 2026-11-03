@@ -95,7 +95,7 @@ Everything not covered below goes through Additional Keywords (§5.1).
 | Optimization | target Minimum / TS (Berny); force constants default / CalcFC / CalcAll / ReadFC; Tight; MaxCycles | `Opt`, `Opt=(TS,CalcFC,Tight,MaxCycles=n,…)` (+ `ModRedundant` when freeze lines exist) |
 | Frequency | Raman, VCD, Anharmonic | `Freq`, `Freq=(Raman,VCD,Anharmonic)` |
 | Opt+Freq | both rows above | `Opt… Freq…` |
-| IRC | direction Both / Forward / Reverse; MaxPoints; StepSize; force constants CalcFC / CalcAll / ReadFC | `IRC=(CalcFC,Forward,MaxPoints=n,StepSize=n)` |
+| IRC | direction Both / Forward / Reverse; MaxPoints; StepSize; force constants (own list, `IRC_FORCE_CONSTANTS`) CalcFC / CalcAll / Read Cartesian FC from checkpoint (RCFC; GaussView's "Read from .CHK" writes `irc=rcfc`). G16 refuses `IRC=ReadFC` | `IRC=(CalcFC,Forward,MaxPoints=n,StepSize=n)`, `IRC=RCFC` |
 | Scan (relaxed) | the scan/freeze lines of the Molecule panel | `Opt=ModRedundant` (+ Optimization options) |
 | Stability | Reoptimize | `Stable`, `Stable=Opt` |
 | NMR | GIAO / CSGT / IGAIM / All; SpinSpin | `NMR`, `NMR=(CSGT,SpinSpin)` |
@@ -191,10 +191,18 @@ The whole input text plus the warnings; `help_gaussian_input`.
   Triplets / 50-50 need a closed-shell reference; `IOp(9/40=4)` only with an excited state.
 - Scan needs ≥ 1 Scan line; Freeze lines only with Optimization, Opt+Freq, Scan; atom numbers 1…N,
   distinct, 2 / 3 / 4 for B / A / D; steps a positive integer; step size finite and non-zero.
-- Geom=Check / AllCheck, Guess=Read / TCheck, ReadFC / RCFC need a checkpoint written by an earlier step
-  (its `%Chk`) or named in `%OldChk`; step 1 can read one only through `%OldChk`.
+- Geom=Check / AllCheck, Guess=Read / TCheck, ReadFC / RCFC / ReadCartesianFC need a checkpoint written by
+  an earlier step (its `%Chk`, compared case-sensitively: Linux) or named in `%OldChk`; step 1 can read one
+  only through `%OldChk`.
+- IRC without force constants: the accepted options are CalcFC, CalcAll, RCFC, ReadCartesianFC and FCCards.
+  G16 C.01 refuses the others ("You must use ReadCartesianFC, FCCards, or CalcFC with IRC."). `IRC=ReadFC`
+  (typed, or from a reopened file) gets its own message: Gaussian 16 does not accept ReadFC for IRC.
 - Write connectivity together with a checkpoint geometry.
-- `%Chk` / `%OldChk` not a relative name without blanks; Extra Link 0 lines not starting with `%`.
+- `%Chk` / `%OldChk` not a relative name made of `[A-Za-z0-9._-]`; Extra Link 0 lines not starting with `%`.
+- Non-ASCII text in title, extra Link 0 lines, Add. Inp., Additional Keywords, scan/freeze lines, %Mem, and
+  the Other method / basis / solvent fields when Other is chosen.
+- Fukui job type with a force-constant option it does not take (ReadFC): the message names Default / CalcFC /
+  CalcAll.
 - Fukui together with other steps; Title with forbidden characters.
 - Geometry: `fukuiInput.parse_geometry` (atoms closer than 0.4 Å refused).
 
@@ -203,15 +211,19 @@ The whole input text plus the warnings; `help_gaussian_input`.
 - TS optimization without CalcFC / ReadFC / CalcAll.
 - ~~IRC without force constants~~: G16 C.01 refuses it ("You must use ReadCartesianFC, FCCards, or CalcFC
   with IRC."), so it is an **error**, not a warning (checked 2026-11-03).
-- Measured with G16 C.01 (WSL), all 14 jobs of `tools/check_gaussian_inputs.py` end in Normal termination
+- IRC with RCFC / ReadCartesianFC and no earlier step running Freq: "RCFC needs force constants from a
+  frequency step earlier in the job". Measured with G16 C.01: `Opt=(TS,CalcFC,NoEigenTest) Freq` then a
+  linked `IRC=(RCFC,MaxPoints=5)` gives 3 Normal terminations (`irc_rcfc`); after an Opt-only TS step the IRC
+  stops in l123 ("GetHes: LRWHes < LHess!"); `IRC=ReadFC` stops with the message above.
+- Measured with G16 C.01 (WSL), all 15 jobs of `tools/check_gaussian_inputs.py` end in Normal termination
   (one per step; CBS-4M and Opt+Freq run several links internally): `CIS(NStates=3)/STO-3G`, `PM6`,
   `CBS-4M`, `UHF/STO-3G` (charge 1, multiplicity 2) and the SMD route `SCRF=(SMD,Solvent=Water)` are accepted
   as written. Two cautions the inputs themselves cannot show: a relaxed Scan of one O-H bond of water with
   symmetry on never converges (use NoSymm), and `Opt=...` left in Additional Keywords is inherited by a linked
   IRC step, where Opt next to IRC makes Gaussian run a path optimization (l107) instead of the IRC.
-- Post-SCF or excited-state method with the formchk script: the `.fchk` holds the SCF density unless
-  `Density=Current` is given.
-- Several steps sharing one `.chk` (§4).
+- Post-SCF or excited-state method with the formchk script and a `%Chk` in that step: the `.fchk` holds
+  the SCF density unless `Density=Current` is given.
+- Several steps sharing one `.chk` (§4), only when the formchk script is written, worded as information.
 
 ### 5.1 Additional Keywords
 

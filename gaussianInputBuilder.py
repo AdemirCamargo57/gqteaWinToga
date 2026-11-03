@@ -109,7 +109,8 @@ TAB_TITLES = ("Job Type", "Method", "Molecule", "Title", "Link 0", "General", "G
               "Add. Inp.", "Preview", "Help")
 PREVIEW_TAB = TAB_TITLES.index("Preview")
 INPUT_FILE_TYPES = [suffix.lstrip(".") for suffix in gi.GAUSSIAN_INPUT_SUFFIXES]
-FUKUI_STATUS = ("Fukui functions: three linked jobs (N, N+p, N-q); the controls the job sets itself are greyed out.")
+FUKUI_STATUS = ("Fukui functions: three linked jobs (N, N+p, N-q). Choosing it reset the Title, Add. Inp., %Chk "
+                "and extra Link 0 lines; the controls the job sets itself are greyed out.")
 FUKUI_NOTE = ("The Fukui job writes three linked jobs itself: the title, %Chk/%OldChk, the guess, Add. Inp., "
               "connectivity, the spin prefix and the electronic state are set by it.")
 
@@ -258,7 +259,8 @@ class GaussianInputBuilderUI:
                                self._switch("freq_anharmonic_switch", "Anharmonic")),
             self._heading("IRC"),
             self._field("Direction:", self._choice("irc_direction_selection", gk.IRC_DIRECTIONS)),
-            self._field("Force constants:", self._choice("irc_force_constants_selection", gk.FORCE_CONSTANTS, 280)),
+            self._field("Force constants:", self._choice("irc_force_constants_selection", gk.IRC_FORCE_CONSTANTS,
+                                                         280), "required; RCFC after a Freq step"),
             self._field("MaxPoints:", self._text("irc_max_points_input", 100, "default")),
             self._field("StepSize:", self._text("irc_step_size_input", 100, "default"), "units of 0.01 bohr"),
             self._heading("Stability"),
@@ -338,7 +340,7 @@ class GaussianInputBuilderUI:
             self._checkbox_row(self._switch("write_chk_switch", "Write a checkpoint (%Chk)")),
             self._field("%Chk:", self._text("chk_input", 220, "<name>.chk"), "file name, no folders"),
             self._field("%OldChk:", self._text("old_chk_input", 220, "optional"),
-                        "an existing checkpoint to read (Guess=Read, Geom=Check, ReadFC)"),
+                        "an existing checkpoint to read (Guess=Read, Geom=Check, ReadFC, RCFC)"),
             self._label("Extra Link 0 lines:"),
             self._multiline("extra_link0_input", 70, "%KJob L502"),
             self._hint("Relative file names: the job runs under Linux from the input's folder."))
@@ -526,9 +528,6 @@ class GaussianInputBuilderUI:
     async def _show_error(self, title: str, message: str):
         await self.window.dialog(toga.ErrorDialog(title, message))
 
-    async def _show_info(self, title: str, message: str):
-        await self.window.dialog(toga.InfoDialog(title, message))
-
     async def _confirm(self, title: str, message: str) -> bool:
         return bool(await self.window.dialog(toga.QuestionDialog(title, message)))
 
@@ -652,8 +651,9 @@ class GaussianInputBuilderUI:
             self._syncing = False
         own = [str(i + 1) for i, step in enumerate(self.steps)
                if i != self.current_step and step.geometry_source != gk.GEOM_ALLCHECK]
-        note = (f" Step{'s' if len(own) > 1 else ''} {', '.join(own)} keep{'' if len(own) > 1 else 's'} "
-                "their own charge and multiplicity: check them.") if own else ""
+        several = len(own) > 1
+        note = (f" Step{'s' if several else ''} {', '.join(own)} {'keep their' if several else 'keeps its'} "
+                "own charge and multiplicity: check them.") if own else ""
         self._status(f"Geometry loaded from {path.name}.{note}")
         self.refresh()
 

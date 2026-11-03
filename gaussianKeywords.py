@@ -42,7 +42,16 @@ FORCE_CONSTANTS: Dict[str, Optional[str]] = {
     "Read from checkpoint (ReadFC)": "ReadFC",
 }
 FUKUI_FORCE_CONSTANTS = (FC_DEFAULT, FC_CALCFC, "Calculate at all points (CalcAll)")
-READ_FORCE_CONSTANTS = ("ReadFC", "RCFC")          # options that read the checkpoint
+# IRC has its own list: Gaussian 16 refuses IRC=ReadFC ("You must use ReadCartesianFC, FCCards, or CalcFC
+# with IRC."). RCFC is what GaussView writes for "Read from .CHK"; it needs a Freq step's force constants.
+FC_RCFC = "Read Cartesian FC from checkpoint (RCFC)"
+IRC_FORCE_CONSTANTS: Dict[str, Optional[str]] = {
+    FC_DEFAULT: None,
+    FC_CALCFC: "CalcFC",
+    "Calculate at all points (CalcAll)": "CalcAll",
+    FC_RCFC: "RCFC",
+}
+READ_FORCE_CONSTANTS = ("ReadFC", "RCFC", "ReadCartesianFC")    # options that read the checkpoint
 
 IRC_DIRECTIONS: Dict[str, Optional[str]] = {"Both": None, "Forward only": "Forward", "Reverse only": "Reverse"}
 NMR_METHODS: Dict[str, Optional[str]] = {"GIAO": None, "CSGT": "CSGT", "IGAIM": "IGAIM", "All": "All"}
@@ -60,7 +69,7 @@ MODEL_STATES = (STATE_CIS, STATE_ZINDO)            # written as the method of th
 STATE_SPINS: Dict[str, Optional[str]] = {"Default": None, "Singlets": "Singlets", "Triplets": "Triplets",
                                          "50-50": "50-50"}
 DEFAULT_N_STATES = 3                               # Gaussian's own default
-COEFFICIENTS_IOP = "9/40=4"                        # print every CI coefficient (the NTO/Excitation tabs need it)
+COEFFICIENTS_IOP = "9/40=4"                        # print CI coefficients down to |c| >= 1e-4 (NTO/Excitation tabs)
 
 SPIN_PREFIXES: Dict[str, str] = {"Default": "", "Restricted (R)": "R", "Unrestricted (U)": "U",
                                  "Restricted-open (RO)": "RO"}

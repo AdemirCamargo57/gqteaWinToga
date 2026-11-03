@@ -2500,10 +2500,14 @@ top follows every panel as you change it.
 PANELS (of the selected step)
   Job Type   Energy; Optimization (minimum or TS (Berny), force constants,
              Tight, MaxCycles); Frequency (Raman, VCD, Anharmonic);
-             Opt+Freq; IRC (direction, force constants (required: CalcFC,
-             CalcAll or ReadFC), MaxPoints, StepSize); Scan (relaxed, Opt=ModRedundant); Stability
+             Opt+Freq; IRC (direction, force constants, MaxPoints,
+             StepSize); Scan (relaxed, Opt=ModRedundant); Stability
              (Stable=Opt); NMR (GIAO, CSGT, IGAIM, All; SpinSpin); Fukui
              functions (see below).
+             IRC needs force constants: CalcFC, CalcAll or RCFC (Read
+             Cartesian FC from checkpoint). Gaussian 16 refuses ReadFC for
+             IRC. RCFC reads what a Freq run stores, so put Freq in the TS
+             step before it (Opt+Freq); after an Opt-only TS step use CalcFC.
   Method     ground or excited state (TD-SCF, TDA, CIS, ZINDO: number of
              states, Root, Singlets/Triplets/50-50; "Print all excitation
              coefficients" writes IOp(9/40=4), which the NTO and Excitation
@@ -2533,8 +2537,9 @@ LINKED STEPS (--Link1--)
   optimization, then a TD-SCF single point on the optimized geometry).
   Choose a step in the Step list to edit it; Remove, Up and Down change the
   list. Every step writes %Chk=<name>.chk unless you change it. A step that
-  reads a checkpoint (Geom=Check or AllCheck, Guess=Read, ReadFC) needs one
-  written by an earlier step, or named in %OldChk.
+  reads a checkpoint (Geom=Check or AllCheck, Guess=Read, ReadFC, RCFC)
+  needs one written by an earlier step, or named in %OldChk. Checkpoint
+  names are case-sensitive (the job runs under Linux).
 
 OPEN INPUT...
   Reads a .gjf/.com/.gau back into the panels, every step. Keywords no

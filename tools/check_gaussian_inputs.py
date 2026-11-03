@@ -32,6 +32,8 @@ def step(**changes):
 
 TS = step(job_type=gk.JOB_OPT, opt_target=gk.OPT_TS, force_constants=gk.FC_CALCFC,
           additional_keywords="Opt=NoEigenTest")
+# IRC=RCFC reads the Cartesian force constants a Freq run stores; after an Opt-only TS step it stops in l123.
+TS_FREQ = replace(TS, job_type=gk.JOB_OPT_FREQ)
 
 JOBS = {
     "energy": (WATER, [step()], True),
@@ -52,6 +54,8 @@ JOBS = {
                           replace(gi.linked_step(step(job_type=gk.JOB_OPT)), state=gk.STATE_TD, n_states=3,
                                   print_all_coefficients=True)], True),
     "ts_irc": (HCN_TS_GUESS, [TS, replace(gi.linked_step(TS), job_type=gk.JOB_IRC, irc_max_points=5)], False),
+    "irc_rcfc": (HCN_TS_GUESS, [TS_FREQ, replace(gi.linked_step(TS_FREQ), job_type=gk.JOB_IRC,
+                                                 irc_force_constants=gk.FC_RCFC, irc_max_points=5)], False),
     "fukui": (WATER, [gi.fukui_defaults(step(fukui_plus_multiplicity=2, fukui_minus_multiplicity=2))], True),
 }
 

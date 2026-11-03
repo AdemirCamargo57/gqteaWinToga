@@ -405,7 +405,7 @@ class TestValidation:
 
     def test_irc_without_force_constants_is_refused(self, tmp_path):
         # Gaussian 16 C.01: "You must use ReadCartesianFC, FCCards, or CalcFC with IRC."
-        with pytest.raises(ValueError, match="IRC needs force constants: give CalcFC, CalcAll or ReadFC"):
+        with pytest.raises(ValueError, match="IRC needs force constants: give CalcFC, CalcAll or RCFC"):
             gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_IRC,
                                                                       irc_force_constants=gk.FC_DEFAULT)))
 
@@ -420,6 +420,105 @@ class TestValidation:
 
     def test_default_job_has_no_warnings(self, tmp_path):
         assert gi.GaussianInputBuilder().prepare(job_spec(tmp_path)).warnings == []
+
+
+TS_FREQ = step(multiplicity=1, job_type=gk.JOB_OPT_FREQ, opt_target=gk.OPT_TS, force_constants=gk.FC_CALCFC)
+TS_ONLY = replace(TS_FREQ, job_type=gk.JOB_OPT)
+RCFC_WARNING = "Step 2: RCFC needs force constants from a frequency step earlier in the job"
+
+
+def irc_after(first, **changes) -> gi.GaussianStepSpec:
+    return replace(gi.linked_step(first), job_type=gk.JOB_IRC, **changes)
+
+
+class TestIrcForceConstants:
+    """Gaussian 16 C.01 refuses IRC=ReadFC; IRC=RCFC works after a TS step that ran Freq."""
+
+    def test_rcfc_after_a_freq_step_prepares_without_a_warning(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path, TS_FREQ, irc_after(TS_FREQ, irc_force_constants=gk.FC_RCFC)))
+        assert "IRC=RCFC Geom=AllCheck Guess=Read" in builder.input_text(job)
+        assert not any("RCFC needs" in w for w in job.warnings)
+
+    def test_rcfc_without_an_earlier_freq_step_warns(self, tmp_path):
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, TS_ONLY,
+                                                         irc_after(TS_ONLY, irc_force_constants=gk.FC_RCFC)))
+        assert any(w.startswith(RCFC_WARNING) for w in job.warnings)
+
+    def test_read_cartesian_fc_is_accepted_and_warns_the_same_way(self, tmp_path):
+        typed = dict(irc_force_constants=gk.FC_DEFAULT, additional_keywords="IRC=ReadCartesianFC")
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path, TS_FREQ, irc_after(TS_FREQ, **typed)))
+        assert "IRC=ReadCartesianFC" in builder.input_text(job) and not any("RCFC needs" in w for w in job.warnings)
+        job = builder.prepare(job_spec(tmp_path, TS_ONLY, irc_after(TS_ONLY, **typed)))
+        assert any(w.startswith(RCFC_WARNING) for w in job.warnings)
+
+    def test_rcfc_reads_the_checkpoint(self, tmp_path):
+        text = problems(tmp_path, step(multiplicity=1, job_type=gk.JOB_IRC, irc_force_constants=gk.FC_RCFC))
+        assert "IRC=RCFC reads a checkpoint" in text
+
+    def test_typed_readfc_is_refused_with_its_own_message(self, tmp_path):
+        text = problems(tmp_path, TS_FREQ, irc_after(TS_FREQ, irc_force_constants=gk.FC_DEFAULT,
+                                                     additional_keywords="IRC=ReadFC"))
+        assert "Step 2: IRC=ReadFC: Gaussian 16 does not accept ReadFC for IRC" in text
+        assert "IRC needs force constants" not in text
+
+    def test_readfc_is_no_irc_choice_but_stays_an_opt_choice(self):
+        assert not any("ReadFC" in c for c in gi.choices("irc_force_constants"))
+        assert "Read from checkpoint (ReadFC)" in gi.choices("force_constants")
+
+    def test_reopened_irc_rcfc_restores_the_control(self):
+        spec, _ = gi.read_input_text("# hf/sto-3g irc=(rcfc,maxpoints=5)\n\nt\n\n0 1\nH 0 0 0\nH 0 0 0.74\n\n")
+        s = spec.steps[0]
+        assert (s.job_type, s.irc_force_constants, s.irc_max_points) == (gk.JOB_IRC, gk.FC_RCFC, 5)
+        assert s.additional_keywords == ""
+
+    def test_reopened_irc_readfc_is_refused(self, tmp_path):
+        text = (f"%Chk=water.chk\n# B3LYP/6-31G(d) Opt=(TS,CalcFC) Freq\n\nwater\n\n0 1\n{WATER}\n\n"
+                "--Link1--\n%Chk=water.chk\n# B3LYP/6-31G(d) IRC=ReadFC Geom=AllCheck Guess=Read\n\n")
+        spec, _ = gi.read_input_text(text, "water", str(tmp_path))
+        assert spec.steps[1].irc_force_constants == gk.FC_DEFAULT and "ReadFC" in spec.steps[1].additional_keywords
+        with pytest.raises(ValueError, match="Gaussian 16 does not accept ReadFC for IRC"):
+            gi.GaussianInputBuilder().prepare(spec)
+
+
+class TestFinalReviewFixes:
+    def test_shared_checkpoint_note_only_with_a_formchk_script(self, tmp_path):
+        first = step(job_type=gk.JOB_OPT, multiplicity=1)
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, first, gi.linked_step(first), write_formchk=False))
+        assert not any("same checkpoint" in w for w in job.warnings)
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, first, gi.linked_step(first)))
+        assert any("same checkpoint" in w and "formchk script" in w for w in job.warnings)
+
+    def test_density_warning_only_when_the_step_writes_a_checkpoint(self, tmp_path):
+        td = step(multiplicity=1, state=gk.STATE_TD)
+        assert any("Density=Current" in w for w in gi.GaussianInputBuilder().prepare(job_spec(tmp_path, td)).warnings)
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, replace(td, write_chk=False)))
+        assert not any("Density=Current" in w for w in job.warnings)
+
+    @pytest.mark.parametrize("changes", [dict(method_other="B3ßLYP"), dict(basis_other="é"),
+                                         dict(solvation="SMD", solvent_other="água")])
+    def test_unused_other_fields_are_not_checked_for_ascii(self, tmp_path, changes):
+        gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(multiplicity=1, **changes)))
+
+    @pytest.mark.parametrize("changes,label", [
+        (dict(job_type=gk.JOB_OPT, modredundant="B 1 2 F é"), "Scan/freeze lines"),
+        (dict(memory="2µGB"), "%Mem"),
+    ])
+    def test_more_fields_are_checked_for_ascii(self, tmp_path, changes, label):
+        text = problems(tmp_path, step(multiplicity=1, **changes))
+        assert f"{label}: use ASCII characters only (Gaussian input files are ASCII)." in text
+
+    @pytest.mark.parametrize("name", ["a*b.chk", "a;b.chk", "a$b.chk", "a'b.chk"])
+    def test_checkpoint_names_keep_to_the_listed_characters(self, tmp_path, name):
+        text = problems(tmp_path, step(multiplicity=1, chk=name))
+        assert f"%Chk '{name}': use a file name without blanks (ASCII letters, digits, . _ -)." in text
+
+    def test_checkpoint_chain_is_case_sensitive(self, tmp_path):
+        first = step(multiplicity=1, chk="A.chk")
+        second = step(geometry_source=gk.GEOM_ALLCHECK, chk="a.chk", guess="Read checkpoint")
+        assert "no earlier step writes a.chk" in problems(tmp_path, first, second)
+        gi.GaussianInputBuilder().prepare(job_spec(tmp_path, first, replace(second, chk="A.chk")))
 
 
 class TestSteps:
@@ -485,8 +584,14 @@ class TestFukui:
         with pytest.raises(ValueError, match="must be the only step"):
             gi.GaussianInputBuilder().prepare(spec)
 
+    def test_a_checkpoint_force_constant_option_names_the_allowed_ones(self, tmp_path):
+        with pytest.raises(ValueError) as info:
+            gi.GaussianInputBuilder().prepare(fukui_job_spec(tmp_path, force_constants="Read from checkpoint (ReadFC)"))
+        text = str(info.value)
+        assert "Force constants must be Default, Calculate at first point (CalcFC) or Calculate at all points " \
+               "(CalcAll)" in text and "Read from checkpoint (ReadFC)" in text and "choose the job type" not in text
+
     @pytest.mark.parametrize("changes,label", [
-        (dict(force_constants="Read from checkpoint (ReadFC)"), "Force constants"),
         (dict(guess="Read checkpoint"), "Initial guess"),
         (dict(state=gk.STATE_TD), "Electronic state"),
         (dict(title="x"), "Title"),

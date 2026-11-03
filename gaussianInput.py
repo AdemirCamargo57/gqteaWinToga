@@ -242,7 +242,7 @@ FIELD_LABELS: Dict[str, str] = {
 # Fields chosen from a list; method_name depends on the family (method_choices).
 CHOICES: Dict[str, Sequence[str]] = {
     "job_type": gk.JOB_TYPES, "opt_target": tuple(gk.OPT_TARGETS), "force_constants": tuple(gk.FORCE_CONSTANTS),
-    "irc_direction": tuple(gk.IRC_DIRECTIONS), "irc_force_constants": tuple(gk.FORCE_CONSTANTS),
+    "irc_direction": tuple(gk.IRC_DIRECTIONS), "irc_force_constants": tuple(gk.IRC_FORCE_CONSTANTS),
     "nmr_method": tuple(gk.NMR_METHODS), "state": gk.STATES, "state_spin": tuple(gk.STATE_SPINS),
     "spin": tuple(gk.SPIN_PREFIXES), "family": gk.FAMILIES, "basis": gk.BASES,
     "basis_diffuse": tuple(gk.DIFFUSE), "basis_polarization": tuple(gk.POLARIZATION),
@@ -336,7 +336,7 @@ def job_keywords(step: GaussianStepSpec) -> List[RouteKeyword]:
         out.append(RouteKeyword("Freq", _flags(step, gk.FREQ_FLAG_FIELDS)))
     if job == gk.JOB_IRC:
         options = [o for o in (gk.IRC_DIRECTIONS.get(step.irc_direction),
-                               gk.FORCE_CONSTANTS.get(step.irc_force_constants)) if o]
+                               gk.IRC_FORCE_CONSTANTS.get(step.irc_force_constants)) if o]
         if step.irc_max_points:
             options.append(f"MaxPoints={step.irc_max_points}")
         if step.irc_step_size:
@@ -471,9 +471,13 @@ def modredundant_line(kind: str, atoms_text: str, action: str, steps_text: str, 
 INPUT_SUFFIX = ".gjf"
 SCRIPT_HEADER = ("# gQTEA Gaussian 16 input builder: convert the checkpoints to formatted",
                  "# checkpoints for the 3D Molecular Viewer's analysis tabs. Run it where Gaussian")
-ASCII_FIELDS = ("title", "extra_link0", "additional_input", "additional_keywords", "method_other",
-                "basis_other", "solvent_other")
+ASCII_FIELDS = ("title", "extra_link0", "additional_input", "additional_keywords", "modredundant", "memory")
+OTHER_TEXT_FIELDS = {"method_other": "method_name", "basis_other": "basis", "solvent_other": "solvent"}
 FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "READFC", "RCFC", "FCCARDS"}
+# What Gaussian 16 takes for IRC (it refuses ReadFC there); RCFC = ReadCartesianFC.
+IRC_FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "RCFC", "READCARTESIANFC", "FCCARDS"}
+CARTESIAN_FC_OPTIONS = {"RCFC", "READCARTESIANFC"}
+_FILE_NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 @dataclass
@@ -514,11 +518,11 @@ class GaussianJob:
 
 def _relative_name(value: str, label: str) -> str:
     name = (value or "").strip()
-    if not name or any(ch.isspace() for ch in name) or not name.isascii():
-        raise ValueError(f"{label} '{name}': use a file name without blanks (ASCII letters, digits, . _ -).")
-    if PureWindowsPath(name).drive or "/" in name or "\\" in name:
+    if name and (PureWindowsPath(name).drive or "/" in name or "\\" in name):
         raise ValueError(f"{label} '{name}': give a file name relative to the input's folder "
                          "(the job runs under Linux from there).")
+    if not _FILE_NAME_RE.fullmatch(name):
+        raise ValueError(f"{label} '{name}': use a file name without blanks (ASCII letters, digits, . _ -).")
     return name
 
 
@@ -560,9 +564,12 @@ def _trim_blank_lines(text: str) -> List[str]:
     return lines
 
 
-def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
-                  write_formchk: bool) -> Tuple[List[str], List[str], Optional[PreparedStep]]:
-    """(errors, warnings, prepared step or None) of one step; messages carry no step prefix."""
+def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set, write_formchk: bool,
+                  freq_before: bool = False) -> Tuple[List[str], List[str], Optional[PreparedStep]]:
+    """(errors, warnings, prepared step or None) of one step; messages carry no step prefix.
+
+    ``written`` holds the checkpoints of the earlier steps, ``freq_before`` whether one of them runs Freq.
+    """
     errors: List[str] = []
     warnings: List[str] = []
 
@@ -578,7 +585,9 @@ def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
             errors.append(f"{FIELD_LABELS[name]}: '{getattr(step, name)}' is not one of the choices.")
     if step.family in gk.FAMILIES and step.method_name not in method_choices(step.family):
         errors.append(f"Method: '{step.method_name}' is not a {step.family} method.")
-    for name in ASCII_FIELDS:
+    checked = ASCII_FIELDS + tuple(name for name, choice in OTHER_TEXT_FIELDS.items()
+                                   if getattr(step, choice) == gk.OTHER)    # an unused Other field is not written
+    for name in checked:
         if not getattr(step, name).isascii():
             errors.append(f"{FIELD_LABELS[name]}: use ASCII characters only (Gaussian input files are ASCII).")
     if errors:
@@ -664,17 +673,27 @@ def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
     keywords, merge_errors = route_keywords(step)
     errors += merge_errors
     readers = _checkpoint_readers(keywords)
-    if readers and old_chk is None and (chk is None or chk.lower() not in written):
+    if readers and old_chk is None and (chk is None or chk not in written):     # Linux: names are case-sensitive
         errors.append(f"{', '.join(readers)} reads a checkpoint, but no earlier step writes "
                       f"{chk or 'one'}; set %OldChk to an existing checkpoint.")
     options = {k.key: {o.upper() for o in k.options} for k in keywords}
     if "TS" in options.get("OPT", set()) and not FORCE_CONSTANT_OPTIONS & options["OPT"]:
         warnings.append("Optimization to a TS without force constants (CalcFC, CalcAll or ReadFC) often fails; "
                         "CalcFC is recommended.")
-    if "IRC" in options and not FORCE_CONSTANT_OPTIONS & options["IRC"]:
-        errors.append("IRC needs force constants: give CalcFC, CalcAll or ReadFC "
-                      "(Gaussian 16: \"You must use ReadCartesianFC, FCCards, or CalcFC with IRC.\").")
-    if write_formchk and (excited or step.family in gk.POST_SCF_FAMILIES) and "DENSITY" not in options:
+    irc = options.get("IRC")
+    if irc is not None and not IRC_FORCE_CONSTANT_OPTIONS & irc:
+        if "READFC" in irc:
+            errors.append("IRC=ReadFC: Gaussian 16 does not accept ReadFC for IRC; use RCFC (the Cartesian force "
+                          "constants of a Freq step earlier in the job), CalcFC or CalcAll.")
+        else:
+            errors.append("IRC needs force constants: give CalcFC, CalcAll or RCFC "
+                          "(Gaussian 16: \"You must use ReadCartesianFC, FCCards, or CalcFC with IRC.\").")
+    elif irc is not None and CARTESIAN_FC_OPTIONS & irc and not freq_before:
+        warnings.append("RCFC needs force constants from a frequency step earlier in the job, and no earlier "
+                        "step runs Freq (after an Opt-only TS step, Gaussian 16 stops in l123); add Freq to the "
+                        "TS step or use CalcFC.")
+    if (write_formchk and step.write_chk and (excited or step.family in gk.POST_SCF_FAMILIES)
+            and "DENSITY" not in options):
         warnings.append("The .fchk will hold the SCF density, not the excited-state or correlated one; add "
                         "Density=Current to the Additional Keywords if an analysis needs it.")
     if errors:
@@ -710,7 +729,8 @@ def linked_step(step: GaussianStepSpec) -> GaussianStepSpec:
     """
     return dataclasses.replace(step, job_type=gk.JOB_ENERGY, geometry_source=gk.GEOM_ALLCHECK,
                                guess="Read checkpoint", title="", modredundant="", additional_input="",
-                               additional_keywords=_without_job_keywords(step.additional_keywords), connectivity=False, old_chk="", charge=0, multiplicity=None)
+                               additional_keywords=_without_job_keywords(step.additional_keywords),
+                               connectivity=False, old_chk="", charge=0, multiplicity=None)
 
 
 def step_label(index: int, step: GaussianStepSpec) -> str:
@@ -752,21 +772,24 @@ class GaussianInputBuilder:
                 errors.append(str(exc))
         name = stem or fi.DEFAULT_STEM
         written: set = set()
+        freq_before = False
         prepared: List[PreparedStep] = []
         for index, step in enumerate(spec.steps, start=1):
-            step_errors, step_warnings, item = _prepare_step(step, name, atoms, written, spec.write_formchk)
+            step_errors, step_warnings, item = _prepare_step(step, name, atoms, written, spec.write_formchk,
+                                                             freq_before)
             errors += [f"Step {index}: {e}" for e in step_errors]
             warnings += [f"Step {index}: {w}" for w in step_warnings]
             if item is not None:
                 prepared.append(item)
             if step.write_chk:
-                written.add((step.chk.strip() or f"{name}.chk").lower())
+                written.add(step.chk.strip() or f"{name}.chk")
+            freq_before = freq_before or any(k.key == "FREQ" for k in route_keywords(step)[0])
         if errors:
             raise ValueError("\n".join(f"- {e}" for e in errors))
         chk_files = list(dict.fromkeys(p.chk for p in prepared if p.chk))
-        if len([p for p in prepared if p.chk]) > len(chk_files):
-            warnings.append("Several steps write the same checkpoint: it keeps only the last step's results, "
-                            "and that is what the formchk script converts.")
+        if spec.write_formchk and len([p for p in prepared if p.chk]) > len(chk_files):
+            warnings.append("Several steps write the same checkpoint (that is how linked steps pass on their "
+                            "results), so the formchk script converts the last of those steps' results.")
         script_path = None
         if spec.write_formchk and chk_files:
             script_path = folder / f"{stem}{fi.SCRIPT_SUFFIX}"
@@ -780,8 +803,18 @@ class GaussianInputBuilder:
                              "it must be the only step.")
         step = spec.steps[0]
         reference = fukui_defaults(step)
-        errors = [f"The Fukui functions job type sets {FIELD_LABELS[name]} itself; choose the job type again "
-                  "to reset it." for name in FUKUI_FIXED if getattr(step, name) != getattr(reference, name)]
+        errors = []
+        for name in FUKUI_FIXED:
+            if getattr(step, name) == getattr(reference, name):
+                continue
+            if name == "force_constants":
+                *first, last = gk.FUKUI_FORCE_CONSTANTS
+                errors.append(f"The Fukui functions job type optimizes the N state towards a minimum without reading "
+                              f"a checkpoint: Force constants must be {', '.join(first)} or {last} "
+                              f"(got {step.force_constants}).")
+            else:
+                errors.append(f"The Fukui functions job type sets {FIELD_LABELS[name]} itself; choose the job type "
+                              "again to reset it.")
         keywords, merge_errors = fukui_keywords(step)
         errors += merge_errors
         if any(k.key == "OPT" for k in keywords):
@@ -802,6 +835,7 @@ class GaussianInputBuilder:
             if step.title is not None:
                 lines += [step.title, "", step.charge_line]
                 if step.coordinates:
+                    # always through format_geometry: G16 refuses integer coordinates ("Found an integer as input")
                     lines += fi.format_geometry(job.atoms)
                 lines.append("")
             for section in (step.connectivity, step.modredundant, step.additional_input):
@@ -1164,7 +1198,7 @@ class _RouteReader:
         self.jobs.append("IRC")
         step, rest = self.step, []
         step.irc_force_constants = gk.FC_DEFAULT
-        directions, fc = gk.reverse(gk.IRC_DIRECTIONS), gk.reverse(gk.FORCE_CONSTANTS)
+        directions, fc = gk.reverse(gk.IRC_DIRECTIONS), gk.reverse(gk.IRC_FORCE_CONSTANTS)
         for option in keyword.options:
             key = option_key(option)
             if key in directions:
