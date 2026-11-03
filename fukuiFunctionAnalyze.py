@@ -839,7 +839,7 @@ class FukuiFunctionAnalyzeUI(SelectionControls):
         self.fill_sibling_states()
 
     def fill_sibling_states(self):
-        """<stem>_N.fchk chosen: fill the empty N+1 / N-1 fields with the Fukui input builder's names."""
+        """<stem>_N.fchk chosen: fill the empty N+1 / N-1 fields with the names the Fukui functions job type gives them."""
         plus, minus = sibling_state_files((self.n_input.value or "").strip())
         for widget, path in ((self.plus_input, plus), (self.minus_input, minus)):
             if path is not None and not (widget.value or "").strip():

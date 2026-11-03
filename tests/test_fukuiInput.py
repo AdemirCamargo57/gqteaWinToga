@@ -1,4 +1,4 @@
-"""Tests for the Gaussian Fukui input builder core (fukuiInput, no Toga)."""
+"""Tests for the core of the Fukui functions job type (fukuiInput, no Toga)."""
 import shutil
 import subprocess
 import sys

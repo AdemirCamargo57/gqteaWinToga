@@ -89,7 +89,7 @@
             <li>Quantum ESPRESSO <code>cp.x</code> input builder</li>
             <li>ORCA input builder</li>
             <li>gqteaMD input builder</li>
-            <li>Gaussian 16 Fukui input builder: the N, N+1 and N&minus;1 calculations in one linked job, plus a <code>formchk</code> script <a href="#fukui">(new)</a></li>
+            <li>Gaussian 16 input builder in the style of GaussView: job types, methods, solvation, linked steps and the Fukui N, N+1 and N&minus;1 calculations in one linked job, plus a <code>formchk</code> script</li>
             <li>Vanderbilt <code>runatom.x</code> input builder</li>
           </ul>
         </div>
@@ -170,7 +170,7 @@
           <li><b>Checked before computing.</b> The tool refuses files with different atoms, geometries, basis sets or methods, and it says why. Phenol takes about eight seconds; the optional <code>numba</code> package makes the density grid about four times faster.</li>
         </ul>
         <h3 class="feature-subhead">Prepare the three calculations</h3>
-        <p>The new <b>Gaussian Fukui Input Builder</b> (Inputs tab) writes one Gaussian 16 input with three linked jobs: it optimizes the neutral molecule, then runs the anion and the cation as single points at exactly that geometry. It also writes a <code>formchk</code> script that converts the checkpoint files into <code>.fchk</code> files. You must enter the spin multiplicity of every state, because the builder never guesses one. When you then pick the neutral molecule&rsquo;s file in the analysis tool, the anion and cation files are filled in for you. <span class="feature-note">The input builder is in the source code now and will be in the next installer release.</span></p>
+        <p>The <b>Gaussian 16 Input Builder</b> (Inputs tab, job type Fukui functions) writes one Gaussian 16 input with three linked jobs: it optimizes the neutral molecule, then runs the anion and the cation as single points at exactly that geometry. It also writes a <code>formchk</code> script that converts the checkpoint files into <code>.fchk</code> files. You must enter the spin multiplicity of every state, because the builder never guesses one. When you then pick the neutral molecule&rsquo;s file in the analysis tool, the anion and cation files are filled in for you. <span class="feature-note">The input builder is in the source code now and will be in the next installer release.</span></p>
         <p><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#analysis-of-fukui-functions">How to use it</a> &middot; <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#example-8-read-a-fukui-function-figure-phenol-f">How to read the figure</a> &middot; <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#formulas-and-methods-fukui-function-tool">The equations and methods</a></p>
       </div>
 

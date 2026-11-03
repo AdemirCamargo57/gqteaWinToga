@@ -42,7 +42,7 @@
     - [Quantum ESPRESSO cp.x Input Builder](#quantum-espresso-cpx-input-builder)
     - [ORCA Input Builder](#orca-input-builder)
     - [gqteaMD Input Builder](#gqteamd-input-builder)
-    - [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder)
+    - [Gaussian 16 Input Builder](#gaussian-16-input-builder)
   - [Structural Tools](#structural-tools)
     - [Radial Distribution Function](#radial-distribution-function)
     - [Mean Residence Time](#mean-residence-time)
@@ -136,7 +136,7 @@
   - [Orbitals tab messages](#orbitals-tab-messages)
   - [NTO tab messages](#nto-tab-messages)
   - [Excitation tab messages](#excitation-tab-messages)
-  - [Fukui input builder messages](#fukui-input-builder-messages)
+  - [Gaussian 16 input builder messages](#gaussian-16-input-builder-messages)
   - [Packaged Windows executable cannot find GLFW](#packaged-windows-executable-cannot-find-glfw)
 - [Version, Contributors, and License](#version-contributors-and-license)
 
@@ -151,7 +151,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-1.6.0 Molecular Analysis Toolkit
+gQTEA-1.7.0 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -485,7 +485,7 @@ The program is GUI-based. The "commands" below refer to the buttons and controls
 The main window organizes tools by category:
 
 - **Geometry**: bond length, all bond distances, bond angle, all bond angles, dihedral angle, all dihedral angles, and hydrogen bond analysis.
-- **Inputs**: CPMD, surface hopping, collision, Quantum ESPRESSO `cp.x`, ORCA, gqteaMD, and the Gaussian Fukui input builder.
+- **Inputs**: CPMD, surface hopping, collision, Quantum ESPRESSO `cp.x`, ORCA, gqteaMD, and the Gaussian 16 input builder (which also writes the Fukui-function jobs).
 - **Structural**: radial distribution function, mean residence time, autocorrelation function, and solvent box builders.
 - **Thermo**: classical rate constant calculation.
 - **Tools**: visualization, plotting, Fukui function analysis, the Vanderbilt USPP generator (runs `runatom`), frame selection, converters, force processing, coordinate tools, and unit conversion.
@@ -998,9 +998,57 @@ Common settings:
 - For xTB force provider, **OMP threads** writes `omp_num_threads` to the TOML so gqteaMD can set `OMP_NUM_THREADS` before xTB runs.
 - Optional UFF or classical parameter blocks.
 
-#### Gaussian Fukui Input Builder
+#### Gaussian 16 Input Builder
 
-Use **Inputs > Gaussian Fukui Input Builder** to prepare the three Gaussian calculations that [Tools > Analysis of Fukui Functions](#analysis-of-fukui-functions) needs. The input is written for **Gaussian 16 (Rev. C.01) under Linux**, either in WSL or on a computing cluster. It is **one** input file with three linked jobs, separated by `--Link1--`:
+**Inputs > Gaussian 16 Input Builder** prepares Gaussian 16 inputs in the way of GaussView 6.1's *Gaussian Calculation Setup*. The input is written for **Gaussian 16 (Rev. C.01) under Linux**, in WSL or on a computing cluster: relative file names and Linux (LF) line endings. Nothing is run from the window; it writes the files and lists the commands.
+
+**Window.**
+- **Step** list with **Add linked step**, **Remove**, **Up**, **Down**: the steps of a linked job (`--Link1--`). The panels always show the selected step.
+- **Route**: the route section of the selected step, updated as you change any control.
+- Tabs **Job Type**, **Method**, **Molecule**, **Title**, **Link 0**, **General**, **Guess**, **Pop**, **Solvation**, **Add. Inp.**, **Preview**, **Help**. The panels scroll vertically only.
+- **Additional Keywords**: any keyword or option the panels do not offer.
+- **Job name** (file stem) and **Output folder**; buttons **Open input...**, **Preview**, **Save input**, **Defaults**, **Close**.
+
+**Panels.**
+
+| Panel | Controls | Writes |
+|---|---|---|
+| Job Type | Energy; Optimization (minimum or TS (Berny), force constants, tight convergence, maximum cycles); Frequency (Raman, VCD, anharmonic); Opt+Freq; IRC (direction, force constants, MaxPoints, StepSize); Scan (relaxed); Stability (reoptimize); NMR (GIAO, CSGT, IGAIM, All; spin-spin); Fukui functions | `Opt=(TS,CalcFC,Tight,MaxCycles=n)`, `Freq=(Raman,VCD,Anharmonic)`, `IRC=(...)`, `Opt=ModRedundant`, `Stable=Opt`, `NMR=(...)` |
+| Method | electronic state (ground, TD-SCF, TDA, CIS, ZINDO; number of states, Root, Singlets/Triplets/50-50); *Print all excitation coefficients*; spin (default, R, U, RO); method family (Hartree-Fock, DFT, semi-empirical, MP2, MP4(SDTQ), CCSD, CCSD(T), compound) and method; basis set, with diffuse (`+`, `++`) and polarization lists for 6-31G and 6-311G; empirical dispersion | `UB3LYP/6-31+G(d,p)`, `TD=(NStates=10)`, `CIS(NStates=3)/cc-pVDZ`, `IOp(9/40=4)`, `EmpiricalDispersion=GD3BJ` |
+| Molecule | geometry (**Load geometry...** or Cartesian `Element x y z` lines in Å), geometry source of the step, charge, multiplicity, scan and freeze lines | the molecule specification, `Geom=Check` / `Geom=AllCheck`, the ModRedundant section |
+| Title | one line; blank = the job name | the title section |
+| Link 0 | `%Mem`, `%NProcShared`, `%Chk` (on by default, `<name>.chk`), `%OldChk`, extra `%` lines | the Link 0 section |
+| General | print level (`#P`, `#`, `#N`, `#T`), `SCF=Tight`, `SCF=QC`, `NoSymm`, `Polar`, *Write connectivity*, *Write a formchk script* | `SCF=(Tight,QC)`, `Geom=Connectivity` and its section |
+| Guess | default, core, Huckel, read the checkpoint, read if possible (TCheck); mix HOMO/LUMO, always, only, save | `Guess=(Read,Mix)` |
+| Pop | output level; MK, Hirshfeld (CM5), NBO, NPA, save NTOs | `Pop=(Full,MK)` |
+| Solvation | none, IEFPCM, CPCM, SMD; solvent (Gaussian's names, or Other) | `SCRF=(SMD,Solvent=Water)` |
+| Add. Inp. | free text | sections after the geometry: a `Gen` basis set, ECPs, … |
+
+*Print all excitation coefficients* writes `IOp(9/40=4)`: without it Gaussian prints only the largest CI coefficients, and the 3D viewer's NTO and Excitation tabs report a normalisation deviation.
+
+**What you must supply.** The geometry; the **multiplicity**, which is never assumed (a blank field stops Preview and Save with the values the electron count allows; the line under it shows them as you type); `%Mem` and `%NProcShared` for the machine that runs Gaussian; the output folder. Free-text fields (title, Add. Inp., extra `%` lines) must be plain ASCII: Preview and Save refuse other characters and name the field.
+
+**Additional Keywords.** A keyword that no panel writes is added to the route. If a panel already writes the keyword, the options are **merged** into it: with *Optimize to a* TS and `Opt=NoEigenTest` here the route reads `Opt=(TS,NoEigenTest)`. A keyword with a single valued option is written in parentheses, for example `Opt=(MaxCycles=9)`. The same option with two values (the panel's `MaxCycles=100` and `Opt=MaxCycles=50`) is an error that names both places. The method and basis set belong in the Method panel.
+
+**Linked steps.** **Add linked step** copies the selected step and presets it to continue from the checkpoint: geometry source *Checkpoint: everything* (`Geom=AllCheck`), `Guess=Read`, job type Energy. A typical job is an optimization followed by a TD-SCF single point. Every step writes `%Chk=<name>.chk` unless you change it, so each step reads what the previous one wrote. A step that reads a checkpoint (`Geom=Check`, `Geom=AllCheck`, `Guess=Read`, `ReadFC`) must find one written by an earlier step, or named in its `%OldChk`. Steps that share a checkpoint leave only the last step's results in it, and a warning says so. The geometry belongs to the whole job: a later step with the source *Coordinates* writes the same geometry again. When you load a geometry, the status line names any other steps that keep their own charge and multiplicity; they are not overwritten.
+
+**Scan and freeze coordinates.** In the Molecule panel, choose Bond, Angle or Dihedral, type the atoms (numbered from 1), choose Scan (number of steps and step size, in Å or degrees) or Freeze, and press **Add**; or type lines such as `B 1 2 S 10 0.05` or `D 1 2 3 4 F`. Scan lines need the job type *Scan (relaxed)*; freeze lines also work with Optimization and Opt+Freq.
+
+**Open input...** reads a `.gjf`, `.com` or `.gau` file back into the panels, every step. Keywords no panel has go to Additional Keywords and extra sections to Add. Inp., so saving again keeps them; a second job keyword (for example `NMR` beside `Freq`) is kept in Additional Keywords. An absolute `%Chk` path keeps only its file name, and title characters Gaussian does not allow (`@ # ! - _ \`) become blanks. Whole-line `!` comments are dropped, and CIS or ZINDO options that have no panel are dropped; the Preview tab lists these notes. Z-matrices, per-fragment charges and freeze flags inside the coordinates are refused.
+
+**Buttons.**
+- **Preview** shows the input on the Preview tab, with any warnings.
+- **Save input** writes `<name>.gjf` and, when *Write a formchk script* is on, `<name>_formchk.sh`, asking before it replaces existing files. The Preview tab then lists the commands to run.
+- **Defaults** resets every panel of every step (it asks first); the geometry, charge and multiplicity are kept.
+
+**Running the job.**
+1. In a Linux shell with Gaussian 16 set up, go to the folder that holds the input. Under WSL, `C:\jobs\water` is `/mnt/c/jobs/water`. On a cluster, copy the folder there first.
+2. Run `g16 < <name>.gjf > <name>.log`, or submit the job through the cluster's queue.
+3. Run `bash <name>_formchk.sh` to convert every checkpoint to a `.fchk`, which the 3D Molecular Viewer's Orbitals, ESP, QTAIM, NTO and Excitation tabs read.
+
+##### Fukui functions job type
+
+The job type **Fukui functions (N, N+p, N−q)** prepares the three Gaussian calculations that [Tools > Analysis of Fukui Functions](#analysis-of-fukui-functions) needs, as **one** input file with three linked jobs:
 
 | Job | State | Calculation | Charge | Multiplicity | Checkpoints |
 |---|---|---|---|---|---|
@@ -1008,64 +1056,14 @@ Use **Inputs > Gaussian Fukui Input Builder** to prepare the three Gaussian calc
 | 2 | N+p | single point, `Geom=Check Guess=Read` | Q − p | M₊ | `%OldChk=<name>_N.chk`, `%Chk=<name>_Np1.chk` |
 | 3 | N−q | single point, `Geom=Check Guess=Read` | Q + q | M₋ | `%OldChk=<name>_N.chk`, `%Chk=<name>_Nm1.chk` |
 
-Job 1 optimizes the N state from the geometry you give. Jobs 2 and 3 read the **optimized** geometry (and, by default, the orbitals as the initial guess) from `<name>_N.chk`. The ions are **not** re-optimized, because the Fukui functions are derivatives at fixed nuclei. Gaussian copies the `%OldChk` file into each job's own `%Chk` before the job starts, so `<name>_N.chk` keeps the optimized N state. All jobs share the same method, basis set and extra keywords.
+Job 1 optimizes the N state from the geometry of the Molecule panel. Jobs 2 and 3 read the **optimized** geometry (and, by default, the orbitals) from `<name>_N.chk` and are **not** re-optimized, because the Fukui functions are derivatives at fixed nuclei. Gaussian copies the `%OldChk` file into each job's own `%Chk`, so `<name>_N.chk` keeps the optimized N state. All three jobs share the method, basis set and keywords of the panels.
 
-**What you must supply.** Some values cannot be safely defaulted:
-- the starting geometry;
-- the charge of the N state;
-- **all three spin multiplicities** (N, N+p, N−q). The builder never assumes a spin state. A blank multiplicity stops Preview and Save with a message that names the state and lists the values its electron count allows;
-- `%Mem` and `%NProcShared` for the machine that runs Gaussian;
-- the output folder.
+- **Job Type panel**: p and q (1 for ordinary f⁺/f⁻; larger for degenerate frontier orbitals), the multiplicities of N+p and N−q, and *Start the ions from the optimized N-state orbitals (Guess=Read)*. The Optimization options apply to job 1: a minimum only, with default, CalcFC or CalcAll force constants, tight convergence and a maximum number of cycles.
+- **Molecule panel**: the geometry, the charge and the multiplicity of the N state. The summary line lists the charge, electron count, `.chk` name and multiplicity of the three states. **All three multiplicities are required**: for ordinary organic molecules the lowest states are usually 1, 2, 2 for a closed-shell neutral and 2, 1, 1 for a neutral radical, but you must enter them. For transition-metal systems, compute several spin states of each ion and use the lowest in energy.
+- Choosing this job type switches `SCF=Tight` and `NoSymm` on (General panel). The title, `%Chk`/`%OldChk`, Guess, Add. Inp., connectivity, the spin prefix and excited states are set by the job and greyed out. It must be the only step.
+- In Additional Keywords `Opt`, `IRC`, `Scan`, `Geom=`, `Guess=`, `Units=`, `Gen`/`GenECP`, `ExtraBasis`, `Pseudo`/ECPs and options that read an extra input section are refused; `Freq`, post-SCF methods, `TD` and diffuse basis sets only warn (the analysis reads only the `Total SCF Density`).
 
-**Setup tab.**
-
-| Field | Default | Notes |
-|---|---|---|
-| Job name | name of the loaded file (`molecule` otherwise) | Letters, digits, `.`, `_`, `-`; it becomes the file names. Loading `<name>_N.fchk` gives `<name>`. |
-| Output folder | folder of the loaded file | Must exist. |
-| `%Mem` | `2GB` | Integer plus a unit (`KB`, `MB`, `GB`, `TB`, `KW`, …). A bare number is refused: Gaussian would read it as 8-byte *words*. |
-| `%NProcShared` | 4 | Cores of the WSL machine or the cluster node. |
-| Print level | `#P` | `#P`, `#`, `#N`, `#T`. |
-| Method | `B3LYP` | No R/U prefix is needed: Gaussian uses R for a closed-shell state and U for an open-shell one. An `R` prefix with an open-shell state warns. |
-| Basis set | `6-31G(d)` | A diffuse basis (`+`, `aug-`) warns; see the analysis tool's caveats. |
-| Extra keywords (all jobs) | `SCF=Tight NoSymm` | `NoSymm` keeps one orientation in all three jobs. |
-| Optimization (job 1) | `Opt` | One `Opt` keyword towards a minimum, e.g. `Opt=Tight` or `Opt=(Tight,CalcFC)`. `TS`, `QST2`/`QST3`, `ModRedundant`, `ReadFC` and options that read input are refused. |
-
-The **Route** lines show the route of job 1 and of jobs 2–3 as they will be written.
-
-Some keywords are **refused** in *Extra keywords*:
-- `Opt` (it belongs in the Optimization field, so that only the N state is optimized);
-- `IRC`, `Scan`;
-- `Geom=` and `Guess=` (the builder writes them for the ions);
-- `Units=` (the coordinates are written in Å);
-- `Gen`/`GenECP`, `ExtraBasis`, `Pseudo`/ECPs, and any option that reads an extra input section.
-
-Others only produce a **warning**:
-- `Freq` (it would run on all three jobs and is not needed);
-- post-SCF methods and `TD` (the analysis reads only the `Total SCF Density`);
-- diffuse basis sets.
-
-**Molecule & states tab.**
-- **Load geometry...** reads `.xyz`, `.gjf`/`.com`, `.fchk`/`.fch`, `.pdb`, `.mol`, `.mol2` and `.hin`. A `.gjf` or `.fchk` also sets the charge and multiplicity of the N state; the ion multiplicities are cleared. You can also paste or type `Element x y z` lines in Å; an element symbol, a numbered label (`C1`) or an atomic number is accepted. Z-matrices, freeze flags and fragment tags are refused, with the line number in the message. This is the **starting** geometry: job 1 optimizes it.
-- **Charge of the N state**: blank = 0.
-- **Multiplicity of the N state, of N+p and of N−q**: required. For ordinary organic molecules the lowest states are usually 1, 2, 2 for a closed-shell neutral and 2, 1, 1 for a neutral radical, but you must enter them. For transition-metal systems, compute several spin states of each ion and use the lowest in energy.
-- **p / q**: 1 for ordinary f⁺/f⁻. Larger values are for degenerate frontier orbitals (see *Formulas and Methods (Fukui Function tool)*, subsection 5).
-- The **states** lines show the charge, electron count, `.chk` name and multiplicity of each state as you type. A missing multiplicity shows as `?` with the values allowed; an impossible one is flagged.
-- **Start the ions from the optimized N-state orbitals (Guess=Read)**: on by default. When off, the ions get Gaussian's default initial guess; `Geom=Check` is written either way.
-
-**Buttons.**
-- **Preview** shows the input on the *Preview* tab, with any warnings.
-- **Save input** writes `<name>_fukui.gjf` and `<name>_formchk.sh`, asking before it replaces existing files. Both files use relative file names and Linux (LF) line endings. The *Preview* tab then lists the commands to run.
-
-**Typical workflow.**
-1. Load or paste the starting geometry, enter the three multiplicities, and check the Setup tab.
-2. Press **Save input**.
-3. In a Linux shell with Gaussian 16 set up, go to the folder that holds the input. Under WSL, `C:\jobs\phenol` is `/mnt/c/jobs/phenol`. On a cluster, copy the folder there first.
-4. Run `g16 < <name>_fukui.gjf > <name>_fukui.log`, or submit the job through the cluster's queue.
-5. Run `bash <name>_formchk.sh`. It runs `formchk <name>_N.chk <name>_N.fchk`, and the same for the other two, and reports any missing checkpoint.
-6. Copy the three `.fchk` files back if they were made on a cluster. In *Tools > Analysis of Fukui Functions*, choose `<name>_N.fchk`. The other two files are filled in automatically, and the analysis checks that the three states share the same geometry, basis set and method.
-
-If one linked job fails, Gaussian does not run the jobs after it. The script then reports which `.chk` is missing; the reason is in the `.log` file.
+**Save input** writes `<name>_fukui.gjf` and `<name>_formchk.sh`. Run `g16 < <name>_fukui.gjf > <name>_fukui.log`, then `bash <name>_formchk.sh`, which runs `formchk <name>_N.chk <name>_N.fchk` and the same for the other two, and reports any missing checkpoint. Copy the three `.fchk` files back if they were made on a cluster, and choose `<name>_N.fchk` in *Tools > Analysis of Fukui Functions*: the other two files are filled in automatically, and the analysis checks that the three states share the same geometry, basis set and method. If one linked job fails, Gaussian does not run the jobs after it; the script then reports which `.chk` is missing, and the reason is in the `.log` file.
 
 ### Structural Tools
 
@@ -3331,7 +3329,7 @@ report gives both, labelled.
 
 3. Run `formchk` on each `.chk`.
 
-Steps 1–3 can be prepared by [Inputs > Gaussian Fukui Input Builder](#gaussian-fukui-input-builder): one Gaussian 16 linked job (optimization of N, then `Geom=Check` single points on N+1 and N−1) plus a formchk script.
+Steps 1–3 can be prepared by [Inputs > Gaussian 16 Input Builder](#fukui-functions-job-type), job type *Fukui functions*,: one Gaussian 16 linked job (optimization of N, then `Geom=Check` single points on N+1 and N−1) plus a formchk script.
 
 **Setup tab.**
 - The three `.fchk` files and an optional output folder (blank = next to the N file). Choosing a `<name>_N.fchk` with **Browse** fills in `<name>_Np1.fchk` and `<name>_Nm1.fchk` when those files exist and the fields are empty (the names the input builder writes).
@@ -3999,7 +3997,7 @@ Dihedrals are reported as signed degrees using the range `(-180, 180]`. To apply
 
 ### Example 8: Read a Fukui Function Figure (phenol, f⁺)
 
-This example explains one figure from **Tools > Analysis of Fukui Functions**: the f⁺ isosurfaces of phenol (C₆H₅OH) at B3LYP/6-31G(d). The three `.fchk` files came from one [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder) job:
+This example explains one figure from **Tools > Analysis of Fukui Functions**: the f⁺ isosurfaces of phenol (C₆H₅OH) at B3LYP/6-31G(d). The three `.fchk` files came from one [Gaussian 16 Input Builder](#fukui-functions-job-type) job:
 - the neutral molecule, optimized: charge 0, multiplicity 1, 50 electrons;
 - the anion: −1 2, 51 electrons;
 - the cation: +1 2, 49 electrons.
@@ -7165,12 +7163,17 @@ Errors appear in a dialog; notes appear under `NOTES` in the report
 | `The … surface reaches the edge of the grid; raise the isovalue.` (status line) | Very diffuse electron (Rydberg). | Raise the isovalue. |
 | `The plot viewer could not be started. The heat map was saved as …` | The interactive viewer could not open. | Reopen the JSON file with **Plotter**. |
 
-### Fukui input builder messages
+### Gaussian 16 input builder messages
 
 | Message | Cause | What to do |
 |---|---|---|
 | `%Mem = '2000': a number without a unit means 8-byte words` | A memory value without a unit. | Type e.g. `2GB` or `500MB`. |
-| `Keyword Opt: Optimization keywords go in the 'Optimization (job 1)' field …` | `Opt` was typed in *Extra keywords*, which apply to all three jobs. | Put it (with its options) in *Optimization (job 1)*. |
+| `Step 1: Multiplicity: enter it; it is not assumed (10 electrons allow 1, 3, 5, ...)` | The multiplicity field of that step is blank. | Enter the multiplicity of the state you want. |
+| `Step 2: Geom=AllCheck reads a checkpoint, but no earlier step writes x.chk; set %OldChk to an existing checkpoint.` | The step reads a checkpoint that no earlier step writes. | Give the steps the same `%Chk`, or name an existing checkpoint in `%OldChk`. |
+| `Additional Keywords: Opt=MaxCycles=50 sets MaxCycles=50, but the Job Type panel sets MaxCycles=100.` | The same option was given two values. | Keep one: change the panel or remove the keyword. |
+| `Basis set Gen: put the basis-set section in the Add. Inp. panel.` | `Gen`/`GenECP` without its basis-set section. | Type the basis set (and ECPs) in Add. Inp. |
+| `Step 1: '0 1 0 1 0 1' is not one charge and one multiplicity (per-fragment charges are not supported).` | Open input... met a fragment-charge line. | Edit the file to one charge and multiplicity, or set up that job by hand. |
+| `The Fukui functions job type: set the N-state optimization with the Optimization options of the Job Type panel, not in Additional Keywords.` | `Opt` was typed in Additional Keywords for a Fukui job. | Use the Optimization options of the Job Type panel. |
 | `The N+1 state: enter its spin multiplicity; it is not assumed (51 electrons allow 2, 4, 6, ...)` | A multiplicity field is blank. | Enter the multiplicity of the lowest-energy spin state of that state. |
 | `The N+1 state: multiplicity 1 is impossible (…)` | The multiplicity does not fit the electron count (even count: 1, 3, …; odd: 2, 4, …). | Correct it. |
 | `<name>_Np1.chk not found: did that job run?` (from `<name>_formchk.sh`) | Gaussian stopped before that linked job (an earlier job failed, e.g. the optimization did not converge). | Read the end of the `.log` file, fix the cause and rerun. |
@@ -7191,8 +7194,10 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-1.6.0 Molecular Analysis Toolkit
+gQTEA-1.7.0 Molecular Analysis Toolkit
 ```
+
+Version 1.7.0 (November 2026) replaces the Gaussian Fukui Input Builder on the **Inputs** tab with the [Gaussian 16 Input Builder](#gaussian-16-input-builder), modelled on GaussView 6.1's Gaussian Calculation Setup. It writes Gaussian 16 inputs for energies, optimizations (minimum or transition state), frequencies, IRC, relaxed scans, stability and NMR jobs, with ground or excited states (TD-SCF, TDA, CIS, ZINDO), Hartree-Fock, DFT, semi-empirical, MP2, coupled-cluster and compound methods, basis sets, dispersion, solvation, population analysis and guess options, and a live route line. Several steps can be linked in one input (`--Link1--`), for example an optimization followed by a TD-SCF single point, and **Open input...** reads an existing `.gjf` back into the panels. The Fukui-function calculation is now its job type [Fukui functions](#fukui-functions-job-type) and writes exactly the same files as before.
 
 Version 1.6.0 (October 2026) turns the former runatom input builder into the [Vanderbilt USPP Generator (runatom)](#vanderbilt-uspp-generator-runatom) and moves it from the **Inputs** tab to the **Tools** tab, between **Analysis of Fukui Functions** and **Molecular Axis Alignment**. It now does the whole job from one window: it checks the inputs with the program's own rules, runs D. Vanderbilt's `runatom` (USPP 7.3.6, shipped with gqteaWinToga, so nothing else needs to be installed) for the all-electron reference, the pseudopotential generation and the transferability tests, and shows the results. These include the comparison of all-electron and pseudo eigenvalues and a ghost-state check. It also writes a formatted copy of the pseudopotential for CPMD (`<symbol>_ps_formatted.uspp`, used with `*<file> FORMATTED`). The program's own library of tested inputs for 45 elements can be imported as a starting point.
 
@@ -7252,7 +7257,7 @@ Version 0.9.0 (October 2026) turns the [Molecular Design](#molecular-design) can
 
 Dragging, rotating and panning on the canvas are also about three times faster (five times for larger molecules). `numba` is now installed by default with `installation_requirements.txt`; it stays optional at run time.
 
-Version 0.8.5 (October 2026) added the [Gaussian Fukui Input Builder](#gaussian-fukui-input-builder) on the Inputs tab. It writes the Gaussian 16 job that the Fukui analysis needs:
+Version 0.8.5 (October 2026) added the [Gaussian Fukui Input Builder](#fukui-functions-job-type) on the Inputs tab. It writes the Gaussian 16 job that the Fukui analysis needs:
 
 - one input file with three linked jobs: an optimization of the N state, then single points on N+1 and N−1 that read the optimized geometry from its checkpoint (`%OldChk` + `Geom=Check`), each into its own `.chk`;
 - charges set from the electron count; all three spin multiplicities must be entered, none is assumed;

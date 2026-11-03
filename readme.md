@@ -7,7 +7,7 @@ interface built with [Toga](https://toga.readthedocs.io/) and collects several
 specialized tools for CPMD, Quantum ESPRESSO `cp.x`, ORCA, surface hopping, and
 trajectory analysis workflows.
 
-The current application title identifies the toolkit as **gQTEA-1.6.0 Molecular
+The current application title identifies the toolkit as **gQTEA-1.7.0 Molecular
 Analysis Toolkit**.
 
 ## Capabilities
@@ -33,7 +33,7 @@ distributions.
 - Quantum ESPRESSO `cp.x` input builder
 - ORCA input builder
 - gqteaMD input builder
-- Gaussian Fukui input builder (one Gaussian 16 linked job: optimization of N, then `Geom=Check` single points on N+1 and N-1; plus a formchk script)
+- Gaussian 16 input builder modelled on GaussView 6.1's calculation setup (job types, methods, basis sets, solvation, linked steps, reopening of .gjf files), including the Fukui-function linked job (optimization of N, then `Geom=Check` single points on N+1 and N-1; plus a formchk script)
 
 ### Structural Analysis
 
@@ -89,7 +89,7 @@ Each major tool is implemented in its own module, for example:
 - `qtaimTopology.py`, `qtaimAnalysis.py`, `qtaimLayer.py` and `qtaimTab.py` for the QTAIM tab (density derivatives in `gaussianWavefunction.py` and the optional `densityNumba.py`)
 - `molecularOrbitals.py` and `orbitalTab.py` for the Orbitals tab
 - `excitationData.py`, `ntoAnalysis.py`, `uvVisSpectrum.py` and `ntoTab.py` for the NTO tab (MO coefficients and orbital values in `gaussianWavefunction.py`)
-- `fukuiInput.py` and `fukuiInputBuilder.py` for the Gaussian Fukui input builder; `gaussianUtilities.py` locates Gaussian utilities such as cubegen
+- `gaussianKeywords.py`, `gaussianInput.py` and `gaussianInputBuilder.py` for the Gaussian 16 input builder (`fukuiInput.py` writes its Fukui job); `gaussianUtilities.py` locates Gaussian utilities such as cubegen
 - `plotter.py` and `displayPlots.py` for plotting
 - `help.py` for application help text and shared atomic data
 
