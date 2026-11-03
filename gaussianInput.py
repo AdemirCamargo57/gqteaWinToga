@@ -1455,3 +1455,50 @@ def read_input_file(path) -> Tuple[GaussianJobSpec, List[str]]:
         return read_input_text(text, stem, str(path.resolve().parent))
     except ValueError as exc:
         raise ValueError(f"{path.name}: {exc}") from exc
+
+
+# ----------------------------------------------------------------------
+# Files the window reads, and paths it prints
+# ----------------------------------------------------------------------
+GEOMETRY_FILE_TYPES = ["xyz", "gjf", "com", "gau", "fchk", "fch", "pdb", "ent", "mol", "sdf", "mol2"]
+FCHK_SUFFIXES = (".fchk", ".fch")
+
+
+def read_geometry_file(path) -> Tuple[str, Optional[int], Optional[int]]:
+    """(Angstrom 'El x y z' text, charge or None, multiplicity or None) from a structure file.
+
+    A Gaussian input or formatted checkpoint also gives the charge and multiplicity.
+    """
+    import molecularFileFormats as mff        # numpy + scipy: loaded when a file is opened
+    path = Path(path)
+    if path.suffix.lower() in FCHK_SUFFIXES:
+        import gaussianWavefunction as gw
+        try:
+            sections = gw.read_fchk_sections(path.read_text(encoding="utf-8", errors="replace"))
+            numbers = [int(z) for z in sections["Atomic numbers"]]
+            xyz = list(sections["Current cartesian coordinates"])
+        except (OSError, KeyError) as exc:
+            raise ValueError(f"{path.name} is not a readable formatted checkpoint: {exc}") from exc
+        atoms = [(fi.element_symbol(str(z)), *(mff.BOHR_RADIUS_ANGSTROM * float(v) for v in xyz[3 * i:3 * i + 3]))
+                 for i, z in enumerate(numbers)]
+        return "\n".join(fi.format_geometry(atoms)), int(sections.get("Charge", 0)), \
+            int(sections.get("Multiplicity", 1))
+    structure = mff.read_structure_file(path)
+    atoms = [(element, *(float(v) for v in xyz)) for element, xyz in zip(structure.elements, structure.coordinates)]
+    text = "\n".join(fi.format_geometry(atoms))
+    charge = mult = None
+    if path.suffix.lower() in GAUSSIAN_INPUT_SUFFIXES:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            tokens = line.split()
+            if len(tokens) == 2 and all(t.lstrip("+-").isdigit() for t in tokens):
+                charge, mult = int(tokens[0]), int(tokens[1])
+                break
+    return text, charge, mult
+
+
+def wsl_path(path) -> str:
+    r"""'C:\jobs\phenol' -> '/mnt/c/jobs/phenol' (the folder as WSL sees it)."""
+    p = PureWindowsPath(str(path))
+    if not p.drive or not p.drive.endswith(":"):
+        return str(path)
+    return "/mnt/" + p.drive[0].lower() + "/" + "/".join(p.parts[1:])

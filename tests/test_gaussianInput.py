@@ -526,3 +526,42 @@ class TestPreview:
         text = gi.molecule_summary(fukui_job_spec(tmp_path, fukui_plus_multiplicity=None), 0)
         assert "N+1" in text and "charge -1" in text and "51 electrons" in text and "phenol_Np1.chk" in text
         assert "multiplicity ? (enter it: 51 electrons allow 2, 4, 6, ...)" in text
+
+
+import math
+
+from fukui_fixtures import N
+
+FUKUI_INPUTS = SRC / "tests" / "data" / "fukui" / "inputs"
+
+
+@pytest.mark.parametrize("windows,linux", [(r"C:\jobs\my mol", "/mnt/c/jobs/my mol"),
+                                           (r"D:\x", "/mnt/d/x"), ("/home/u/jobs", "/home/u/jobs")])
+def test_wsl_path(windows, linux):
+    assert gi.wsl_path(windows) == linux
+
+
+class TestGeometryFiles:
+    def test_gaussian_input_gives_charge_and_multiplicity(self):
+        text, charge, mult = gi.read_geometry_file(FUKUI_INPUTS / "phenol_Np1.gjf")
+        assert (charge, mult) == (-1, 2) and len(fi.parse_geometry(text)) == 13
+
+    def test_fchk_gives_angstrom_coordinates(self):
+        text, charge, mult = gi.read_geometry_file(N)
+        atoms = fi.parse_geometry(text)
+        reference = fi.parse_geometry(gi.read_geometry_file(FUKUI_INPUTS / "phenol_N.gjf")[0])
+        assert (charge, mult) == (0, 1) and [a[0] for a in atoms] == [a[0] for a in reference]
+        assert math.dist(atoms[0][1:], atoms[1][1:]) == pytest.approx(math.dist(reference[0][1:],
+                                                                               reference[1][1:]), abs=1e-5)
+
+    def test_xyz_has_no_charge(self, tmp_path):
+        path = tmp_path / "w.xyz"
+        path.write_text("3\nwater\nO 0 0 0.1173\nH 0 0.7572 -0.4692\nH 0 -0.7572 -0.4692\n")
+        text, charge, mult = gi.read_geometry_file(path)
+        assert charge is None and mult is None and len(fi.parse_geometry(text)) == 3
+
+    def test_unsupported_file(self, tmp_path):
+        path = tmp_path / "x.log"
+        path.write_text("")
+        with pytest.raises(ValueError, match="log"):
+            gi.read_geometry_file(path)
