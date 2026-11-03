@@ -414,3 +414,36 @@ class TestFukuiInTheWindow:
         assert "g16 < phenol_fukui.gjf > phenol_fukui.log" in ui.messages_output.value
         assert "bash phenol_formchk.sh" in ui.messages_output.value
         assert "Analysis of Fukui Functions" in ui.messages_output.value
+
+
+class TestFixRound1:
+    def test_other_steps_with_their_own_charge_are_named(self, tmp_path):
+        ui = make_ui(tmp_path)
+        ui.add_linked_step(None)
+        change(ui, "geometry_source_selection", gk.GEOM_CHECK)
+        ui.step_selection.value = ui._step_labels[0]
+        ui.on_step_select(ui.step_selection)
+        ui.apply_geometry_file(FUKUI_INPUTS / "phenol_N.gjf")
+        assert "Step 2 keeps their own charge and multiplicity: check them." in ui.status_label.text
+
+    def test_all_check_steps_get_no_note(self, tmp_path):
+        ui = make_ui(tmp_path)
+        ui.add_linked_step(None)
+        ui.step_selection.value = ui._step_labels[0]
+        ui.on_step_select(ui.step_selection)
+        ui.apply_geometry_file(FUKUI_INPUTS / "phenol_N.gjf")
+        assert "keep" not in ui.status_label.text
+
+    def test_defaults_with_a_bad_number_changes_nothing(self, tmp_path):
+        ui = make_ui(tmp_path)
+        ui.add_linked_step(None)
+        ui.n_states_input.value = "x"
+        asyncio.run(ui.defaults(None))
+        assert len(ui.steps) == 2 and ui.dialogs == [] and "Fix step 2" in ui.status_label.text
+
+    def test_helper_row_writes_through_assign(self, tmp_path):
+        ui = make_ui(tmp_path)
+        ui.modred_type_selection.value, ui.modred_atoms_input.value = "Bond", "1 2"
+        ui.modred_action_selection.value = "Freeze"
+        ui.add_modredundant_line(None)
+        assert ui.modredundant_input.value == "B 1 2 F"

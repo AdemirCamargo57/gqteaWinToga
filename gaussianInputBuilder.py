@@ -608,7 +608,7 @@ class GaussianInputBuilderUI:
             self._status(str(exc))
             return
         text = (self.modredundant_input.value or "").rstrip()
-        self.modredundant_input.value = f"{text}\n{line}" if text else line
+        _assign(self.modredundant_input, "value", f"{text}\n{line}" if text else line)
         self._status(f"Added: {line}")
         self.refresh()
 
@@ -630,6 +630,7 @@ class GaussianInputBuilderUI:
         """
         path = Path(path)
         text, charge, mult = gi.read_geometry_file(path)
+        self._store_current()
         self._syncing = True
         try:
             _assign(self.geometry_input, "value", text)
@@ -646,7 +647,11 @@ class GaussianInputBuilderUI:
                 _assign(self.output_dir_input, "value", str(path.resolve().parent))
         finally:
             self._syncing = False
-        self._status(f"Geometry loaded from {path.name}.")
+        own = [str(i + 1) for i, step in enumerate(self.steps)
+               if i != self.current_step and step.geometry_source != gk.GEOM_ALLCHECK]
+        note = (f" Step{'s' if len(own) > 1 else ''} {', '.join(own)} keep{'' if len(own) > 1 else 's'} "
+                "their own charge and multiplicity: check them.") if own else ""
+        self._status(f"Geometry loaded from {path.name}.{note}")
         self.refresh()
 
     async def browse_output_dir(self, widget):
@@ -743,7 +748,8 @@ class GaussianInputBuilderUI:
 
     async def defaults(self, widget):
         """Every step back to one default step; the molecule (geometry, charge, multiplicity) is kept."""
-        self._store_current()
+        if not self._store_current():
+            return
         first = self.steps[0]
         reference = gi.GaussianStepSpec(charge=first.charge, multiplicity=first.multiplicity)
         if self.steps != [reference] and not await self._confirm(
