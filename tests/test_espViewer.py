@@ -86,6 +86,103 @@ def test_custom_caption_replaces_the_esp_caption():
     assert v.colour_bar_text()[2].startswith("ESP (a.u.)")
 
 
+class TestSelectionFilter:
+    """Show only selected: the surface and markers follow the selection (nearest-atom owners)."""
+
+    # Two H2 molecules 10 A apart; one triangle (3 vertices) round each atom.
+    XYZ = np.array([[0, 0, 0], [0.74, 0, 0], [10, 0, 0], [10.74, 0, 0]])
+
+    @pytest.fixture
+    def viewer(self):
+        v = ev.ESPSurfaceViewer()
+        v.set_molecule(["H"] * 4, self.XYZ)
+        offsets = np.array([[0, 0.5, 0], [0, 0, 0.5], [0, -0.5, 0]])
+        verts = np.vstack([atom + offsets for atom in self.XYZ])
+        tris = np.arange(12).reshape(4, 3)
+        values = np.array([0.01] * 3 + [0.02] * 3 + [-0.03] * 3 + [-0.04] * 3)
+        markers = [ev.SurfaceMarker(tuple(self.XYZ[0] + [0, 0.5, 0]), "max", "global", "1"),
+                   ev.SurfaceMarker(tuple(self.XYZ[3] + [0, 0.5, 0]), "min", "global", "2")]
+        v.set_surface(verts, tris, np.tile([0, 0, 1.0], (12, 1)), values, 0.01, markers,
+                      vertex_atoms=np.repeat(np.arange(4), 3), marker_atoms=[0, 3])
+        return v
+
+    def test_without_show_only_the_whole_surface_is_drawn(self, viewer):
+        viewer.set_selected_atoms([0, 1])
+        s = viewer.get_surface()
+        assert len(s.vertices) == 12 and len(s.indices) == 12 and len(s.markers) == 2
+        assert not viewer.filtering_by_selection()
+
+    def test_show_only_keeps_the_selected_atoms_part(self, viewer):
+        viewer.set_selected_atoms([0, 1])
+        viewer.set_show_selected_only(True)
+        s = viewer.get_surface()
+        assert len(s.vertices) == 6 and s.indices.tolist() == [0, 1, 2, 3, 4, 5]
+        assert np.all(s.vertices[:, 0] < 1.0)  # only round the first molecule
+        assert [m.label for m in s.markers] == ["1"]  # extrema-file row numbers kept
+        assert s.half_range == pytest.approx(0.04)  # whole-system colour range
+        assert viewer.filtering_by_selection() and not viewer.surface_hidden_by_selection()
+        # Framed round the selection (as set_projection asks), not the whole system.
+        assert viewer.get_scene_radius(viewer.camera_focus_frame()) < 3.0
+
+    def test_selection_changes_refilter(self, viewer):
+        viewer.set_show_selected_only(True)
+        viewer.set_selected_atoms([3])
+        assert np.all(viewer.get_surface().vertices[:, 0] > 10.5)
+        viewer.toggle_selected_atom(3)  # empty selection: everything again
+        assert len(viewer.get_surface().vertices) == 12
+        viewer.set_selected_atoms([1])
+        viewer.set_show_selected_only(False)
+        assert len(viewer.get_surface().vertices) == 12
+
+    def test_a_selection_with_no_surface_hides_it_and_says_so(self, viewer):
+        viewer.set_surface(np.eye(3), np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.01,
+                           vertex_atoms=[2, 2, 3])
+        viewer.set_selected_atoms([0])
+        viewer.set_show_selected_only(True)
+        assert viewer.get_surface() is None and viewer.surface_hidden_by_selection()
+        viewer.clear_surface()
+        assert not viewer.surface_hidden_by_selection()
+
+    def test_a_surface_without_owners_is_never_filtered(self):
+        v = ev.ESPSurfaceViewer()
+        v.set_molecule(["H"] * 4, self.XYZ)
+        v.set_selected_atoms([0])
+        v.set_show_selected_only(True)
+        v.set_surface(np.eye(3), np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.01)
+        assert len(v.get_surface().vertices) == 3
+
+    def test_owner_arrays_must_match(self, viewer):
+        with pytest.raises(ValueError, match="vertex_atoms"):
+            viewer.set_surface(np.eye(3), np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.01,
+                               vertex_atoms=[0, 1])
+        with pytest.raises(ValueError, match="marker_atoms"):
+            viewer.set_surface(np.eye(3), np.array([[0, 1, 2]]), np.eye(3), np.zeros(3), 0.01,
+                               markers=[ev.SurfaceMarker((0, 0, 0), "max", "global", "1")],
+                               vertex_atoms=[0, 1, 2], marker_atoms=[])
+
+    def test_same_structure_keeps_the_selection(self, viewer):
+        viewer.set_selected_atoms([2, 3])
+        viewer.set_molecule(["H"] * 4, self.XYZ + 1e-6)
+        assert viewer.get_selected_atoms() == [2, 3]
+        viewer.set_molecule(["H"] * 3, self.XYZ[:3])  # another molecule: a real load
+        assert viewer.get_selected_atoms() == []
+
+    def test_selection_listener_is_called_on_the_loop(self, viewer):
+        calls = []
+
+        class Loop:
+            def is_closed(self):
+                return False
+
+            def call_soon_threadsafe(self, callback, *args):
+                calls.append(callback)
+
+        viewer.loop = Loop()
+        viewer.selection_listener = lambda: None
+        viewer.set_selected_atoms([0])
+        assert calls == [viewer.selection_listener]
+
+
 def test_atom_view_sets_style_and_numbers():
     v = ev.ESPSurfaceViewer()
     v.set_atom_view("CPK style", True)

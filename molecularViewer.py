@@ -29,9 +29,10 @@ from volumeData import (DEFAULT_TRANSPARENCY, MAX_TRANSPARENCY, SURFACE_SOLID, S
 from electrostaticSurfacePotential import ESPTabController
 from espSurfaceLayer import ESPSurfaceLayer
 from help import AtomicData
-from indexRanges import format_index_ranges, parse_solute_index_ranges
+from indexRanges import parse_solute_index_ranges
 from viewerSelection import (connected_atoms, expand_to_molecules, selection_comment, selection_export_problem,
-                             selection_summary, visible_atoms_and_bonds, write_xyz_frames)
+                             visible_atoms_and_bonds, write_xyz_frames)
+from viewerSelectionControls import SELECTION_HINT, SelectionControls
 from cubeTab import _assign  # write-only-on-change: every widget write re-lays out the window
 from molecularDesign import (ATOM_CANVAS_COLORS, ATOM_LABEL_COLOR, DEFAULT_ATOM_COLOR, MolecularDesignController,
                              canvas_palette, parse_hex_color)
@@ -2431,7 +2432,7 @@ class MolecularViewer:
             self.set_status_message("No valid frames found in XYZ file.")
 
 
-class MolecularViewerUI(MolecularViewer):
+class MolecularViewerUI(MolecularViewer, SelectionControls):
     def __init__(self, *args, **kwargs):
         # Accept and ignore any args Toga might pass
         super().__init__()
@@ -2904,38 +2905,11 @@ class MolecularViewerUI(MolecularViewer):
         """Atom/molecule selection: which atoms are focused on and exported."""
         tab_box.add(toga.Divider(style=Pack(margin=(10, 0, 4, 0))))
         tab_box.add(self._section_heading("Selection"))
-        tab_box.add(
-            self._hint(
-                "In the 3D window, Ctrl+click selects or deselects an atom and Shift+click "
-                "its whole molecule (the bonds drawn now). Selected atoms keep their identity "
-                "in every frame. Or type 1-based atoms and ranges, e.g. 1-3, 295-297, and "
-                "press Enter."
-            )
-        )
-        self.selection_input = toga.TextInput(
-            placeholder="e.g. 1-3, 295-297",
-            style=Pack(flex=1, margin=(0, 8, 0, 0)),
-            on_confirm=self.apply_selection_field,
-        )
+        tab_box.add(self._hint(SELECTION_HINT))
+        self.build_selection_widgets()
         tab_box.add(self._form_row(self._form_label("Selected atoms:"), self.selection_input))
-        self.selection_summary_label = toga.Label(
-            "No atoms selected.", style=Pack(margin=(0, 0, 6, 0))
-        )
         tab_box.add(self.selection_summary_label)
-        tab_box.add(
-            self._form_row(
-                toga.Button("Clear", on_press=self.clear_atom_selection,
-                            style=Pack(width=90, margin=(0, 8, 0, 0))),
-                toga.Button("Expand to molecules", on_press=self.expand_selection,
-                            style=Pack(width=170)),
-            )
-        )
-        # value goes to the constructor so building the tab fires no on_change.
-        self.show_selected_switch = toga.Switch(
-            "Show only selected atoms/molecules",
-            value=self.show_selected_only,
-            on_change=self.toggle_show_selected_only,
-        )
+        tab_box.add(self._form_row(self.selection_clear_button, self.selection_expand_button))
         tab_box.add(self._form_row(self.show_selected_switch))
         self.export_selected_switch = toga.Switch(
             "Export only selected atoms/molecules",
@@ -3907,41 +3881,12 @@ class MolecularViewerUI(MolecularViewer):
             return
         loop.call_soon_threadsafe(self._sync_selection_widgets)
 
-    def _sync_selection_widgets(self):
-        """Selection field and summary from the selection (written only on change)."""
-        if getattr(self, "selection_input", None) is None:
-            return
-        atoms = self.get_selected_atoms()
-        elements = [element for element, _ in self.get_current_frame_data()]
-        summary = selection_summary(elements, atoms)
-        _assign(self.selection_input, "value", format_index_ranges(i + 1 for i in atoms))
-        _assign(self.selection_summary_label, "text", summary)
-        self.set_status_message(f"Selection: {summary}")
+    # The selection controls (viewerSelectionControls) act on this viewer itself.
+    def selection_viewer(self):
+        return self
 
-    async def apply_selection_field(self, widget):
-        try:
-            atoms = self.parse_selection_text(self.selection_input.value or "")
-        except ValueError as exc:
-            await self._show_error("Selection Error", str(exc))
-            return
-        self.set_selected_atoms(atoms)
-        self._sync_selection_widgets()  # normalise the typed text even if unchanged
-
-    def clear_atom_selection(self, widget):
-        self.clear_selection()
-        self._sync_selection_widgets()
-
-    def expand_selection(self, widget):
-        if not self.get_selected_atoms():
-            self.set_status_message("Select atoms first, then expand them to whole molecules.")
-            return
-        self.expand_selection_to_molecules()
-        self._sync_selection_widgets()
-
-    def toggle_show_selected_only(self, widget):
-        self.set_show_selected_only(bool(self.show_selected_switch.value))
-        if self.show_selected_only and not self.get_selected_atoms():
-            self.set_status_message("Show only selected is on; select atoms to apply it.")
+    def set_selection_status(self, text: str):
+        self.set_status_message(text)
 
     def toggle_export_selected_only(self, widget):
         self.export_selected_only = bool(self.export_selected_switch.value)

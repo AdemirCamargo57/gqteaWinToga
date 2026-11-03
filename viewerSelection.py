@@ -12,6 +12,7 @@ from typing import Callable, List, Optional, Sequence, Set, Tuple
 import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import breadth_first_order, connected_components
+from scipy.spatial import cKDTree
 
 from indexRanges import format_index_ranges
 
@@ -65,6 +66,29 @@ def visible_atoms_and_bonds(
     atoms = sorted(i for i in selection if 0 <= i < natoms)
     keep = set(atoms)
     return atoms, [(i, j) for i, j in bonds if i in keep and j in keep]
+
+
+def nearest_atoms(points, atom_positions) -> np.ndarray:
+    """0-based index of the nearest atom to each point (same length unit for both)."""
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    if not len(points):
+        return np.zeros(0, dtype=np.intp)
+    _, nearest = cKDTree(np.asarray(atom_positions, dtype=float).reshape(-1, 3)).query(points)
+    return np.asarray(nearest, dtype=np.intp)
+
+
+def submesh(triangles, keep) -> Tuple[np.ndarray, np.ndarray]:
+    """Part of a mesh on the vertices where ``keep`` is True.
+
+    Returns (indices of the vertices used, triangles renumbered onto them):
+    a triangle is kept only when its three vertices are, and vertices no kept
+    triangle uses are dropped, so they do not count towards the scene radius.
+    """
+    triangles = np.asarray(triangles, dtype=np.intp).reshape(-1, 3)
+    keep = np.asarray(keep, dtype=bool)
+    kept = triangles[keep[triangles].all(axis=1)]
+    used = np.unique(kept)
+    return used, np.searchsorted(used, kept).reshape(-1, 3)
 
 
 def _composition(elements: Sequence[str]) -> str:

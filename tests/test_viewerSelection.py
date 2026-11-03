@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import viewerSelection as vs
@@ -76,6 +77,25 @@ def test_selection_summary():
     assert vs.selection_summary(DIMER_ELEMENTS, [3]) == "1 atom: O"
     assert vs.selection_summary(DIMER_ELEMENTS, list(range(6))) == "6 atoms: H4 O2"
     assert vs.selection_summary(DIMER_ELEMENTS[:2], [0, 5]) == "2 atoms: O (1 not in this frame)"
+
+
+def test_nearest_atoms_matches_a_brute_force_argmin():
+    rng = np.random.default_rng(7)
+    atoms = rng.uniform(-5, 5, (30, 3))
+    points = rng.uniform(-6, 6, (500, 3))
+    brute = np.argmin(np.linalg.norm(points[:, None, :] - atoms[None, :, :], axis=2), axis=1)
+    assert np.array_equal(vs.nearest_atoms(points, atoms), brute)
+    assert vs.nearest_atoms(np.zeros((0, 3)), atoms).shape == (0,)
+
+
+def test_submesh_keeps_triangles_whose_three_vertices_are_kept():
+    triangles = np.array([[0, 1, 2], [1, 2, 3], [3, 4, 5]])
+    keep = np.array([True, True, True, True, False, True])
+    vertices, kept = vs.submesh(triangles, keep)
+    assert vertices.tolist() == [0, 1, 2, 3]  # only the vertices the kept triangles use
+    assert kept.tolist() == [[0, 1, 2], [1, 2, 3]]
+    vertices, kept = vs.submesh(triangles, np.zeros(6, dtype=bool))
+    assert vertices.shape == (0,) and kept.shape == (0, 3)
 
 
 def test_viewer_selection_imports_neither_toga_nor_opengl():

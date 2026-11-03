@@ -3361,6 +3361,14 @@ Cubes: `<name>_fplus.cub`, `_fminus.cub`, `_fzero.cub`, `_dual.cub` (a.u. on a b
 
 Canvas background and **Export image...** work as in the ESP tool.
 
+**Selection** (Results tab): show only some atoms or molecules, e.g. the solute of a solute + solvent cluster, with their part of the Fukui display. The controls are the 3D Molecular Viewer's Display-tab *Selection*:
+- In the 3D window, **Ctrl+click** selects or deselects one atom and **Shift+click** its whole molecule (the bonds drawn now). Or type 1-based atoms and ranges in *Selected atoms* (`1-10`, `1-3, 15`) and press Enter. **Expand to molecules** adds every atom bonded to a selected one; **Clear** empties the selection.
+- Tick **Show only selected atoms/molecules**. The 3D window then draws only the selected atoms, the surface triangles whose vertices all lie nearer to a selected atom than to any other atom (the rule the report uses for an extremum's *nearest atom*), and the extremum markers whose nearest atom is selected. Markers keep their extrema-file numbers. The camera frames the selection.
+- The *Mapped on ρ(N) surface* colour scale stays the whole system's ±max|f|, so a filtered image and the full one use the same colours. The isosurface displays keep their ±isovalue scale.
+- **Export image...** saves exactly the filtered canvas; the suggested name gains `_selected` (e.g. `AguaPlusAcenta_N_fminus_selected.png`).
+- If no surface of the chosen function lies nearer to the selection than to the other atoms, nothing is drawn and the status line says so (e.g. f⁺ at 0.005 on the acetone of an acetone + 42 water cluster).
+- The selection is only a display filter. The report, cube files and extrema file always cover the whole system. It is kept when you change the function, display or atom style, and after a re-run on the same geometry.
+
 **Reading the results.**
 - Compare only atoms that can actually react.
 - For electrophilic attack, prefer large f⁻ and the most negative Δf. For nucleophilic attack, prefer the most positive Δf: f⁺ alone is the least reliable of the descriptors.
@@ -5989,6 +5997,14 @@ global ones, and numbered as in the report.
 "CPK" means ball-and-stick here, as in the 3D Molecular Viewer. **Show atom
 numbers** labels every atom with its 1-based index, the numbering of the
 report and the condensed table.
+
+**Show only selected atoms/molecules.** Each surface vertex $\mathbf{r}_v$
+belongs to its nearest nucleus, $A(v) = \arg\min_A |\mathbf{r}_v - \mathbf{R}_A|$
+(a Voronoi partition of space, the same rule as an extremum's *nearest atom*).
+With selection $S$, a triangle $(u, v, w)$ is drawn iff $A(u), A(v), A(w) \in S$,
+and a marker iff its nearest atom is in $S$. The functions themselves are not
+re-partitioned: this decides only which triangles of the whole-system surfaces are
+drawn, so the colour of every drawn point is unchanged.
 
 The surfaces are opaque. The Fukui lobes lie inside the van der Waals radii,
 so space-filling atoms hide them; use that style to judge how exposed a site

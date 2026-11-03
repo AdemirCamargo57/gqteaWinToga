@@ -2423,6 +2423,14 @@ OUTPUTS (next to the N file unless another folder is chosen)
   extrema (cyan minimum, orange maximum).
   Atoms (Results tab): Line, Ball and stick (CPK) or Space-filling (vdW),
   and Show atom numbers (1-based, as in the report); applied at once.
+  Selection (Results tab), e.g. a solute among solvent molecules:
+  Ctrl+click an atom or Shift+click a molecule in the 3D window, or type
+  atoms (1-10, 15) and press Enter; Expand to molecules completes them.
+  Show only selected atoms/molecules then draws those atoms, the surface
+  triangles nearest to them and their extremum markers (numbered as in the
+  extrema file), on the whole system's colour scale. Export image saves
+  exactly that view. It is a display filter: the report and files are
+  unchanged.
 
 CAVEATS
   Diffuse basis functions with B3LYP-like functionals can make f+ and DD

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import textwrap
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,8 @@ from espViewer import ESPSurfaceViewer, SurfaceMarker, UNIT_AU
 from fukuiInput import sibling_state_files
 from help import AtomicData, HelpGqteaWin
 from molecularViewer import save_canvas_image
+from viewerSelection import nearest_atoms
+from viewerSelectionControls import SELECTION_HINT, SelectionControls
 
 HARTREE_TO_EV = 27.211386245988   # CODATA 2018; reproduces Multiwfn's eV columns
 TCE_HOMO_HARTREE = -0.335198      # E_HOMO(TCE), B3LYP/6-31G*, as used by Multiwfn (manual 3.25.2)
@@ -689,9 +692,10 @@ BACKGROUND_COLOURS = {
     "Light grey": (0.85, 0.85, 0.85),
 }
 IMAGE_FILE_TYPES = ["png", "tif", "tiff", "bmp"]
+SELECTION_HINT_WIDTH = 120  # characters per hint line on the Results tab
 
 
-class FukuiFunctionAnalyzeUI:
+class FukuiFunctionAnalyzeUI(SelectionControls):
     LABEL_WIDTH = 230
     HINT_COLOR = "#666666"
 
@@ -702,6 +706,8 @@ class FukuiFunctionAnalyzeUI:
         self.written: List[str] = []
         self.viewer: Optional[ESPSurfaceViewer] = None
         self._syncing = False
+        # Nearest atom of every vertex of a displayed mesh, per (function, display); reset per run.
+        self._owners: Dict[Tuple[str, str], np.ndarray] = {}
         self.window = toga.Window(title="Fukui Function Analysis", size=(900, 700), on_close=self._on_close)
         self.layout_main_window()
         self.window.show()
@@ -777,11 +783,23 @@ class FukuiFunctionAnalyzeUI:
                                          style=Pack(width=130, margin_left=10))
         self.summary_output = toga.MultilineTextInput(readonly=True, value=HelpGqteaWin.help_fukui,
                                                       style=Pack(flex=1, font_family="monospace"))
+        self.build_selection_widgets()
         results = toga.Box(children=[
             self._row(self._label("Function:"), self.function_selection),
             self._row(self._label("Display:"), self.display_selection, self.extrema_switch),
             self._row(self._label("Atoms:"), self.atom_style_selection, self.atom_numbers_switch),
             self._row(self._label("Canvas background:"), self.background_selection, self.export_button),
+            self._heading("Selection"),
+            # Wrapped by hand: a Toga label does not wrap, and one long line widens the window for good.
+            self._hint("\n".join(textwrap.wrap(SELECTION_HINT, SELECTION_HINT_WIDTH))),
+            self._row(self._label("Selected atoms:"), self.selection_input, self.selection_clear_button,
+                      self.selection_expand_button),
+            self._row(self._label(""), self.selection_summary_label),
+            self._row(self.show_selected_switch),
+            self._hint("\n".join(textwrap.wrap(
+                "Shown atoms keep the surface triangles nearest to them and their extremum markers; "
+                "Export image saves exactly what the canvas shows. Results and files are unchanged.",
+                SELECTION_HINT_WIDTH))),
             self.summary_output,
         ], style=Pack(direction=COLUMN, margin=10, flex=1))
 
@@ -905,6 +923,11 @@ class FukuiFunctionAnalyzeUI:
             results = await asyncio.to_thread(self.analyser.run, progress=on_progress, **params)
             # Kept before writing: a write failure must not discard the analysis.
             self.results = results
+            self._owners = {}
+            # The viewer exists from now on (its window opens on Show 3D), so atoms can be
+            # selected first; a re-run on the same structure keeps the selection.
+            self._ensure_viewer()
+            self._push_to_viewer()
             self.written = await asyncio.to_thread(self.analyser.write_outputs, results, output_dir,
                                                    progress=on_write_progress, **options)
             self.summary_output.value = self.analyser.report_text(results, self.written)
@@ -913,8 +936,6 @@ class FukuiFunctionAnalyzeUI:
             self.status_label.text = (f"Done in {time.perf_counter() - started:.1f} s. Report: "
                                       f"{Path(self.written[0]).name} (full paths at the end of the report)")
             self.progress_bar.value = 100
-            if self.viewer is not None and self.viewer.viewer_window_is_open():
-                self._push_to_viewer()
         except Exception as exc:
             self.progress_bar.value = 0
             if results is not None:
@@ -936,6 +957,15 @@ class FukuiFunctionAnalyzeUI:
         return [SurfaceMarker(r["position_angstrom"], r["kind"], r["scope"], str(r["row"]))
                 for r in self.analyser.extrema_rows(self.results, key)]
 
+    def _vertex_owners(self, key: str, vertices_bohr: np.ndarray) -> np.ndarray:
+        """Nearest atom of each vertex of the mesh shown for ``key`` in the current display."""
+        cache_key = (key, self.display_selection.value)
+        owners = self._owners.get(cache_key)
+        if owners is None or len(owners) != len(vertices_bohr):
+            owners = nearest_atoms(vertices_bohr, self.results.n_state.coordinates)
+            self._owners[cache_key] = owners
+        return owners
+
     def _push_to_viewer(self):
         if self.results is None or self.viewer is None:
             return
@@ -946,10 +976,14 @@ class FukuiFunctionAnalyzeUI:
         self.viewer.set_display_options(unit=UNIT_AU, show_extrema=bool(self.extrema_switch.value))
         if self.display_selection.value == DISPLAY_MAPPED:
             s = self.results.surface
+            markers = self.surface_markers(key)
             self.viewer.set_surface(
                 s.vertices * BOHR_RADIUS_ANGSTROM, s.triangles, s.vertex_normals(),
-                self.results.surface_values[key], self.results.surface_isovalue, self.surface_markers(key),
-                caption=f"{key} (a.u.)   mapped on rho(N) = {self.results.surface_isovalue:g} a.u.")
+                self.results.surface_values[key], self.results.surface_isovalue, markers,
+                caption=f"{key} (a.u.)   mapped on rho(N) = {self.results.surface_isovalue:g} a.u.",
+                vertex_atoms=self._vertex_owners(key, s.vertices),
+                marker_atoms=nearest_atoms([m.position for m in markers], n.coordinates * BOHR_RADIUS_ANGSTROM))
+            self._report_hidden_surface()
             return
         sign = LOBE_SIGNS.get(self.display_selection.value)
         lobe = lobe_part(self.results.lobes[key], sign)
@@ -968,7 +1002,47 @@ class FukuiFunctionAnalyzeUI:
             self.status_label.text = f"{key} has no {surface}"
             return
         self.viewer.set_surface(lobe.vertices * BOHR_RADIUS_ANGSTROM, lobe.triangles, lobe.normals,
-                                lobe.values, iso, (), half_range=iso, caption=caption)
+                                lobe.values, iso, (), half_range=iso, caption=caption,
+                                vertex_atoms=self._vertex_owners(key, lobe.vertices), marker_atoms=())
+        self._report_hidden_surface()
+
+    def _report_hidden_surface(self):
+        if self.viewer is not None and self.viewer.surface_hidden_by_selection():
+            self.status_label.text = f"Showing only the selection: no {self.selected_function()} surface near these atoms."
+
+    # --- selection (viewerSelectionControls) -----------------------------
+    def selection_viewer(self) -> Optional[ESPSurfaceViewer]:
+        """The 3D view's viewer, created (window closed) once there are results to select from."""
+        if self.viewer is None and self.results is not None:
+            self._ensure_viewer()
+            self._push_to_viewer()
+        return self.viewer
+
+    def set_selection_status(self, text: str):
+        self.status_label.text = text
+        self._report_hidden_surface()
+
+    def _on_viewer_selection_changed(self):
+        """The viewer's selection changed (a Ctrl/Shift-click in the 3D window): update the widgets."""
+        self._sync_selection_widgets()
+
+    def toggle_show_selected_only(self, widget):
+        super().toggle_show_selected_only(widget)
+        if self.viewer is not None and self.viewer.get_selected_atoms():
+            self._sync_selection_widgets()  # the status says when nothing of the surface is left
+
+    def _ensure_viewer(self) -> ESPSurfaceViewer:
+        """The viewer object with the current results; its GL window opens only on Show 3D."""
+        if self.viewer is None:
+            self.viewer = ESPSurfaceViewer()
+            self.viewer.window_title = "Fukui Function Viewer"
+            try:
+                self.viewer.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self.viewer.loop = None  # headless: no loop to marshal selection changes onto
+            self.viewer.selection_listener = self._on_viewer_selection_changed
+            self.viewer.set_background_color(self.selected_background())
+        return self.viewer
 
     def selected_atom_style(self) -> str:
         return ATOM_STYLES.get(self.atom_style_selection.value, ATOM_STYLES[DEFAULT_ATOM_STYLE])
@@ -990,11 +1064,8 @@ class FukuiFunctionAnalyzeUI:
         if self.results is None:
             await self._show_info("No Results", "Run the calculation first.")
             return
-        if self.viewer is None:
-            self.viewer = ESPSurfaceViewer()
-            self.viewer.window_title = "Fukui Function Viewer"
-            self.viewer.loop = asyncio.get_running_loop()
-            self.viewer.set_background_color(self.selected_background())
+        self._ensure_viewer()
+        self.viewer.loop = asyncio.get_running_loop()  # a viewer made before the loop ran has none
         self._push_to_viewer()
         ready, error = await self.viewer.ensure_viewer_window()
         if not ready:
@@ -1014,6 +1085,8 @@ class FukuiFunctionAnalyzeUI:
         sign = LOBE_SIGNS.get(self.display_selection.value)
         if sign is not None:
             tag += "_positive" if sign > 0 else "_negative"
+        if self.viewer is not None and self.viewer.filtering_by_selection():
+            tag += "_selected"
         return f"{Path(self.results.paths[0]).stem}_{tag}.png"
 
     async def _ask_image_path(self, suggested: str):
@@ -1043,6 +1116,7 @@ class FukuiFunctionAnalyzeUI:
     def clear_output(self, widget):
         self.results = None
         self.written = []
+        self._owners = {}
         self.summary_output.value = HelpGqteaWin.help_fukui
         if self.viewer is not None:
             self.viewer.clear_surface()

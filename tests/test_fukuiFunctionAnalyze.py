@@ -9,6 +9,7 @@ import pytest
 
 import fukuiFunctionAnalyze as fk
 import gaussianWavefunction as gw
+import viewerSelection as vs
 from fukui_fixtures import CDFT, MINUS, N, PLUS, REFERENCE_DIR
 
 
@@ -323,6 +324,10 @@ def make_ui():
     ui.tabs = SimpleNamespace(current_tab=0)
     for name in ("run_button", "show_button", "clear_button"):
         setattr(ui, name, SimpleNamespace(enabled=True))
+    ui._owners = {}
+    ui.selection_input = SimpleNamespace(value="")
+    ui.selection_summary_label = SimpleNamespace(text="")
+    ui.show_selected_switch = SimpleNamespace(value=False)
     ui.errors = []
 
     async def record(title, message):
@@ -358,6 +363,12 @@ class StubViewer:
         self.atom_view = (style, show_numbers)
 
     def viewer_window_is_open(self):
+        return False
+
+    def surface_hidden_by_selection(self):
+        return False
+
+    def filtering_by_selection(self):
         return False
 
 
@@ -523,3 +534,108 @@ class TestUI:
         assert ui.results is None
         asyncio.run(ui.show_surface(None))
         assert ui.errors[-1][0] == "No Results"
+
+
+@pytest.fixture
+def ran_ui(tmp_path):
+    ui = make_ui()
+    fill(ui, tmp_path)
+    asyncio.run(ui.workflow(None))
+    return ui
+
+
+def nearest(points, atoms):
+    """Brute-force nearest atom: what the report's 'nearest atom' column uses."""
+    return np.argmin(np.linalg.norm(points[:, None, :] - atoms[None, :, :], axis=2), axis=1)
+
+
+class TestSelection:
+    """Show only selected atoms: a visualization filter on the Results tab."""
+
+    def test_no_viewer_and_no_selection_before_a_run(self):
+        ui = make_ui()
+        assert ui.selection_viewer() is None
+        asyncio.run(ui.apply_selection_field(None))
+        assert ui.errors[-1][0] == "Selection Error"
+
+    def test_a_run_gives_a_viewer_without_opening_a_window(self, ran_ui):
+        viewer = ran_ui.selection_viewer()
+        assert viewer is ran_ui.viewer and not viewer.viewer_window_is_open()
+        assert len(viewer.get_current_frame_data()) == len(ran_ui.results.n_state.atom_symbols())
+
+    def test_typed_selection_fills_field_summary_and_status(self, ran_ui):
+        ran_ui.selection_input.value = "7, 1-6"
+        asyncio.run(ran_ui.apply_selection_field(None))
+        assert ran_ui.viewer.get_selected_atoms() == [0, 1, 2, 3, 4, 5, 6]
+        assert ran_ui.selection_input.value == "1-7"
+        assert ran_ui.selection_summary_label.text.startswith("7 atoms")
+        assert ran_ui.status_label.text.startswith("Selection: 7 atoms")
+
+    @pytest.mark.parametrize("mode", [fk.DISPLAY_LOBES, fk.DISPLAY_MAPPED])
+    def test_show_only_draws_the_selected_atoms_part(self, ran_ui, mode):
+        ui = ran_ui
+        ui.display_selection.value = mode
+        ui.on_display_change(None)
+        full = ui.viewer.get_surface()
+        ui.viewer.set_selected_atoms([0, 1, 2])
+        ui.show_selected_switch.value = True
+        ui.toggle_show_selected_only(ui.show_selected_switch)
+        shown = ui.viewer.get_surface()
+        atoms = ui.results.n_state.coordinates * fk.BOHR_RADIUS_ANGSTROM
+        assert 0 < len(shown.indices) < len(full.indices)
+        assert set(nearest(shown.vertices.astype(float), atoms)) <= {0, 1, 2}
+        assert shown.half_range == full.half_range  # whole-system colour scale
+        # Every dropped triangle has a vertex owned by an unselected atom.
+        owners = nearest(full.vertices.astype(float), atoms)[full.indices.reshape(-1, 3)]
+        assert len(shown.indices) == 3 * int(np.isin(owners, [0, 1, 2]).all(axis=1).sum())
+        rows = ui.analyser.extrema_rows(ui.results, "f-") if mode == fk.DISPLAY_MAPPED else []
+        kept = [str(r["row"]) for r in rows if nearest(np.array([r["position_angstrom"]]), atoms)[0] < 3]
+        assert [m.label for m in shown.markers] == kept and (mode == fk.DISPLAY_LOBES or kept)
+
+    def test_the_selection_survives_display_changes(self, ran_ui):
+        ui = ran_ui
+        ui.viewer.set_selected_atoms([0, 1])
+        ui.function_selection.value = "f+"
+        ui.on_display_change(None)
+        ui.atom_numbers_switch.value = True
+        ui.on_atom_view_change(None)
+        assert ui.viewer.get_selected_atoms() == [0, 1]
+
+    def test_a_selection_without_surface_says_so(self, ran_ui):
+        ui = ran_ui
+        lobe = ui.results.lobes["f-"]
+        # Keep only the part of the lobes nearest to atom 1, then select atom 2.
+        used, triangles = vs.submesh(lobe.triangles, nearest(lobe.vertices, ui.results.n_state.coordinates) == 0)
+        ui.results.lobes["f-"] = fk.LobeSurface(lobe.vertices[used], triangles, lobe.normals[used],
+                                                lobe.values[used])
+        ui._owners.clear()
+        ui.on_display_change(None)
+        ui.viewer.set_selected_atoms([1])
+        ui.show_selected_switch.value = True
+        ui.toggle_show_selected_only(ui.show_selected_switch)
+        assert ui.viewer.get_surface() is None
+        assert "no f- surface near these atoms" in ui.status_label.text
+
+    def test_image_name_marks_a_filtered_view(self, ran_ui):
+        ui = ran_ui
+        ui.selection_viewer().set_selected_atoms([0])
+        assert ui.default_image_name() == "phenol_N_fminus.png"  # all atoms still shown
+        ui.viewer.set_show_selected_only(True)
+        assert ui.default_image_name() == "phenol_N_fminus_selected.png"
+
+    def test_canvas_clicks_reach_the_widgets(self, ran_ui):
+        ui = ran_ui
+        assert ui.viewer.selection_listener == ui._on_viewer_selection_changed
+        ui.viewer.set_selected_atoms([2])  # as a Ctrl+click on the render thread would
+        ui._on_viewer_selection_changed()   # what the loop then runs
+        assert ui.selection_input.value == "3"
+
+    def test_the_selection_does_not_change_the_results(self, ran_ui, tmp_path):
+        ui = ran_ui
+        before = ui.analyser.report_text(ui.results)
+        ui.viewer.set_selected_atoms([0, 1])
+        ui.viewer.set_show_selected_only(True)
+        ui.display_selection.value = fk.DISPLAY_MAPPED
+        ui.on_display_change(None)
+        assert ui.analyser.report_text(ui.results) == before
+        assert len(ui.results.surface.triangles) and ui.results.lobes["f-"] is not None
