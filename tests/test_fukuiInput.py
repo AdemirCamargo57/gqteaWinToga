@@ -385,3 +385,10 @@ def test_module_does_not_import_toga():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
                          cwd=str(Path(__file__).resolve().parents[1]))
     assert out.stdout.strip() == "False", out.stderr
+
+
+def test_fukui_script_is_unchanged_byte_for_byte(tmp_path):
+    builder = fi.FukuiInputBuilder()
+    job = builder.prepare(make_spec(tmp_path))
+    pinned = Path(__file__).resolve().parent / "data" / "gaussian_input" / "phenol_formchk.sh"
+    assert builder.script_text(job) == pinned.read_bytes().decode("ascii")

@@ -228,3 +228,176 @@ class TestModRedundant:
     def test_helper_row_refuses_what_the_parser_refuses(self):
         with pytest.raises(ValueError, match="needs 3 atom numbers"):
             gi.modredundant_line("Angle", "1 2", "Freeze", "", "")
+
+
+WATER = ("O 0.000000 0.000000 0.117300\n"
+         "H 0.000000 0.757200 -0.469200\n"
+         "H 0.000000 -0.757200 -0.469200")
+WATER_LINES = fi.format_geometry(fi.parse_geometry(WATER))
+
+
+def job_spec(tmp_path, *steps, **changes) -> gi.GaussianJobSpec:
+    steps = list(steps) or [step(multiplicity=1)]
+    return replace(gi.GaussianJobSpec(stem="water", output_dir=str(tmp_path), geometry=WATER, steps=steps),
+                   **changes)
+
+
+def problems(tmp_path, *steps, **changes) -> str:
+    with pytest.raises(ValueError) as info:
+        gi.GaussianInputBuilder().prepare(job_spec(tmp_path, *steps, **changes))
+    return str(info.value)
+
+
+class TestInputText:
+    def test_single_step(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path, step(job_type=gk.JOB_OPT_FREQ, multiplicity=1)))
+        assert builder.input_text(job) == "\n".join(
+            ["%Chk=water.chk", "%Mem=2GB", "%NProcShared=4", "#P B3LYP/6-31G(d) Opt Freq", "",
+             "water", "", "0 1", *WATER_LINES, ""]) + "\n"
+        assert job.input_path == tmp_path / "water.gjf"
+        assert job.script_path == tmp_path / "water_formchk.sh" and job.chk_files == ["water.chk"]
+
+    def test_linked_opt_then_td(self, tmp_path):
+        first = step(job_type=gk.JOB_OPT, multiplicity=1)
+        second = replace(gi.linked_step(first), state=gk.STATE_TD, n_states=10, print_all_coefficients=True)
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path, first, second))
+        assert builder.input_text(job) == "\n".join(
+            ["%Chk=water.chk", "%Mem=2GB", "%NProcShared=4", "#P B3LYP/6-31G(d) Opt", "",
+             "water", "", "0 1", *WATER_LINES, "",
+             "--Link1--",
+             "%Chk=water.chk", "%Mem=2GB", "%NProcShared=4",
+             "#P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read", ""]) + "\n"
+        assert any("same checkpoint" in w for w in job.warnings)
+        assert any("Density=Current" in w for w in job.warnings)
+
+    def test_check_step_writes_title_and_charge_but_no_coordinates(self, tmp_path):
+        second = step(geometry_source=gk.GEOM_CHECK, charge=1, multiplicity=2, guess="Read checkpoint")
+        builder = gi.GaussianInputBuilder()
+        text = builder.input_text(builder.prepare(job_spec(tmp_path, step(multiplicity=1), second)))
+        block = text.split("--Link1--\n")[1]
+        assert block.endswith("Geom=Check Guess=Read\n\nwater\n\n1 2\n\n")
+
+    def test_sections_after_the_geometry(self, tmp_path):
+        s = step(job_type=gk.JOB_SCAN, multiplicity=1, modredundant="B 1 2 S 5 0.05", connectivity=True,
+                 basis="Gen", additional_input="O H 0\n6-31G(d)\n****")
+        builder = gi.GaussianInputBuilder()
+        text = builder.input_text(builder.prepare(job_spec(tmp_path, s)))
+        assert text.endswith("\n".join([*WATER_LINES, "", " 1 2 1.0 3 1.0", " 2", " 3", "",
+                                        "B 1 2 S 5 0.05", "", "O H 0", "6-31G(d)", "****", ""]) + "\n")
+        assert "Geom=Connectivity" in text and "Opt=ModRedundant" in text
+
+    def test_typed_title_and_link0(self, tmp_path):
+        s = step(multiplicity=1, title="my water", chk="w1.chk", old_chk="start.chk", memory="8gb", nproc=16,
+                 extra_link0="%KJob L502")
+        builder = gi.GaussianInputBuilder()
+        text = builder.input_text(builder.prepare(job_spec(tmp_path, s)))
+        assert text.startswith("%OldChk=start.chk\n%Chk=w1.chk\n%Mem=8GB\n%NProcShared=16\n%KJob L502\n")
+        assert "\nmy water\n" in text
+
+    def test_no_checkpoint_means_no_script(self, tmp_path):
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(multiplicity=1, write_chk=False)))
+        assert job.script_path is None and any("no formchk script" in w for w in job.warnings)
+
+    def test_files_are_written_with_lf_endings(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path))
+        assert builder.write_files(job) == [job.input_path, job.script_path]
+        assert b"\r" not in job.input_path.read_bytes()
+        script = job.script_path.read_text()
+        assert 'convert "water.chk" "water.fchk"' in script and "3D Molecular Viewer" in script
+
+    def test_write_error_is_a_value_error(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path))
+        job.input_path = tmp_path / "missing" / "x.gjf"
+        with pytest.raises(ValueError, match="Could not write"):
+            builder.write_files(job)
+
+
+class TestValidation:
+    @pytest.mark.parametrize("changes,fragment", [
+        (dict(multiplicity=None), "Step 1: Multiplicity: enter it; it is not assumed (10 electrons allow 1, 3, 5, ...)"),
+        (dict(multiplicity=2), "Multiplicity 2 is impossible"),
+        (dict(multiplicity=3, spin="Restricted (R)"), "R (restricted) prefix needs multiplicity 1"),
+        (dict(multiplicity=1, method_name=gk.OTHER, method_other="B3 LYP"), "Other method: enter one keyword"),
+        (dict(multiplicity=1, basis=gk.OTHER, basis_other=""), "Other basis set: enter one keyword"),
+        (dict(multiplicity=1, basis="GenECP"), "Basis set GenECP: put the basis-set section in the Add. Inp. panel"),
+        (dict(multiplicity=1, state=gk.STATE_TD, n_states=0), "Number of states must be at least 1"),
+        (dict(multiplicity=1, state=gk.STATE_TD, n_states=3, root=4), "Root) must be between 1 and 3"),
+        (dict(multiplicity=1, state=gk.STATE_TD, family=gk.FAMILY_MP2, method_name=gk.NO_CHOICE),
+         "TD-SCF needs a Hartree-Fock or DFT method"),
+        (dict(multiplicity=1, state=gk.STATE_TDA, family=gk.FAMILY_HF, method_name=gk.NO_CHOICE), "TDA needs a DFT method"),
+        (dict(multiplicity=1, state=gk.STATE_TD, state_spin="Singlets", spin="Unrestricted (U)"),
+         "need a closed-shell reference"),
+        (dict(multiplicity=1, print_all_coefficients=True), "needs an excited state"),
+        (dict(multiplicity=1, title="a#b"), "Title: Gaussian does not allow #"),
+        (dict(multiplicity=1, chk="C:\\jobs\\w.chk"), "%Chk 'C:\\jobs\\w.chk': give a file name relative"),
+        (dict(multiplicity=1, chk="my w.chk"), "%Chk 'my w.chk': use a file name without blanks"),
+        (dict(multiplicity=1, extra_link0="KJob L502"), "must start with %"),
+        (dict(multiplicity=1, memory="2"), "%Mem = '2'"),
+        (dict(multiplicity=1, guess="Read checkpoint"), "Guess=Read reads a checkpoint, but no earlier step writes"),
+        (dict(multiplicity=1, geometry_source=gk.GEOM_ALLCHECK), "Geom=AllCheck reads a checkpoint"),
+        (dict(multiplicity=1, job_type=gk.JOB_OPT, force_constants="Read from checkpoint (ReadFC)"),
+         "Opt=ReadFC reads a checkpoint"),
+        (dict(multiplicity=1, geometry_source=gk.GEOM_CHECK, connectivity=True, old_chk="a.chk"),
+         "Write connectivity needs coordinates"),
+        (dict(multiplicity=1, modredundant="B 1 2 F"), "Scan/freeze lines need the Optimization"),
+        (dict(multiplicity=1, job_type=gk.JOB_OPT, modredundant="B 1 2 S 5 0.1"), "Scan lines (S) need the Scan job type"),
+        (dict(multiplicity=1, job_type=gk.JOB_SCAN), "The Scan job type needs at least one scan line"),
+        (dict(multiplicity=1, job_type=gk.JOB_OPT, modredundant="B 1 7 F"), "atom 7 does not exist"),
+        (dict(multiplicity=1, solvation="SMD", solvent=gk.OTHER, solvent_other="n,n"), "Other solvent"),
+        (dict(multiplicity=1, additional_keywords="B3LYP/STO-3G"), "Method panel"),
+        (dict(multiplicity=1, job_type="Dance"), "Job type: 'Dance' is not one of the choices"),
+    ])
+    def test_step_problem(self, tmp_path, changes, fragment):
+        assert fragment in problems(tmp_path, step(**changes))
+
+    def test_job_problems(self, tmp_path):
+        text = problems(tmp_path, step(multiplicity=1), stem="bad name", output_dir=str(tmp_path / "nope"),
+                        geometry="")
+        assert "Job name 'bad name'" in text and "does not exist" in text and "geometry is empty" in text
+
+    def test_every_problem_is_listed_on_its_own_line(self, tmp_path):
+        lines = problems(tmp_path, step(multiplicity=None, memory="x"), step(multiplicity=None)).splitlines()
+        assert len(lines) >= 3 and all(line.startswith("- ") for line in lines)
+        assert any(line.startswith("- Step 2: ") for line in lines)
+
+    def test_an_old_checkpoint_lets_step_one_read(self, tmp_path):
+        s = step(geometry_source=gk.GEOM_ALLCHECK, old_chk="start.chk")
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, s, geometry=""))
+        assert job.atoms is None
+
+    def test_a_later_step_reads_the_checkpoint_an_earlier_step_writes(self, tmp_path):
+        first = step(multiplicity=1, chk="a.chk")
+        second = step(geometry_source=gk.GEOM_ALLCHECK, chk="a.chk", guess="Read checkpoint")
+        gi.GaussianInputBuilder().prepare(job_spec(tmp_path, first, second))
+        with pytest.raises(ValueError, match="no earlier step writes b.chk"):
+            gi.GaussianInputBuilder().prepare(job_spec(tmp_path, first, replace(second, chk="b.chk")))
+
+    def test_ts_and_irc_without_force_constants_warn(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        ts = builder.prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_OPT, opt_target=gk.OPT_TS)))
+        irc = builder.prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_IRC,
+                                                      irc_force_constants=gk.FC_DEFAULT)))
+        assert any("TS" in w for w in ts.warnings) and any("IRC" in w for w in irc.warnings)
+
+    def test_default_job_has_no_warnings(self, tmp_path):
+        assert gi.GaussianInputBuilder().prepare(job_spec(tmp_path)).warnings == []
+
+
+class TestSteps:
+    def test_linked_step_continues_from_the_checkpoint(self):
+        first = step(job_type=gk.JOB_OPT_FREQ, multiplicity=1, title="t", modredundant="B 1 2 F",
+                     additional_input="x", memory="8GB", chk="a.chk", old_chk="o.chk")
+        new = gi.linked_step(first)
+        assert (new.job_type, new.geometry_source, new.guess) == (gk.JOB_ENERGY, gk.GEOM_ALLCHECK, "Read checkpoint")
+        assert (new.title, new.modredundant, new.additional_input, new.old_chk) == ("", "", "", "")
+        assert (new.memory, new.chk, new.family, new.method_name) == ("8GB", "a.chk", gk.FAMILY_DFT, "B3LYP")
+        assert (new.charge, new.multiplicity) == (0, None)
+
+    def test_step_label(self):
+        assert gi.step_label(1, step(job_type=gk.JOB_OPT)) == "1: Optimization B3LYP/6-31G(d)"
+        assert gi.step_label(2, step(geometry_source=gk.GEOM_ALLCHECK, state=gk.STATE_TD)) == \
+            "2: TD-SCF B3LYP/6-31G(d), Geom=AllCheck"

@@ -330,6 +330,35 @@ def _allowed_text(n_electrons: int) -> str:
     return ", ".join(str(m) for m in allowed_multiplicities(n_electrons, 3)) + ", ..."
 
 
+FUKUI_SCRIPT_HEADER = ("# gQTEA Fukui input builder: convert the three checkpoints to formatted",
+                       "# checkpoints for Tools > Analysis of Fukui Functions. Run it where Gaussian")
+
+
+def formchk_script(script_name: str, header: Sequence[str], pairs: Sequence[Tuple[str, str]]) -> str:
+    """A bash script that runs formchk on each (chk, fchk) pair, run where Gaussian ran."""
+    lines = ["#!/bin/bash", *header,
+             f"# ran (WSL or the cluster), after the jobs finish:  bash {script_name}",
+             'cd "$(dirname "$0")" || exit 1',
+             "if ! command -v formchk >/dev/null 2>&1; then",
+             "  echo \"formchk not found: set up Gaussian 16 first (e.g. 'module load gaussian', or source",
+             "  \\$g16root/g16/bsd/g16.profile).\" >&2",
+             "  exit 1",
+             "fi",
+             "status=0",
+             "convert() {",
+             '  if [ ! -f "$1" ]; then',
+             '    echo "$1 not found: did that job run? Gaussian stops the remaining linked jobs when one '
+             'fails; see the .log file." >&2',
+             "    status=1",
+             "    return",
+             "  fi",
+             '  formchk "$1" "$2" || { echo "formchk failed for $1" >&2; status=1; }',
+             "}"]
+    lines += [f'convert "{chk}" "{fchk}"' for chk, fchk in pairs]
+    lines.append("exit $status")
+    return "\n".join(lines) + "\n"
+
+
 class FukuiInputBuilder:
     """Validation, the linked-job text, the formchk script and the files."""
 
@@ -424,29 +453,8 @@ class FukuiInputBuilder:
 
     def script_text(self, job: FukuiJob) -> str:
         """A bash script that converts the three checkpoints, run where Gaussian ran."""
-        lines = ["#!/bin/bash",
-                 "# gQTEA Fukui input builder: convert the three checkpoints to formatted",
-                 "# checkpoints for Tools > Analysis of Fukui Functions. Run it where Gaussian",
-                 f"# ran (WSL or the cluster), after the jobs finish:  bash {job.script_path.name}",
-                 'cd "$(dirname "$0")" || exit 1',
-                 "if ! command -v formchk >/dev/null 2>&1; then",
-                 "  echo \"formchk not found: set up Gaussian 16 first (e.g. 'module load gaussian', or source",
-                 "  \\$g16root/g16/bsd/g16.profile).\" >&2",
-                 "  exit 1",
-                 "fi",
-                 "status=0",
-                 "convert() {",
-                 '  if [ ! -f "$1" ]; then',
-                 '    echo "$1 not found: did that job run? Gaussian stops the remaining linked jobs when one '
-                 'fails; see the .log file." >&2',
-                 "    status=1",
-                 "    return",
-                 "  fi",
-                 '  formchk "$1" "$2" || { echo "formchk failed for $1" >&2; status=1; }',
-                 "}"]
-        lines += [f'convert "{s.chk}" "{s.fchk.name}"' for s in job.states]
-        lines.append("exit $status")
-        return "\n".join(lines) + "\n"
+        return formchk_script(job.script_path.name, FUKUI_SCRIPT_HEADER,
+                              [(s.chk, s.fchk.name) for s in job.states])
 
     def write_files(self, job: FukuiJob) -> List[Path]:
         """Write the .gjf and the .sh with LF line endings; ValueError on any OS error."""

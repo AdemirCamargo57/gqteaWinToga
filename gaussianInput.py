@@ -8,13 +8,16 @@ inverse used by Open input. The Fukui Job Type is delegated to ``fukuiInput`` un
 ASCII with LF endings and relative checkpoint names: the job runs under Linux from the input's folder.
 """
 
+import dataclasses
 import math
 import re
 from dataclasses import dataclass, field
+from pathlib import Path, PureWindowsPath
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import fukuiInput as fi
 import gaussianKeywords as gk
+from systemProperties import allowed_multiplicities, multiplicity_problem, nuclear_charge
 
 PARENTHESIS_KEYWORDS = ("IOP",)        # written as IOp(9/40=4), the form every Gaussian manual uses
 
@@ -460,3 +463,344 @@ def modredundant_line(kind: str, atoms_text: str, action: str, steps_text: str, 
     line = " ".join(w for w in words if w)
     parse_modredundant(line)
     return line
+
+
+# ----------------------------------------------------------------------
+# The job
+# ----------------------------------------------------------------------
+INPUT_SUFFIX = ".gjf"
+SCRIPT_HEADER = ("# gQTEA Gaussian 16 input builder: convert the checkpoints to formatted",
+                 "# checkpoints for the 3D Molecular Viewer's analysis tabs. Run it where Gaussian")
+FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "READFC", "RCFC"}
+
+
+@dataclass
+class GaussianJobSpec:
+    """The whole job: file names, the step-1 geometry and one GaussianStepSpec per linked step."""
+    stem: str = fi.DEFAULT_STEM
+    output_dir: str = ""
+    geometry: str = ""
+    steps: List[GaussianStepSpec] = field(default_factory=lambda: [GaussianStepSpec()])
+    write_formchk: bool = True
+
+
+@dataclass
+class PreparedStep:
+    """One validated step, ready to write."""
+    link0: List[str]
+    route: List[str]
+    title: Optional[str]            # None with Geom=AllCheck (no title section)
+    charge_line: Optional[str]      # None with Geom=AllCheck
+    coordinates: bool
+    connectivity: List[str]
+    modredundant: List[str]
+    additional_input: List[str]
+    chk: Optional[str]
+
+
+@dataclass
+class GaussianJob:
+    spec: GaussianJobSpec
+    atoms: Optional[List[fi.Atom]]
+    steps: List[PreparedStep]
+    input_path: Path
+    script_path: Optional[Path]
+    chk_files: List[str]
+    warnings: List[str] = field(default_factory=list)
+    fukui: Optional[fi.FukuiJob] = None
+
+
+def _relative_name(value: str, label: str) -> str:
+    name = (value or "").strip()
+    if not name or any(ch.isspace() for ch in name) or not name.isascii():
+        raise ValueError(f"{label} '{name}': use a file name without blanks (ASCII letters, digits, . _ -).")
+    if PureWindowsPath(name).drive or "/" in name or "\\" in name:
+        raise ValueError(f"{label} '{name}': give a file name relative to the input's folder "
+                         "(the job runs under Linux from there).")
+    return name
+
+
+def _one_keyword(text: str) -> bool:
+    text = (text or "").strip()
+    return bool(text) and len(text.split()) == 1 and "/" not in text and "," not in text
+
+
+def _checkpoint_readers(keywords: Sequence[RouteKeyword]) -> List[str]:
+    """What in the route reads the checkpoint: 'Geom=AllCheck', 'Guess=Read', 'Opt=ReadFC', ..."""
+    readers = []
+    for keyword in keywords:
+        options = {o.upper() for o in keyword.options}
+        if keyword.key == "GEOM":
+            readers += [f"Geom={o}" for o in ("AllCheck", "Check") if o.upper() in options]
+        elif keyword.key == "GUESS":
+            readers += [f"Guess={o}" for o in gk.READ_GUESSES if o.upper() in options]
+        elif keyword.key in ("OPT", "IRC"):
+            readers += [f"{keyword.name}={o}" for o in gk.READ_FORCE_CONSTANTS if o.upper() in options]
+    return readers
+
+
+def connectivity_lines(atoms: Sequence[fi.Atom]) -> List[str]:
+    """The Geom=Connectivity section, single bonds from the distances (the 3D viewer's rule)."""
+    from molecularFileFormats import detect_bonds    # numpy + scipy, needed only for this option
+    bonds = detect_bonds([a[0] for a in atoms], [a[1:] for a in atoms])
+    partners: Dict[int, List[int]] = {i: [] for i in range(len(atoms))}
+    for i, j, _ in bonds:
+        partners[i].append(j)
+    return [" ".join([f" {i + 1}"] + [f"{j + 1} 1.0" for j in sorted(partners[i])]) for i in range(len(atoms))]
+
+
+def _trim_blank_lines(text: str) -> List[str]:
+    lines = [line.rstrip() for line in (text or "").splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
+                  write_formchk: bool) -> Tuple[List[str], List[str], Optional[PreparedStep]]:
+    """(errors, warnings, prepared step or None) of one step; messages carry no step prefix."""
+    errors: List[str] = []
+    warnings: List[str] = []
+
+    def attempt(fn, *args):
+        try:
+            return fn(*args)
+        except ValueError as exc:
+            errors.append(str(exc))
+            return None
+
+    for name, values in CHOICES.items():
+        if getattr(step, name) not in values:
+            errors.append(f"{FIELD_LABELS[name]}: '{getattr(step, name)}' is not one of the choices.")
+    if step.family in gk.FAMILIES and step.method_name not in method_choices(step.family):
+        errors.append(f"Method: '{step.method_name}' is not a {step.family} method.")
+    if errors:
+        return errors, warnings, None
+
+    # Link 0
+    memory = attempt(fi.parse_memory, step.memory)
+    if not isinstance(step.nproc, int) or step.nproc < 1:
+        errors.append(f"%NProcShared must be a positive integer (got {step.nproc}).")
+    chk = attempt(_relative_name, step.chk.strip() or f"{stem}.chk", "%Chk") if step.write_chk else None
+    old_chk = attempt(_relative_name, step.old_chk, "%OldChk") if step.old_chk.strip() else None
+    extra_link0 = [line.strip() for line in step.extra_link0.splitlines() if line.strip()]
+    errors += [f"Extra Link 0 line '{line}' must start with %." for line in extra_link0 if not line.startswith("%")]
+
+    # Method and basis
+    excited = step.state != gk.STATE_GROUND
+    if (step.state not in gk.MODEL_STATES and step.family == gk.FAMILY_DFT and step.method_name == gk.OTHER
+            and not _one_keyword(step.method_other)):
+        errors.append("Other method: enter one keyword, e.g. B97D3 (no blanks, no '/').")
+    if not no_basis(step):
+        if step.basis == gk.OTHER and not _one_keyword(step.basis_other):
+            errors.append("Other basis set: enter one keyword, e.g. def2TZVPD (no blanks, no '/').")
+        if step.basis in gk.GENERAL_BASES and not step.additional_input.strip():
+            errors.append(f"Basis set {step.basis}: put the basis-set section in the Add. Inp. panel.")
+    if step.solvation != gk.SOLVATION_NONE and step.solvent == gk.OTHER and not _one_keyword(step.solvent_other):
+        errors.append("Other solvent: enter one Gaussian solvent name, e.g. Heptane.")
+    if excited:
+        if not isinstance(step.n_states, int) or step.n_states < 1:
+            errors.append("Number of states must be at least 1.")
+        elif not isinstance(step.root, int) or not 1 <= step.root <= step.n_states:
+            errors.append(f"State of interest (Root) must be between 1 and {step.n_states}.")
+        if step.state == gk.STATE_TD and step.family not in (gk.FAMILY_HF, gk.FAMILY_DFT):
+            errors.append("TD-SCF needs a Hartree-Fock or DFT method.")
+        if step.state == gk.STATE_TDA and step.family != gk.FAMILY_DFT:
+            errors.append("TDA needs a DFT method.")
+    elif step.print_all_coefficients:
+        errors.append("Print all excitation coefficients needs an excited state (TD-SCF, TDA, CIS or ZINDO).")
+
+    # Geometry, charge, multiplicity
+    source = step.geometry_source
+    prefix = gk.SPIN_PREFIXES[step.spin]
+    mult = step.multiplicity
+    if step.connectivity and source != gk.GEOM_COORDINATES:
+        errors.append("Write connectivity needs coordinates; this step reads its geometry from the checkpoint.")
+    if source != gk.GEOM_ALLCHECK:
+        electrons = None if atoms is None else nuclear_charge(a[0] for a in atoms) - step.charge
+        if mult is None:
+            allowed = (f" ({electrons} electrons allow "
+                       f"{', '.join(str(m) for m in allowed_multiplicities(electrons, 3))}, ...)"
+                       if electrons is not None and electrons >= 1 else "")
+            errors.append(f"Multiplicity: enter it; it is not assumed{allowed}.")
+        elif electrons is not None:
+            problem = multiplicity_problem(electrons, mult) if electrons >= 1 else "no electrons are left"
+            if problem:
+                errors.append(f"Multiplicity {mult} is impossible ({problem}).")
+    if mult is not None and mult > 1 and prefix == "R":
+        errors.append(f"The R (restricted) prefix needs multiplicity 1 (got {mult}); use RO or U.")
+    if gk.STATE_SPINS.get(step.state_spin) and (prefix in ("U", "RO") or (mult is not None and mult != 1)):
+        errors.append(f"States = {step.state_spin}: Singlets, Triplets and 50-50 need a closed-shell reference "
+                      "(multiplicity 1, no U or RO prefix).")
+    title = step.title.strip() or fi._title_text(stem)
+    bad = sorted(set(title) & set(fi.TITLE_FORBIDDEN))
+    if bad:
+        errors.append(f"Title: Gaussian does not allow {' '.join(bad)} in the title.")
+
+    # Scan / freeze lines
+    parsed: List[Tuple[str, Tuple[int, ...], str]] = []
+    modred_ok = True
+    if step.modredundant.strip():
+        if step.job_type not in gk.OPTIMIZING_JOBS:
+            errors.append("Scan/freeze lines need the Optimization, Opt+Freq or Scan job type.")
+            modred_ok = False
+        else:
+            parsed = attempt(parse_modredundant, step.modredundant, len(atoms) if atoms else None)
+            modred_ok = parsed is not None
+            parsed = parsed or []
+            if any(p[2] == "S" for p in parsed) and step.job_type != gk.JOB_SCAN:
+                errors.append("Scan lines (S) need the Scan job type; Optimization takes freeze lines (F) only.")
+    if step.job_type == gk.JOB_SCAN and modred_ok and not any(p[2] == "S" for p in parsed):
+        errors.append("The Scan job type needs at least one scan line (S); add one in the Molecule panel.")
+
+    # Route and checkpoints
+    keywords, merge_errors = route_keywords(step)
+    errors += merge_errors
+    readers = _checkpoint_readers(keywords)
+    if readers and old_chk is None and (chk is None or chk.lower() not in written):
+        errors.append(f"{', '.join(readers)} reads a checkpoint, but no earlier step writes "
+                      f"{chk or 'one'}; set %OldChk to an existing checkpoint.")
+    options = {k.key: {o.upper() for o in k.options} for k in keywords}
+    if "TS" in options.get("OPT", set()) and not FORCE_CONSTANT_OPTIONS & options["OPT"]:
+        warnings.append("Optimization to a TS without force constants (CalcFC, CalcAll or ReadFC) often fails; "
+                        "CalcFC is recommended.")
+    if "IRC" in options and not FORCE_CONSTANT_OPTIONS & options["IRC"]:
+        warnings.append("IRC without force constants: give CalcFC, CalcAll or ReadFC.")
+    if write_formchk and (excited or step.family in gk.POST_SCF_FAMILIES) and "DENSITY" not in options:
+        warnings.append("The .fchk will hold the SCF density, not the excited-state or correlated one; add "
+                        "Density=Current to the Additional Keywords if an analysis needs it.")
+    if errors:
+        return errors, warnings, None
+
+    link0 = ([f"%OldChk={old_chk}"] if old_chk else []) + ([f"%Chk={chk}"] if chk else []) + \
+        [f"%Mem={memory}", f"%NProcShared={step.nproc}"] + extra_link0
+    route = fi.build_route(step.print_level, method_keyword(step), basis_keyword(step),
+                           " ".join(format_keyword(k) for k in keywords))
+    all_check = source == gk.GEOM_ALLCHECK
+    return errors, warnings, PreparedStep(
+        link0=link0, route=route, title=None if all_check else title,
+        charge_line=None if all_check else f"{step.charge} {mult}",
+        coordinates=source == gk.GEOM_COORDINATES,
+        connectivity=connectivity_lines(atoms) if step.connectivity else [],
+        modredundant=[line.strip() for line in step.modredundant.splitlines() if line.strip()],
+        additional_input=_trim_blank_lines(step.additional_input), chk=chk)
+
+
+def linked_step(step: GaussianStepSpec) -> GaussianStepSpec:
+    """A new step continuing from ``step``: same method and Link 0, geometry and orbitals from its checkpoint.
+
+    Charge and multiplicity are cleared: Geom=AllCheck reads them from the checkpoint, and a step
+    switched to another source must be given them (they are never assumed).
+    """
+    return dataclasses.replace(step, job_type=gk.JOB_ENERGY, geometry_source=gk.GEOM_ALLCHECK,
+                               guess="Read checkpoint", title="", modredundant="", additional_input="",
+                               connectivity=False, old_chk="", charge=0, multiplicity=None)
+
+
+def step_label(index: int, step: GaussianStepSpec) -> str:
+    """'2: TD-SCF B3LYP/6-31G(d), Geom=AllCheck' for the step list (index is 1-based)."""
+    what = step.state if step.state != gk.STATE_GROUND and step.job_type == gk.JOB_ENERGY else step.job_type
+    source = gk.GEOMETRY_SOURCES.get(step.geometry_source)
+    return f"{index}: {what} {model_token(step)}" + (f", Geom={source}" if source else "")
+
+
+class GaussianInputBuilder:
+    """Validation, the input text, the formchk script and the files."""
+
+    def __init__(self):
+        self._fukui = fi.FukuiInputBuilder()
+
+    def prepare(self, spec: GaussianJobSpec) -> GaussianJob:
+        """Validate everything; ValueError lists every problem, one '- ' line each."""
+        if any(s.job_type == gk.JOB_FUKUI for s in spec.steps):
+            return self._prepare_fukui(spec)
+        errors: List[str] = []
+        warnings: List[str] = []
+        stem = None
+        try:
+            stem = fi.validate_stem(spec.stem)
+        except ValueError as exc:
+            errors.append(str(exc))
+        folder_text = (spec.output_dir or "").strip()
+        folder = Path(folder_text).resolve() if folder_text else None
+        if folder is None or not folder.is_dir():
+            errors.append(f"Output folder '{folder_text}' does not exist; choose an existing folder."
+                          if folder_text else "Output folder: choose where the input files are written.")
+        if not spec.steps:
+            errors.append("The job has no steps.")
+        atoms = None
+        if any(s.geometry_source == gk.GEOM_COORDINATES for s in spec.steps):
+            try:
+                atoms = fi.parse_geometry(spec.geometry)
+            except ValueError as exc:
+                errors.append(str(exc))
+        name = stem or fi.DEFAULT_STEM
+        written: set = set()
+        prepared: List[PreparedStep] = []
+        for index, step in enumerate(spec.steps, start=1):
+            step_errors, step_warnings, item = _prepare_step(step, name, atoms, written, spec.write_formchk)
+            errors += [f"Step {index}: {e}" for e in step_errors]
+            warnings += [f"Step {index}: {w}" for w in step_warnings]
+            if item is not None:
+                prepared.append(item)
+            if step.write_chk:
+                written.add((step.chk.strip() or f"{name}.chk").lower())
+        if errors:
+            raise ValueError("\n".join(f"- {e}" for e in errors))
+        chk_files = list(dict.fromkeys(p.chk for p in prepared if p.chk))
+        if len([p for p in prepared if p.chk]) > len(chk_files):
+            warnings.append("Several steps write the same checkpoint: it keeps only the last step's results, "
+                            "and that is what the formchk script converts.")
+        script_path = None
+        if spec.write_formchk and chk_files:
+            script_path = folder / f"{stem}{fi.SCRIPT_SUFFIX}"
+        elif spec.write_formchk:
+            warnings.append("No step writes a checkpoint (%Chk), so no formchk script is written.")
+        return GaussianJob(spec, atoms, prepared, folder / f"{stem}{INPUT_SUFFIX}", script_path, chk_files, warnings)
+
+    def _prepare_fukui(self, spec: GaussianJobSpec) -> GaussianJob:
+        raise NotImplementedError("Task 6")
+
+    def input_text(self, job: GaussianJob) -> str:
+        if job.fukui is not None:
+            return self._fukui.input_text(job.fukui)
+        blocks = []
+        for step in job.steps:
+            lines = list(step.link0) + list(step.route) + [""]
+            if step.title is not None:
+                lines += [step.title, "", step.charge_line]
+                if step.coordinates:
+                    lines += fi.format_geometry(job.atoms)
+                lines.append("")
+            for section in (step.connectivity, step.modredundant, step.additional_input):
+                if section:
+                    lines += list(section) + [""]
+            blocks.append("\n".join(lines))
+        return "\n--Link1--\n".join(blocks) + "\n"
+
+    def script_text(self, job: GaussianJob) -> Optional[str]:
+        if job.fukui is not None:
+            return self._fukui.script_text(job.fukui)
+        if job.script_path is None:
+            return None
+        return fi.formchk_script(job.script_path.name, SCRIPT_HEADER,
+                                 [(chk, Path(chk).stem + fi.FCHK_EXTENSION) for chk in job.chk_files])
+
+    def write_files(self, job: GaussianJob) -> List[Path]:
+        """Write the .gjf (and the .sh) with LF line endings; ValueError on any OS error."""
+        if job.fukui is not None:
+            return self._fukui.write_files(job.fukui)
+        written = []
+        files = [(job.input_path, self.input_text(job))]
+        if job.script_path is not None:
+            files.append((job.script_path, self.script_text(job)))
+        for path, text in files:
+            try:
+                with open(path, "w", encoding="ascii", errors="strict", newline="\n") as handle:
+                    handle.write(text)
+            except (OSError, UnicodeEncodeError) as exc:
+                raise ValueError(f"Could not write {path}: {exc}") from exc
+            written.append(path)
+        return written
