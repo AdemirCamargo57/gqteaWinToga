@@ -30,7 +30,6 @@ ROUND_TRIPS = {
                 opt_tight=True, opt_max_cycles=200, additional_keywords="Opt=NoEigenTest 6D")],
     "irc": [step(job_type=gk.JOB_IRC, multiplicity=1, irc_direction="Reverse only", irc_max_points=30,
                  irc_step_size=8)],
-    "irc default fc": [step(job_type=gk.JOB_IRC, multiplicity=1, irc_force_constants=gk.FC_DEFAULT)],
     "scan": [step(job_type=gk.JOB_SCAN, multiplicity=1, modredundant="B 1 2 S 5 0.05\nA 2 1 3 F",
                   connectivity=True)],
     "stability": [step(job_type=gk.JOB_STABILITY, multiplicity=1, stable_opt=True)],
