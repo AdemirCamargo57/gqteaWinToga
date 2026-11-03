@@ -1,6 +1,6 @@
 # Gaussian 16 Input Builder — design
 
-Status: design approved 2026-11-03, not implemented.
+Status: implemented 2026-11-03; verified with Gaussian 16 C.01 in WSL (tools/check_gaussian_inputs.py: 14 jobs, all Normal termination).
 
 A general Gaussian 16 input builder on the main window's **Inputs** tab, modelled on GaussView 6.1's
 *Gaussian Calculation Setup* dialog. It replaces the *Gaussian Fukui Input Builder* button: the Fukui
@@ -201,8 +201,14 @@ The whole input text plus the warnings; `help_gaussian_input`.
 **Warnings**
 
 - TS optimization without CalcFC / ReadFC / CalcAll.
-- IRC without force constants (exact G16 behaviour checked against the Gaussian manual during
-  implementation; an error instead if G16 refuses it).
+- ~~IRC without force constants~~: G16 C.01 refuses it ("You must use ReadCartesianFC, FCCards, or CalcFC
+  with IRC."), so it is an **error**, not a warning (checked 2026-11-03).
+- Measured with G16 C.01 (WSL), all 14 jobs of `tools/check_gaussian_inputs.py` end in Normal termination
+  (one per step; CBS-4M and Opt+Freq run several links internally): `CIS(NStates=3)/STO-3G`, `PM6`,
+  `CBS-4M`, `UHF/STO-3G` (charge 1, multiplicity 2) and the SMD route `SCRF=(SMD,Solvent=Water)` are accepted
+  as written. Two cautions the inputs themselves cannot show: a relaxed Scan of one O-H bond of water with
+  symmetry on never converges (use NoSymm), and `Opt=...` left in Additional Keywords is inherited by a linked
+  IRC step, where Opt next to IRC makes Gaussian run a path optimization (l107) instead of the IRC.
 - Post-SCF or excited-state method with the formchk script: the `.fchk` holds the SCF density unless
   `Density=Current` is given.
 - Several steps sharing one `.chk` (§4).

@@ -672,7 +672,8 @@ def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
         warnings.append("Optimization to a TS without force constants (CalcFC, CalcAll or ReadFC) often fails; "
                         "CalcFC is recommended.")
     if "IRC" in options and not FORCE_CONSTANT_OPTIONS & options["IRC"]:
-        warnings.append("IRC without force constants: give CalcFC, CalcAll or ReadFC.")
+        errors.append("IRC needs force constants: give CalcFC, CalcAll or ReadFC "
+                      "(Gaussian 16: \"You must use ReadCartesianFC, FCCards, or CalcFC with IRC.\").")
     if write_formchk and (excited or step.family in gk.POST_SCF_FAMILIES) and "DENSITY" not in options:
         warnings.append("The .fchk will hold the SCF density, not the excited-state or correlated one; add "
                         "Density=Current to the Additional Keywords if an analysis needs it.")

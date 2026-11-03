@@ -398,12 +398,16 @@ class TestValidation:
         with pytest.raises(ValueError, match="no earlier step writes b.chk"):
             gi.GaussianInputBuilder().prepare(job_spec(tmp_path, first, replace(second, chk="b.chk")))
 
-    def test_ts_and_irc_without_force_constants_warn(self, tmp_path):
-        builder = gi.GaussianInputBuilder()
-        ts = builder.prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_OPT, opt_target=gk.OPT_TS)))
-        irc = builder.prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_IRC,
-                                                      irc_force_constants=gk.FC_DEFAULT)))
-        assert any("TS" in w for w in ts.warnings) and any("IRC" in w for w in irc.warnings)
+    def test_ts_without_force_constants_warns(self, tmp_path):
+        ts = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_OPT,
+                                                                       opt_target=gk.OPT_TS)))
+        assert any("TS" in w for w in ts.warnings)
+
+    def test_irc_without_force_constants_is_refused(self, tmp_path):
+        # Gaussian 16 C.01: "You must use ReadCartesianFC, FCCards, or CalcFC with IRC."
+        with pytest.raises(ValueError, match="IRC needs force constants: give CalcFC, CalcAll or ReadFC"):
+            gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_IRC,
+                                                                      irc_force_constants=gk.FC_DEFAULT)))
 
     def test_default_job_has_no_warnings(self, tmp_path):
         assert gi.GaussianInputBuilder().prepare(job_spec(tmp_path)).warnings == []

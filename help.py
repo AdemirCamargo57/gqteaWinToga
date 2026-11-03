@@ -2500,8 +2500,8 @@ top follows every panel as you change it.
 PANELS (of the selected step)
   Job Type   Energy; Optimization (minimum or TS (Berny), force constants,
              Tight, MaxCycles); Frequency (Raman, VCD, Anharmonic);
-             Opt+Freq; IRC (direction, force constants, MaxPoints,
-             StepSize); Scan (relaxed, Opt=ModRedundant); Stability
+             Opt+Freq; IRC (direction, force constants (required: CalcFC,
+             CalcAll or ReadFC), MaxPoints, StepSize); Scan (relaxed, Opt=ModRedundant); Stability
              (Stable=Opt); NMR (GIAO, CSGT, IGAIM, All; SpinSpin); Fukui
              functions (see below).
   Method     ground or excited state (TD-SCF, TDA, CIS, ZINDO: number of
