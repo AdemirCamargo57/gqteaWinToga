@@ -4270,9 +4270,9 @@ git commit -m "feat(gaussian): Inputs tab opens the Gaussian 16 input builder; F
 ### Task 12: User documentation and project notes
 
 **Files:**
-- Modify: `USER_MANUAL.md` (TOC lines 45 and 139; line 488; section lines 1001–1069; line 3334; section `### Fukui input builder messages`), `readme.md:36` and `readme.md:92`, `docs/index.html:92`, `CLAUDE.md`
+- Modify: `USER_MANUAL.md` (TOC lines 45 and 139; lines 154 and 488; section lines 1001–1069; line 3334; section `### Fukui input builder messages`; line 7194 and the version history), `readme.md:10`, `readme.md:36` and `readme.md:92`, `docs/index.html:92`, `CLAUDE.md`, `gqteaWinToga.py:47`
 
-No version bump: whether this feature becomes 1.7.0 is the user's decision, asked at hand-off. The historical version-history entries (e.g. "Version 0.8.5 ... added the Gaussian Fukui Input Builder") stay as they are.
+This feature bumps the app version from **1.6.0 to 1.7.0** (user decision, 2026-11-03; Step 7b). The historical version-history entries (e.g. "Version 0.8.5 ... added the Gaussian Fukui Input Builder") stay as they are.
 
 - [ ] **Step 1: USER_MANUAL table of contents**
 
@@ -4411,10 +4411,26 @@ First update the two remaining docstrings: `fukuiFunctionAnalyze.py:842` "with t
 Run: `git grep -n -i "fukui input builder\|fukuiInputBuilder" -- . ":(exclude)docs/superpowers"`
 Expected: only two lines. (1) `fukuiInput.py`'s `FUKUI_SCRIPT_HEADER` ("# gQTEA Fukui input builder: convert the three checkpoints ..."): it is text inside the written script, pinned byte-for-byte, so it stays. (2) The historical USER_MANUAL version entry ("Version 0.8.5 ... added the Gaussian Fukui Input Builder"): keep its words, but change its link anchor to `#fukui-functions-job-type`.
 
+- [ ] **Step 7b: Version 1.7.0**
+
+- `gqteaWinToga.py:47`: `"gQTEA-1.6.0 Molecular Analysis Toolkit",` → `"gQTEA-1.7.0 Molecular Analysis Toolkit",`
+- `readme.md:10`: `gQTEA-1.6.0` → `gQTEA-1.7.0`.
+- `USER_MANUAL.md:154` and `USER_MANUAL.md:7194` (the two `gQTEA-1.6.0 Molecular Analysis Toolkit` text blocks): `1.6.0` → `1.7.0`.
+- `USER_MANUAL.md`, *Version, Contributors, and License*: insert this paragraph before the one that starts `Version 1.6.0 (October 2026)`:
+
+```markdown
+Version 1.7.0 (November 2026) replaces the Gaussian Fukui Input Builder on the **Inputs** tab with the [Gaussian 16 Input Builder](#gaussian-16-input-builder), modelled on GaussView 6.1's Gaussian Calculation Setup. It writes Gaussian 16 inputs for energies, optimizations (minimum or transition state), frequencies, IRC, relaxed scans, stability and NMR jobs, with ground or excited states (TD-SCF, TDA, CIS, ZINDO), Hartree-Fock, DFT, semi-empirical, MP2, coupled-cluster and compound methods, basis sets, dispersion, solvation, population analysis and guess options, and a live route line. Several steps can be linked in one input (`--Link1--`), for example an optimization followed by a TD-SCF single point, and **Open input...** reads an existing `.gjf` back into the panels. The Fukui-function calculation is now its job type [Fukui functions](#fukui-functions-job-type) and writes exactly the same files as before.
+```
+
+- `CLAUDE.md:7`: `current app version 1.6.0` → `current app version 1.7.0`.
+- Leave `installation_requirements.txt:21` ("Verified working (gqteaWinToga 1.6.0) ...") and CLAUDE.md's "before 1.6.0" (runatom entry) unchanged: they record what was verified, and history.
+
+Check: `git grep -n "1\.6\.0" -- . ":(exclude)docs/superpowers"` shows only those two lines and the `Version 1.6.0 (October 2026)` history paragraph.
+
 - [ ] **Step 8: Commit**
 
 ```bash
-git add USER_MANUAL.md readme.md docs/index.html CLAUDE.md fukuiFunctionAnalyze.py tests/test_fukuiInput.py
+git add USER_MANUAL.md readme.md docs/index.html CLAUDE.md fukuiFunctionAnalyze.py tests/test_fukuiInput.py gqteaWinToga.py
 git commit -m "docs(gaussian): Gaussian 16 input builder and its Fukui job type"
 ```
 
