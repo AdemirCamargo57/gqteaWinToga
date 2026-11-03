@@ -1,7 +1,7 @@
 """
 Locating and running Gaussian's stand-alone utilities (cubegen, formchk).
 
-No Toga here: the ESP tool, the Fukui input builder and their tests share it.
+No Toga here: the ESP tool, the Gaussian 16 input builder and their tests share it.
 """
 
 import os

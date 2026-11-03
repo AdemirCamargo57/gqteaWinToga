@@ -46,7 +46,7 @@ TOOL_TABS: Tuple[Tuple[str, Tuple[ToolSpec, ...]], ...] = (
         ToolSpec("cp.x Input Builder", "cpx_input_builder", "CPInputBuilderUI"),
         ToolSpec("ORCA Input Builder", "orca_input_builder", "ORCAInputBuilderUI"),
         ToolSpec("gqteaMD Input Builder", "gqteaMDinputBuilder", "GqteaMDInputBuilderUI"),
-        ToolSpec("Gaussian Fukui Input Builder", "fukuiInputBuilder", "FukuiInputBuilderUI"),
+        ToolSpec("Gaussian 16 Input Builder", "gaussianInputBuilder", "GaussianInputBuilderUI"),
     )),
     ("Structural", (
         ToolSpec("Radial Distribution Function", "radialDistribution", "RadialFunctionUI"),
@@ -105,7 +105,7 @@ def _frozen_build_imports():  # pragma: no cover - never called
     import bond, allBondAnalysis, bondAngle, allAnglesAnalysis, dihedralAngle
     import allDihedralAnalysis, hbond, MolGeomComparator
     import cpmdInput, spectraSH, collision, cpx_input_builder, orca_input_builder
-    import gqteaMDinputBuilder, fukuiInputBuilder
+    import gqteaMDinputBuilder, gaussianInputBuilder
     import radialDistribution, meanResidenceTime_statistical, meanResidenceTime_classical
     import autocorrelationFunction, single_solute_solvent_box, mixtureSolventBox, sharedWallBox
     import classicalRate

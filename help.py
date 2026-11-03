@@ -2399,9 +2399,10 @@ WHAT TO PREPARE (Gaussian)
      Neutral radical:      N 0 2, N+1 -1 1, N-1 1 1 (check other spins for
      transition-metal systems).
   3. formchk each .chk to .fchk and select the three files here.
-  Inputs > Gaussian Fukui Input Builder writes steps 1-3 for Gaussian 16 (one
-  linked job: Opt on N, then Geom=Check single points on N+1 and N-1, plus a
-  formchk script); choosing its <name>_N.fchk here fills in the other two.
+  Inputs > Gaussian 16 Input Builder, job type "Fukui functions", writes
+  steps 1-3 for Gaussian 16 (one linked job: Opt on N, then Geom=Check
+  single points on N+1 and N-1, plus a formchk script); choosing its
+  <name>_N.fchk here fills in the other two.
 
 CONDENSED (per-atom) INDICES
   f-_A = q_A(N-1) - q_A(N), f+_A = q_A(N) - q_A(N+1), f0_A = average,
@@ -2438,11 +2439,10 @@ CAVEATS
   Fukui functions. Read the NOTES at the end of the report.
 """
 
-    help_fukui_input = """GAUSSIAN FUKUI INPUT BUILDER
-Writes ONE Gaussian 16 input (Rev. C.01, under WSL or on a Linux cluster)
-with three linked jobs (separated by --Link1--) for a finite-difference
-Fukui calculation, plus a script that converts the checkpoints for
-Tools > Analysis of Fukui Functions.
+    help_fukui_input = """FUKUI FUNCTIONS JOB TYPE
+One Gaussian 16 input with three linked jobs (separated by --Link1--) for a
+finite-difference Fukui calculation, plus a script that converts the
+checkpoints for Tools > Analysis of Fukui Functions.
 
   job 1  N    Opt           charge Q      mult. M    %Chk=<name>_N.chk
   job 2  N+p  single point  charge Q - p  mult. M+   %OldChk=<name>_N.chk
@@ -2450,30 +2450,35 @@ Tools > Analysis of Fukui Functions.
   job 3  N-q  single point  charge Q + q  mult. M-   %OldChk=<name>_N.chk
                                                      %Chk=<name>_Nm1.chk
 
-Job 1 optimizes the N state from the geometry given here. Jobs 2 and 3 read
-the OPTIMIZED geometry from <name>_N.chk (%OldChk + Geom=Check, and by default
-Guess=Read for the orbitals) and are not re-optimized: the Fukui functions
-are derivatives at fixed nuclei. %OldChk is copied into each job's own %Chk,
-so <name>_N.chk is never overwritten.
+Job 1 optimizes the N state from the geometry of the Molecule panel. Jobs 2
+and 3 read the OPTIMIZED geometry from <name>_N.chk (%OldChk + Geom=Check,
+and by default Guess=Read for the orbitals) and are not re-optimized: the
+Fukui functions are derivatives at fixed nuclei. %OldChk is copied into each
+job's own %Chk, so <name>_N.chk is never overwritten.
 
 WHAT YOU MUST SUPPLY (cannot be safely defaulted)
-  Geometry       starting structure of the N state, Cartesian, Angstrom.
-  Charge of N    blank = 0 (a .gjf or .fchk sets it on loading).
-  Multiplicities of N, N+p and N-q: ALL REQUIRED. Spin states are never
-                 assumed; the states lines show which values the electron
-                 count allows. Use the lowest-energy spin state of each ion
-                 (closed-shell neutral: 1, 2, 2; neutral radical: 2, 1, 1).
-  %Mem / %NProcShared  for the machine that runs Gaussian.
+  Geometry       Molecule panel: starting structure of the N state.
+  Charge of N    Molecule panel; blank = 0 (a .gjf or .fchk sets it).
+  Multiplicities of N (Molecule panel), N+p and N-q (Job Type panel): ALL
+                 REQUIRED. Spin states are never assumed; the Molecule panel
+                 lists the values each electron count allows. Use the
+                 lowest-energy spin state of each ion (closed-shell
+                 neutral: 1, 2, 2; neutral radical: 2, 1, 1).
+  %Mem / %NProcShared  Link 0 panel, for the machine that runs Gaussian.
   Output folder  where the .gjf and .sh files go.
 
 DEFAULTS (editable)
+  Choosing this job type switches SCF=Tight and NoSymm on (General panel):
   #P B3LYP/6-31G(d) SCF=Tight NoSymm in all jobs, Opt in job 1, %Mem=2GB,
   %NProcShared=4, p = q = 1, Guess=Read on. NoSymm keeps one orientation.
-  The Optimization field takes Opt or Opt=(...) towards a minimum (TS, QST,
-  ModRedundant and ReadFC are refused). In the shared keywords Opt, Scan,
-  IRC, Geom=, Guess=, Units=, Gen/GenECP, ECPs and options that read extra
-  input are refused; Freq, post-SCF methods (the analysis reads only the
-  Total SCF Density) and diffuse basis sets warn.
+  Job 1's optimization takes the Optimization options of the Job Type
+  panel (minimum only; force constants, Tight, MaxCycles). The title,
+  %Chk/%OldChk, Guess, Add. Inp., connectivity, spin prefix and excited
+  states are set by the job and greyed out. In Additional Keywords Opt,
+  Scan, IRC, Geom=, Guess=, Units=, Gen/GenECP, ECPs and options that read
+  extra input are refused; Freq, post-SCF methods (the analysis reads only
+  the Total SCF Density) and diffuse basis sets warn. The Fukui job must be
+  the only step.
 
 FILES (Save input; relative names, LF line endings)
   <name>_fukui.gjf    the linked job.
@@ -2486,6 +2491,69 @@ Then open <name>_N.fchk in Tools > Analysis of Fukui Functions: the N+1
 and N-1 files are filled in. If one job fails, Gaussian does not run the
 jobs after it; the script then reports which .chk is missing.
 """
+
+    help_gaussian_input = """GAUSSIAN 16 INPUT BUILDER
+Writes a Gaussian 16 input (Rev. C.01, under WSL or on a Linux cluster), in
+the way of GaussView 6.1's Gaussian Calculation Setup: the route line at the
+top follows every panel as you change it.
+
+PANELS (of the selected step)
+  Job Type   Energy; Optimization (minimum or TS (Berny), force constants,
+             Tight, MaxCycles); Frequency (Raman, VCD, Anharmonic);
+             Opt+Freq; IRC (direction, force constants, MaxPoints,
+             StepSize); Scan (relaxed, Opt=ModRedundant); Stability
+             (Stable=Opt); NMR (GIAO, CSGT, IGAIM, All; SpinSpin); Fukui
+             functions (see below).
+  Method     ground or excited state (TD-SCF, TDA, CIS, ZINDO: number of
+             states, Root, Singlets/Triplets/50-50; "Print all excitation
+             coefficients" writes IOp(9/40=4), which the NTO and Excitation
+             tabs of the 3D viewer need), spin prefix R/U/RO, method family
+             and method, basis set (6-31G and 6-311G take the diffuse and
+             polarization lists), empirical dispersion.
+  Molecule   geometry (Load geometry... or Cartesian Angstrom lines), where
+             this step's geometry comes from, charge, multiplicity, scan and
+             freeze lines (helper row: type, atoms, Scan/Freeze, steps, step
+             size, Add; or type B/A/D lines).
+  Title  Link 0 (%Mem, %NProcShared, %Chk, %OldChk, extra % lines)  General
+  (print level, SCF=Tight, SCF=QC, NoSymm, Polar, connectivity, formchk
+  script)  Guess  Pop  Solvation (IEFPCM, CPCM, SMD and the solvent)
+  Add. Inp. (sections written after the geometry: a Gen basis set, ECPs).
+  Additional Keywords: anything the panels do not have. Options of a
+  keyword a panel already writes are merged into it (Opt=NoEigenTest);
+  the same option with another value (MaxCycles=50 and 100) is an error.
+
+WHAT YOU MUST SUPPLY
+  Geometry; multiplicity (never assumed: the Molecule panel lists the
+  values the electron count allows); %Mem and %NProcShared for the machine
+  that runs Gaussian; the output folder.
+
+LINKED STEPS (--Link1--)
+  Add linked step copies the selected step and presets it to continue from
+  the checkpoint: Geom=AllCheck, Guess=Read, job type Energy (for example an
+  optimization, then a TD-SCF single point on the optimized geometry).
+  Choose a step in the Step list to edit it; Remove, Up and Down change the
+  list. Every step writes %Chk=<name>.chk unless you change it. A step that
+  reads a checkpoint (Geom=Check or AllCheck, Guess=Read, ReadFC) needs one
+  written by an earlier step, or named in %OldChk.
+
+OPEN INPUT...
+  Reads a .gjf/.com/.gau back into the panels, every step. Keywords no
+  panel has go to Additional Keywords and extra sections to Add. Inp., so
+  saving again keeps them. Z-matrices, per-fragment charges and freeze flags
+  inside the coordinates are refused; notes list what was adapted (an
+  absolute %Chk path, a title with characters Gaussian forbids).
+
+FILES (Save input; relative names, LF line endings)
+  <name>.gjf          the input (Fukui functions: <name>_fukui.gjf).
+  <name>_formchk.sh   formchk of every checkpoint the job writes.
+
+RUNNING (in the input's folder; under WSL C:\\jobs is /mnt/c/jobs)
+  g16 < <name>.gjf > <name>.log   (or the cluster's queue)
+  bash <name>_formchk.sh
+Then open the .fchk in the 3D Molecular Viewer (Orbitals, ESP, QTAIM, NTO
+and Excitation tabs).
+
+""" + help_fukui_input
 
     help_runatom = """VANDERBILT USPP GENERATOR (runatom, USPP 7.3.6)
 

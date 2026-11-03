@@ -16,7 +16,7 @@ checkpoints into ``<stem>_N.fchk`` ... for Tools > Analysis of Fukui
 Functions. File names are relative and the files use LF line endings: the
 jobs are run from the folder that holds the input.
 
-No Toga here (``fukuiInputBuilder`` is the window).
+No Toga here; the window is the Fukui functions job type of ``gaussianInputBuilder``.
 """
 
 import math

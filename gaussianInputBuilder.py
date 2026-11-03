@@ -213,7 +213,7 @@ class GaussianInputBuilderUI:
         preview = toga.Box(children=[self.preview_output, self.messages_output],
                            style=Pack(direction=COLUMN, margin=10, flex=1))
         help_box = toga.MultilineTextInput(readonly=True, style=Pack(flex=1),
-                                           value=getattr(HelpGqteaWin, "help_gaussian_input", ""))
+                                           value=HelpGqteaWin.help_gaussian_input)
         panels = (self._build_job_panel(), self._build_method_panel(), self._build_molecule_panel(),
                   self._build_title_panel(), self._build_link0_panel(), self._build_general_panel(),
                   self._build_guess_panel(), self._build_pop_panel(), self._build_solvation_panel(),

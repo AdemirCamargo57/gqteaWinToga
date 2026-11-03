@@ -447,3 +447,19 @@ class TestFixRound1:
         ui.modred_action_selection.value = "Freeze"
         ui.add_modredundant_line(None)
         assert ui.modredundant_input.value == "B 1 2 F"
+
+
+def test_the_inputs_tab_offers_the_builder_instead_of_the_fukui_window():
+    from toolLoader import TOOL_TABS
+    inputs = dict(TOOL_TABS)["Inputs"]
+    assert any(spec.module == "gaussianInputBuilder" and spec.attribute == "GaussianInputBuilderUI"
+               and spec.label == "Gaussian 16 Input Builder" for spec in inputs)
+    assert not any(spec.module == "fukuiInputBuilder" for tab in dict(TOOL_TABS).values() for spec in tab)
+    assert not (SRC / "fukuiInputBuilder.py").exists()
+
+
+def test_help_text_covers_the_builder_and_the_fukui_job_type():
+    from help import HelpGqteaWin
+    text = HelpGqteaWin.help_gaussian_input
+    assert text.startswith("GAUSSIAN 16 INPUT BUILDER") and "FUKUI FUNCTIONS JOB TYPE" in text
+    assert "Gaussian Fukui Input Builder" not in text and "Gaussian Fukui Input Builder" not in HelpGqteaWin.help_fukui
