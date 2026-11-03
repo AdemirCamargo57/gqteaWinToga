@@ -766,7 +766,23 @@ class GaussianInputBuilder:
         return GaussianJob(spec, atoms, prepared, folder / f"{stem}{INPUT_SUFFIX}", script_path, chk_files, warnings)
 
     def _prepare_fukui(self, spec: GaussianJobSpec) -> GaussianJob:
-        raise NotImplementedError("Task 6")
+        if len(spec.steps) != 1:
+            raise ValueError("- The Fukui functions job type is already three linked jobs (N, N+p, N-q): "
+                             "it must be the only step.")
+        step = spec.steps[0]
+        reference = fukui_defaults(step)
+        errors = [f"The Fukui functions job type sets {FIELD_LABELS[name]} itself; choose the job type again "
+                  "to reset it." for name in FUKUI_FIXED if getattr(step, name) != getattr(reference, name)]
+        keywords, merge_errors = fukui_keywords(step)
+        errors += merge_errors
+        if any(k.key == "OPT" for k in keywords):
+            errors.append("The Fukui functions job type: set the N-state optimization with the Optimization "
+                          "options of the Job Type panel, not in Additional Keywords.")
+        if errors:
+            raise ValueError("\n".join(f"- {e}" for e in errors))
+        job = self._fukui.prepare(fukui_spec(spec))
+        return GaussianJob(spec, job.atoms, [], job.input_path, job.script_path, [s.chk for s in job.states],
+                           list(job.warnings), fukui=job)
 
     def input_text(self, job: GaussianJob) -> str:
         if job.fukui is not None:
@@ -813,3 +829,109 @@ class GaussianInputBuilder:
                 raise ValueError(f"Could not write {path}: {exc}") from exc
             written.append(path)
         return written
+
+
+# ----------------------------------------------------------------------
+# The Fukui Job Type (delegated to fukuiInput, unchanged)
+# ----------------------------------------------------------------------
+# Fields the Fukui linked job writes itself; they must hold fukui_defaults' values.
+FUKUI_FIXED = ("opt_target", "force_constants", "state", "print_all_coefficients", "spin", "geometry_source",
+               "modredundant", "title", "write_chk", "chk", "old_chk", "extra_link0", "connectivity", "guess",
+               "guess_mix", "guess_always", "guess_only", "guess_save", "additional_input")
+
+
+def fukui_defaults(step: GaussianStepSpec) -> GaussianStepSpec:
+    """The step as the Fukui Job Type uses it: the former builder's SCF=Tight NoSymm, unused controls reset."""
+    force_constants = step.force_constants if step.force_constants in gk.FUKUI_FORCE_CONSTANTS else gk.FC_DEFAULT
+    return dataclasses.replace(
+        step, job_type=gk.JOB_FUKUI, opt_target=gk.OPT_MINIMUM, force_constants=force_constants,
+        state=gk.STATE_GROUND, print_all_coefficients=False, spin="Default", geometry_source=gk.GEOM_COORDINATES,
+        modredundant="", title="", write_chk=True, chk="", old_chk="", extra_link0="", connectivity=False,
+        guess="Default", guess_mix=False, guess_always=False, guess_only=False, guess_save=False,
+        additional_input="", scf_tight=True, nosymm=True)
+
+
+def fukui_opt_options(step: GaussianStepSpec) -> List[str]:
+    """Options of the N-state optimization (towards a minimum; no ReadFC, no ModRedundant)."""
+    options = [o for o in (gk.FORCE_CONSTANTS.get(step.force_constants),) if o]
+    if step.opt_tight:
+        options.append("Tight")
+    if step.opt_max_cycles:
+        options.append(f"MaxCycles={step.opt_max_cycles}")
+    return options
+
+
+def fukui_keywords(step: GaussianStepSpec) -> Tuple[List[RouteKeyword], List[str]]:
+    """Keywords shared by the three Fukui jobs (panels + Additional Keywords, merged as in spec 5.1)."""
+    return merge_keywords(method_keywords(step) + general_keywords(step), step.additional_keywords)
+
+
+def fukui_spec(spec: GaussianJobSpec) -> fi.FukuiJobSpec:
+    """The panels of the single Fukui step as the FukuiJobSpec that fukuiInput validates and writes."""
+    step = spec.steps[0]
+    shared = [format_keyword(k) for k in fukui_keywords(step)[0]]
+    return fi.FukuiJobSpec(
+        stem=(spec.stem or "").strip(), output_dir=(spec.output_dir or "").strip(), geometry=spec.geometry,
+        charge=step.charge, multiplicity=step.multiplicity,
+        plus_multiplicity=step.fukui_plus_multiplicity, minus_multiplicity=step.fukui_minus_multiplicity,
+        memory=step.memory, nproc=step.nproc, print_level=step.print_level,
+        method=method_keyword(step, with_prefix=False), basis=basis_keyword(step),
+        keywords=" ".join(shared),
+        opt_keyword=format_keyword(RouteKeyword("Opt", fukui_opt_options(step))),
+        p=step.fukui_p, q=step.fukui_q, guess_read=step.fukui_guess_read)
+
+
+# ----------------------------------------------------------------------
+# Live texts of the window (never raise)
+# ----------------------------------------------------------------------
+def route_preview(spec: GaussianJobSpec, index: int) -> str:
+    """The route line(s) of step ``index`` (0-based), with merge problems on extra lines."""
+    step = spec.steps[index]
+    try:
+        if step.job_type == gk.JOB_FUKUI:
+            f = fukui_spec(spec)
+            args = (f.print_level, f.method, f.basis, f.keywords)
+            ion_extra = ("Geom=Check", "Guess=Read") if f.guess_read else ("Geom=Check",)
+            return ("job 1:     " + " ".join(fi.build_route(*args, (f.opt_keyword,))) + "\n"
+                    "jobs 2-3:  " + " ".join(fi.build_route(*args, ion_extra)))
+        keywords, errors = route_keywords(step)
+        route = fi.build_route(step.print_level, method_keyword(step), basis_keyword(step),
+                               " ".join(format_keyword(k) for k in keywords))
+        return " ".join(route) + "".join(f"\n{e}" for e in errors)
+    except (KeyError, ValueError) as exc:
+        return f"Cannot build the route yet: {exc}"
+
+
+def _spin_text(electrons: int, multiplicity: Optional[int]) -> str:
+    if multiplicity is None:
+        allowed = ", ".join(str(m) for m in allowed_multiplicities(electrons, 3))
+        return f"multiplicity ? (enter it: {electrons} electrons allow {allowed}, ...)"
+    problem = multiplicity_problem(electrons, multiplicity) if electrons >= 1 else "no electrons left"
+    return f"multiplicity {multiplicity}" + (f"   <- impossible: {problem}" if problem else "")
+
+
+def molecule_summary(spec: GaussianJobSpec, index: int) -> str:
+    """Charge, electron count and multiplicity of step ``index`` (the Fukui job: of its three states)."""
+    step = spec.steps[index]
+    if step.geometry_source == gk.GEOM_ALLCHECK:
+        return "Geometry, charge and multiplicity come from the checkpoint."
+    if not (spec.geometry or "").strip():
+        return "Enter or load a geometry to see the electron count."
+    try:
+        atoms = fi.parse_geometry(spec.geometry, check_distances=False)
+    except ValueError as exc:
+        return f"Cannot count electrons yet: {exc}"
+    z_total = nuclear_charge(a[0] for a in atoms)
+    if step.job_type != gk.JOB_FUKUI:
+        electrons = z_total - step.charge
+        return (f"{len(atoms)} atoms, charge {step.charge:+d}, {electrons} electrons, "
+                f"{_spin_text(electrons, step.multiplicity)}").replace("charge +0", "charge 0")
+    stem = (spec.stem or "").strip() or fi.DEFAULT_STEM
+    lines = []
+    multiplicities = (step.multiplicity, step.fukui_plus_multiplicity, step.fukui_minus_multiplicity)
+    for (label, tag, _, k, sign), mult in zip(fi.state_tags(step.fukui_p, step.fukui_q), multiplicities):
+        charge = step.charge + sign * k
+        electrons = z_total - charge
+        lines.append(f"{label:<5} charge {charge:+d}, {electrons} electrons -> {stem}_{tag}.chk, "
+                     f"{_spin_text(electrons, mult)}")
+    return "\n".join(lines).replace("charge +0", "charge 0")

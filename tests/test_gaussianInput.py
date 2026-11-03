@@ -423,3 +423,101 @@ class TestSteps:
         assert gi.step_label(1, step(job_type=gk.JOB_OPT)) == "1: Optimization B3LYP/6-31G(d)"
         assert gi.step_label(2, step(geometry_source=gk.GEOM_ALLCHECK, state=gk.STATE_TD)) == \
             "2: TD-SCF B3LYP/6-31G(d), Geom=AllCheck"
+
+
+PHENOL_GJF = SRC / "tests" / "data" / "fukui" / "inputs" / "phenol_N.gjf"
+
+
+def phenol_geometry() -> str:
+    lines = PHENOL_GJF.read_text().splitlines()
+    start = lines.index("0 1") + 1
+    return "\n".join(line for line in lines[start:] if line.strip())
+
+
+def fukui_job_spec(tmp_path, **changes) -> gi.GaussianJobSpec:
+    s = gi.fukui_defaults(step(multiplicity=1, fukui_plus_multiplicity=2, fukui_minus_multiplicity=2))
+    return gi.GaussianJobSpec(stem="phenol", output_dir=str(tmp_path), geometry=phenol_geometry(),
+                              steps=[replace(s, **changes)])
+
+
+class TestFukui:
+    def test_output_is_the_fukui_builders_byte_for_byte(self, tmp_path):
+        old = fi.FukuiInputBuilder()
+        old_job = old.prepare(fi.FukuiJobSpec(stem="phenol", output_dir=str(tmp_path), geometry=phenol_geometry(),
+                                              charge=0, multiplicity=1, plus_multiplicity=2, minus_multiplicity=2,
+                                              memory="2GB", nproc=4))
+        new = gi.GaussianInputBuilder()
+        job = new.prepare(fukui_job_spec(tmp_path))
+        assert new.input_text(job) == old.input_text(old_job)
+        assert new.script_text(job) == old.script_text(old_job)
+        assert (job.input_path, job.script_path) == (old_job.input_path, old_job.script_path)
+        assert new.write_files(job) == [old_job.input_path, old_job.script_path]
+
+    def test_panels_map_onto_the_fukui_spec(self, tmp_path):
+        spec = fukui_job_spec(tmp_path, method_name="M06-2X", basis="Def2SVP", dispersion="GD3BJ", pop_mk=True,
+                              solvation="SMD", force_constants=gk.FC_CALCFC, opt_tight=True, opt_max_cycles=50,
+                              additional_keywords="Int=UltraFine", print_level="#N", memory="3GB", nproc=8,
+                              charge=1, multiplicity=2, fukui_p=2, fukui_q=1, fukui_plus_multiplicity=3,
+                              fukui_minus_multiplicity=1, fukui_guess_read=False)
+        f = gi.fukui_spec(spec)
+        assert (f.method, f.basis, f.print_level, f.memory, f.nproc) == ("M062X", "Def2SVP", "#N", "3GB", 8)
+        assert f.keywords == "EmpiricalDispersion=GD3BJ SCF=Tight NoSymm Pop=MK SCRF=(SMD,Solvent=Water) Int=UltraFine"
+        assert f.opt_keyword == "Opt=(CalcFC,Tight,MaxCycles=50)"
+        assert (f.charge, f.multiplicity, f.plus_multiplicity, f.minus_multiplicity) == (1, 2, 3, 1)
+        assert (f.p, f.q, f.guess_read, f.stem, f.geometry) == (2, 1, False, "phenol", phenol_geometry())
+
+    def test_fukui_must_be_the_only_step(self, tmp_path):
+        spec = fukui_job_spec(tmp_path)
+        spec.steps.append(step(multiplicity=1))
+        with pytest.raises(ValueError, match="must be the only step"):
+            gi.GaussianInputBuilder().prepare(spec)
+
+    @pytest.mark.parametrize("changes,label", [
+        (dict(force_constants="Read from checkpoint (ReadFC)"), "Force constants"),
+        (dict(guess="Read checkpoint"), "Initial guess"),
+        (dict(state=gk.STATE_TD), "Electronic state"),
+        (dict(title="x"), "Title"),
+    ])
+    def test_controls_the_fukui_job_sets_itself_are_refused(self, tmp_path, changes, label):
+        with pytest.raises(ValueError, match=f"sets {label} itself"):
+            gi.GaussianInputBuilder().prepare(fukui_job_spec(tmp_path, **changes))
+
+    def test_additional_keywords_merge_and_opt_is_refused_with_the_new_wording(self, tmp_path):
+        assert gi.fukui_spec(fukui_job_spec(tmp_path, additional_keywords="SCF=XQC")).keywords == "SCF=(Tight,XQC) NoSymm"
+        with pytest.raises(ValueError, match="Optimization options of the Job Type panel"):
+            gi.GaussianInputBuilder().prepare(fukui_job_spec(tmp_path, additional_keywords="Opt=Tight"))
+
+    def test_fukui_problems_come_from_fukui_input(self, tmp_path):
+        with pytest.raises(ValueError, match="N\+1 state: enter its spin multiplicity"):
+            gi.GaussianInputBuilder().prepare(fukui_job_spec(tmp_path, fukui_plus_multiplicity=None))
+
+    def test_fukui_defaults(self):
+        s = gi.fukui_defaults(step(guess="Read checkpoint", title="t", spin="Unrestricted (U)", chk="a.chk",
+                                   force_constants="Read from checkpoint (ReadFC)"))
+        assert s.job_type == gk.JOB_FUKUI and s.scf_tight and s.nosymm
+        assert (s.guess, s.title, s.spin, s.chk, s.force_constants) == ("Default", "", "Default", "", gk.FC_DEFAULT)
+
+
+class TestPreview:
+    def test_fukui_route_preview_matches_the_former_window(self, tmp_path):
+        assert gi.route_preview(fukui_job_spec(tmp_path), 0) == (
+            "job 1:     #P B3LYP/6-31G(d) SCF=Tight NoSymm Opt\n"
+            "jobs 2-3:  #P B3LYP/6-31G(d) SCF=Tight NoSymm Geom=Check Guess=Read")
+
+    def test_route_preview_shows_merge_problems(self, tmp_path):
+        spec = job_spec(tmp_path, step(job_type=gk.JOB_OPT, opt_max_cycles=9, additional_keywords="Opt=MaxCycles=5"))
+        text = gi.route_preview(spec, 0)
+        assert text.startswith("#P B3LYP/6-31G(d) Opt=(MaxCycles=9)") and "Job Type panel" in text
+
+    def test_molecule_summary(self, tmp_path):
+        assert gi.molecule_summary(job_spec(tmp_path, step()), 0) == \
+            "3 atoms, charge 0, 10 electrons, multiplicity ? (enter it: 10 electrons allow 1, 3, 5, ...)"
+        assert gi.molecule_summary(job_spec(tmp_path, step(charge=1, multiplicity=1)), 0).endswith(
+            "multiplicity 1   <- impossible: " + gi.multiplicity_problem(9, 1))
+        assert "checkpoint" in gi.molecule_summary(job_spec(tmp_path, step(geometry_source=gk.GEOM_ALLCHECK)), 0)
+        assert "geometry" in gi.molecule_summary(job_spec(tmp_path, geometry=""), 0)
+
+    def test_fukui_summary_lists_the_three_states(self, tmp_path):
+        text = gi.molecule_summary(fukui_job_spec(tmp_path, fukui_plus_multiplicity=None), 0)
+        assert "N+1" in text and "charge -1" in text and "51 electrons" in text and "phenol_Np1.chk" in text
+        assert "multiplicity ? (enter it: 51 electrons allow 2, 4, 6, ...)" in text
