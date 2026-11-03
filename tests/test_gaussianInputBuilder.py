@@ -384,6 +384,7 @@ class TestFukuiInTheWindow:
 
     def test_summary_and_route_list_the_three_states(self, tmp_path):
         ui = make_ui(tmp_path)
+        ui.stem_input.value = fi.DEFAULT_STEM
         load_phenol(ui)
         text = ui.summary_label.text
         assert "N+1" in text and "charge -1" in text and "51 electrons" in text and "phenol_Np1.chk" in text
