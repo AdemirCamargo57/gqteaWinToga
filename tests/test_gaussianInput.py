@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import fukuiInput as fi
 import gaussianInput as gi
 import gaussianKeywords as gk
 from gaussianInput import RouteKeyword as K
@@ -81,3 +82,114 @@ class TestKeywordAlgebra:
     def test_iop_with_a_slash_is_not_a_model_chemistry(self):
         merged, errors = gi.merge_keywords([], "IOp(9/40=4)")
         assert merged == [K("IOp", ["9/40=4"])] and errors == []
+
+
+from dataclasses import fields, replace
+
+
+def step(**changes) -> gi.GaussianStepSpec:
+    return replace(gi.GaussianStepSpec(), **changes)
+
+
+def route(**changes) -> str:
+    return " ".join(gi.route_lines(step(**changes)))
+
+
+class TestStepSpec:
+    def test_every_field_has_a_label(self):
+        assert set(gi.FIELD_LABELS) == {f.name for f in fields(gi.GaussianStepSpec)}
+
+    def test_every_choice_default_is_one_of_its_choices(self):
+        default = gi.GaussianStepSpec()
+        for name in gi.CHOICES:
+            assert getattr(default, name) in gi.choices(name, default), name
+        assert default.method_name in gi.choices("method_name", default)
+
+    def test_method_choices_follow_the_family(self):
+        assert gi.method_choices(gk.FAMILY_SEMI)[0] == "PM7"
+        assert gi.method_choices(gk.FAMILY_HF) == (gk.NO_CHOICE,)
+
+
+class TestModel:
+    def test_default_route(self):
+        assert route() == "#P B3LYP/6-31G(d)"
+
+    @pytest.mark.parametrize("changes,model", [
+        (dict(basis_diffuse="+", basis_polarization="(d,p)"), "B3LYP/6-31+G(d,p)"),
+        (dict(basis="6-311G", basis_diffuse="++", basis_polarization="(2df,2pd)"), "B3LYP/6-311++G(2df,2pd)"),
+        (dict(basis="6-31G", basis_polarization="None"), "B3LYP/6-31G"),
+        (dict(basis="STO-3G", basis_diffuse="+"), "B3LYP/STO-3G"),          # lists apply to 6-31G/6-311G only
+        (dict(basis="aug-cc-pVTZ"), "B3LYP/aug-cc-pVTZ"),
+        (dict(basis=gk.OTHER, basis_other="def2-TZVPD"), "B3LYP/def2-TZVPD"),
+        (dict(spin="Unrestricted (U)"), "UB3LYP/6-31G(d)"),
+        (dict(spin="Restricted-open (RO)", family=gk.FAMILY_HF, method_name=gk.NO_CHOICE), "ROHF/6-31G(d)"),
+        (dict(method_name="M06-2X"), "M062X/6-31G(d)"),
+        (dict(method_name=gk.OTHER, method_other="revPBE"), "revPBE/6-31G(d)"),
+        (dict(family=gk.FAMILY_SEMI, method_name="PM6"), "PM6"),
+        (dict(family=gk.FAMILY_COMPOUND, method_name="CBS-QB3"), "CBS-QB3"),
+        (dict(family=gk.FAMILY_CCSDT, method_name=gk.NO_CHOICE, basis="cc-pVDZ"), "CCSD(T)/cc-pVDZ"),
+        (dict(state=gk.STATE_CIS, n_states=3, basis="cc-pVDZ"), "CIS(NStates=3)/cc-pVDZ"),
+        (dict(state=gk.STATE_ZINDO, n_states=10, state_spin="Singlets"), "ZINDO(NStates=10,Singlets)"),
+    ])
+    def test_model_token(self, changes, model):
+        assert gi.model_token(step(**changes)) == model
+
+
+class TestJobKeywords:
+    @pytest.mark.parametrize("changes,expected", [
+        (dict(job_type=gk.JOB_OPT), "#P B3LYP/6-31G(d) Opt"),
+        (dict(job_type=gk.JOB_OPT, opt_target=gk.OPT_TS, force_constants=gk.FC_CALCFC, opt_tight=True,
+              opt_max_cycles=200), "#P B3LYP/6-31G(d) Opt=(TS,CalcFC,Tight,MaxCycles=200)"),
+        (dict(job_type=gk.JOB_FREQ, freq_raman=True), "#P B3LYP/6-31G(d) Freq=Raman"),
+        (dict(job_type=gk.JOB_OPT_FREQ, freq_vcd=True, freq_anharmonic=True),
+         "#P B3LYP/6-31G(d) Opt Freq=(VCD,Anharmonic)"),
+        (dict(job_type=gk.JOB_IRC, irc_direction="Forward only", irc_max_points=20, irc_step_size=5),
+         "#P B3LYP/6-31G(d) IRC=(Forward,CalcFC,MaxPoints=20,StepSize=5)"),
+        (dict(job_type=gk.JOB_SCAN), "#P B3LYP/6-31G(d) Opt=ModRedundant"),
+        (dict(job_type=gk.JOB_OPT, modredundant="B 1 2 F"), "#P B3LYP/6-31G(d) Opt=ModRedundant"),
+        (dict(job_type=gk.JOB_STABILITY, stable_opt=True), "#P B3LYP/6-31G(d) Stable=Opt"),
+        (dict(job_type=gk.JOB_NMR, nmr_method="CSGT", nmr_spinspin=True), "#P B3LYP/6-31G(d) NMR=(CSGT,SpinSpin)"),
+        (dict(job_type=gk.JOB_NMR), "#P B3LYP/6-31G(d) NMR"),
+    ])
+    def test_job_type_route(self, changes, expected):
+        assert route(**changes) == expected
+
+    def test_energy_writes_no_job_keyword(self):
+        assert gi.job_keywords(step()) == []
+
+
+class TestOtherPanels:
+    @pytest.mark.parametrize("changes,expected", [
+        (dict(state=gk.STATE_TD, n_states=10), "#P B3LYP/6-31G(d) TD=(NStates=10)"),
+        (dict(state=gk.STATE_TDA, n_states=6, root=2, state_spin="Triplets"),
+         "#P B3LYP/6-31G(d) TDA=(NStates=6,Root=2,Triplets)"),
+        (dict(state=gk.STATE_TD, print_all_coefficients=True), "#P B3LYP/6-31G(d) TD=(NStates=3) IOp(9/40=4)"),
+        (dict(dispersion="GD3BJ"), "#P B3LYP/6-31G(d) EmpiricalDispersion=GD3BJ"),
+        (dict(scf_tight=True, scf_qc=True, nosymm=True, polar=True), "#P B3LYP/6-31G(d) SCF=(Tight,QC) NoSymm Polar"),
+        (dict(geometry_source=gk.GEOM_ALLCHECK), "#P B3LYP/6-31G(d) Geom=AllCheck"),
+        (dict(connectivity=True), "#P B3LYP/6-31G(d) Geom=Connectivity"),
+        (dict(guess="Read checkpoint", guess_mix=True), "#P B3LYP/6-31G(d) Guess=(Read,Mix)"),
+        (dict(pop_level="Full", pop_mk=True, pop_nbo=True), "#P B3LYP/6-31G(d) Pop=(Full,MK,NBO)"),
+        (dict(solvation="SMD", solvent="Acetonitrile"), "#P B3LYP/6-31G(d) SCRF=(SMD,Solvent=Acetonitrile)"),
+        (dict(solvation="CPCM", solvent=gk.OTHER, solvent_other="Heptane"),
+         "#P B3LYP/6-31G(d) SCRF=(CPCM,Solvent=Heptane)"),
+        (dict(print_level="#N"), "#N B3LYP/6-31G(d)"),
+    ])
+    def test_route(self, changes, expected):
+        assert route(**changes) == expected
+
+    def test_additional_keywords_are_merged(self):
+        assert route(job_type=gk.JOB_OPT, opt_target=gk.OPT_TS, additional_keywords="Opt=NoEigenTest 6D") == \
+            "#P B3LYP/6-31G(d) Opt=(TS,NoEigenTest) 6D"
+
+    def test_route_keywords_report_merge_errors(self):
+        _, errors = gi.route_keywords(step(job_type=gk.JOB_OPT, opt_max_cycles=100,
+                                           additional_keywords="Opt=MaxCycles=50"))
+        assert errors and "Job Type panel" in errors[0]
+
+    def test_a_long_route_is_wrapped_below_80_columns(self):
+        lines = gi.route_lines(step(job_type=gk.JOB_OPT_FREQ, opt_tight=True, freq_raman=True,
+                                    state=gk.STATE_TD, n_states=10, print_all_coefficients=True,
+                                    dispersion="GD3BJ", scf_tight=True, nosymm=True, pop_level="Full",
+                                    solvation="SMD", solvent="DiMethylSulfoxide"))
+        assert len(lines) > 1 and all(len(line) <= fi.ROUTE_WIDTH for line in lines)
