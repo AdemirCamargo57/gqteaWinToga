@@ -409,6 +409,15 @@ class TestValidation:
             gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(multiplicity=1, job_type=gk.JOB_IRC,
                                                                       irc_force_constants=gk.FC_DEFAULT)))
 
+    def test_irc_with_fccards_prepares(self, tmp_path):
+        job = gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(
+            multiplicity=1, job_type=gk.JOB_IRC, irc_force_constants=gk.FC_DEFAULT, additional_keywords="IRC=FCCards")))
+        assert "FCCards" in gi.GaussianInputBuilder().input_text(job)
+
+    def test_linked_step_drops_job_keywords_from_additional_keywords(self):
+        first = step(multiplicity=1, additional_keywords="Opt=NoEigenTest Int=UltraFine Freq=Raman 6D")
+        assert gi.linked_step(first).additional_keywords == "Int=UltraFine 6D"
+
     def test_default_job_has_no_warnings(self, tmp_path):
         assert gi.GaussianInputBuilder().prepare(job_spec(tmp_path)).warnings == []
 

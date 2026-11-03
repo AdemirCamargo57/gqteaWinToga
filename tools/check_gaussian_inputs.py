@@ -30,9 +30,8 @@ def step(**changes):
     return replace(BASE, **changes)
 
 
-# No Opt=NoEigenTest in Additional Keywords: a linked step inherits it, and Opt next to IRC in one route
-# makes Gaussian run a path optimization (l107) instead of the IRC.
-TS = step(job_type=gk.JOB_OPT, opt_target=gk.OPT_TS, force_constants=gk.FC_CALCFC)
+TS = step(job_type=gk.JOB_OPT, opt_target=gk.OPT_TS, force_constants=gk.FC_CALCFC,
+          additional_keywords="Opt=NoEigenTest")
 
 JOBS = {
     "energy": (WATER, [step()], True),

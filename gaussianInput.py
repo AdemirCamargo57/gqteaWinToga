@@ -473,7 +473,7 @@ SCRIPT_HEADER = ("# gQTEA Gaussian 16 input builder: convert the checkpoints to 
                  "# checkpoints for the 3D Molecular Viewer's analysis tabs. Run it where Gaussian")
 ASCII_FIELDS = ("title", "extra_link0", "additional_input", "additional_keywords", "method_other",
                 "basis_other", "solvent_other")
-FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "READFC", "RCFC"}
+FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "READFC", "RCFC", "FCCARDS"}
 
 
 @dataclass
@@ -694,6 +694,14 @@ def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set,
         additional_input=_trim_blank_lines(step.additional_input), chk=chk)
 
 
+LINKED_DROPPED_KEYWORDS = {"OPT", "FREQ", "IRC", "STABLE", "NMR", "SCAN"}
+
+
+def _without_job_keywords(text: str) -> str:
+    """Additional Keywords minus the job keywords (a linked step has its own job type)."""
+    return " ".join(t for t in fi.route_tokens(text) if keyword_text_name(t).upper() not in LINKED_DROPPED_KEYWORDS)
+
+
 def linked_step(step: GaussianStepSpec) -> GaussianStepSpec:
     """A new step continuing from ``step``: same method and Link 0, geometry and orbitals from its checkpoint.
 
@@ -702,7 +710,7 @@ def linked_step(step: GaussianStepSpec) -> GaussianStepSpec:
     """
     return dataclasses.replace(step, job_type=gk.JOB_ENERGY, geometry_source=gk.GEOM_ALLCHECK,
                                guess="Read checkpoint", title="", modredundant="", additional_input="",
-                               connectivity=False, old_chk="", charge=0, multiplicity=None)
+                               additional_keywords=_without_job_keywords(step.additional_keywords), connectivity=False, old_chk="", charge=0, multiplicity=None)
 
 
 def step_label(index: int, step: GaussianStepSpec) -> str:
