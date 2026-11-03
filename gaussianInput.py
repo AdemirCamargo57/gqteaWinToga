@@ -937,3 +937,489 @@ def molecule_summary(spec: GaussianJobSpec, index: int) -> str:
         lines.append(f"{label:<5} charge {charge:+d}, {electrons} electrons -> {stem}_{tag}.chk, "
                      f"{_spin_text(electrons, mult)}")
     return "\n".join(lines).replace("charge +0", "charge 0")
+
+
+# ----------------------------------------------------------------------
+# Open input...: a Gaussian input back into the panels
+# ----------------------------------------------------------------------
+GAUSSIAN_INPUT_SUFFIXES = (".gjf", ".com", ".gau")
+_POPLE_RE = re.compile(r"^(6-31|6-311)(\+{0,2})G(\*{1,2}|\([^)]*\))?$", re.IGNORECASE)
+_STAR_POLARIZATION = {"*": "(d)", "**": "(d,p)"}
+_INTEGER_RE = re.compile(r"[+-]?\d+")
+
+
+def _int_option(option: str) -> Optional[int]:
+    value = option.split("=", 1)[1].strip() if "=" in option else ""
+    return int(value) if value.isdigit() and int(value) > 0 else None
+
+
+def _bare_method(upper: str) -> Optional[dict]:
+    """Panel fields of a method keyword without prefix (upper case), or None if no panel knows it."""
+    families = {v.upper(): k for k, v in gk.FAMILY_KEYWORDS.items()}
+    families["MP4"] = gk.FAMILY_MP4
+    if upper in families:
+        return {"family": families[upper], "method_name": gk.NO_CHOICE}
+    for family, table in gk.FAMILY_METHODS.items():
+        back = gk.reverse(table)
+        if upper in back:
+            return {"family": family, "method_name": back[upper]}
+    name = keyword_text_name(upper)
+    states = {"CIS": gk.STATE_CIS, "ZINDO": gk.STATE_ZINDO}
+    if name in states:
+        return {"state": states[name], "family": gk.FAMILY_HF, "method_name": gk.NO_CHOICE,
+                "_options": parse_keyword(upper).options}
+    return None
+
+
+def _method_fields(text: str) -> Optional[dict]:
+    """'UB3LYP' -> {'spin': 'Unrestricted (U)', 'family': 'DFT', 'method_name': 'B3LYP'}; None if unknown."""
+    upper = text.upper()
+    fields = _bare_method(upper)
+    if fields is not None:
+        return {"spin": "Default", **fields}
+    for prefix in ("RO", "R", "U"):
+        if upper.startswith(prefix):
+            fields = _bare_method(upper[len(prefix):])
+            if fields is not None:
+                return {"spin": gk.reverse(gk.SPIN_PREFIXES)[prefix], **fields}
+    return None
+
+
+class _RouteReader:
+    """Puts route tokens back into a GaussianStepSpec; what no panel models is kept as extra keywords."""
+
+    def __init__(self, step: GaussianStepSpec, notes: List[str], where: str):
+        self.step, self.notes, self.where = step, notes, where
+        self.jobs: List[str] = []
+        self.modredundant = False
+        self.extra: List[str] = []
+        self.handlers = {"OPT": self._opt, "FREQ": self._freq, "IRC": self._irc, "STABLE": self._stable,
+                         "NMR": self._nmr, "TD": self._td, "TDA": self._td,
+                         "EMPIRICALDISPERSION": self._dispersion, "IOP": self._iop, "SCF": self._scf,
+                         "NOSYMM": self._switch("nosymm"), "POLAR": self._switch("polar"), "GEOM": self._geom,
+                         "GUESS": self._guess, "POP": self._pop, "SCRF": self._scrf}
+
+    def read(self, tokens: Sequence[str]) -> None:
+        model_seen = False
+        for token in tokens:
+            if not model_seen and self._model(token):
+                model_seen = True
+                continue
+            keyword = parse_keyword(token)
+            handler = self.handlers.get(keyword.key)
+            leftover = handler(keyword) if handler else None
+            if leftover is None:
+                self.extra.append(token)
+            elif leftover:
+                self.extra.append(format_keyword(RouteKeyword(keyword.name, leftover)))
+        if not model_seen:
+            self.step.family, self.step.method_name, self.step.basis = gk.FAMILY_HF, gk.NO_CHOICE, "STO-3G"
+            self.notes.append(f"{self.where}: the route names no method; Gaussian's default HF/STO-3G is used.")
+
+    def job_type(self, scan_lines: bool) -> str:
+        jobs = self.jobs
+        kinds = [j for j in ("OPT", "IRC", "STABLE", "NMR") if j in jobs]
+        if len(kinds) > 1:
+            self.notes.append(f"{self.where}: the route combines {', '.join(kinds)}; only {kinds[0]} is kept as "
+                              "the job type.")
+        if "OPT" in jobs:
+            return gk.JOB_OPT_FREQ if "FREQ" in jobs else (gk.JOB_SCAN if scan_lines else gk.JOB_OPT)
+        if "FREQ" in jobs:
+            return gk.JOB_FREQ
+        return {"IRC": gk.JOB_IRC, "STABLE": gk.JOB_STABILITY, "NMR": gk.JOB_NMR}.get(kinds[0] if kinds else "",
+                                                                                    gk.JOB_ENERGY)
+
+    # --- model chemistry ---
+    def _model(self, token: str) -> bool:
+        method_text, slash, basis_text = token.partition("/")
+        if slash and method_text.count("(") != method_text.count(")"):
+            return False                                     # IOp(9/40=4)
+        fields = _method_fields(method_text)
+        if fields is None:
+            if not slash:
+                return False
+            fields = {"spin": "Default", "family": gk.FAMILY_DFT, "method_name": gk.OTHER,
+                      "method_other": method_text}
+        options = fields.pop("_options", [])
+        for name, value in fields.items():
+            setattr(self.step, name, value)
+        dropped = self._state_options(options) if self.step.state in gk.MODEL_STATES else []
+        if dropped:
+            self.notes.append(f"{self.where}: option(s) {', '.join(dropped)} of {self.step.state} are not kept.")
+        if slash:
+            self._basis(basis_text)
+        elif not no_basis(self.step):
+            self.step.basis = "STO-3G"
+            self.notes.append(f"{self.where}: the route names no basis set; Gaussian's default STO-3G is used.")
+        return True
+
+    def _basis(self, text: str) -> None:
+        step = self.step
+        match = _POPLE_RE.match(text)
+        if match:
+            polarization = (match.group(3) or "")
+            polarization = _STAR_POLARIZATION.get(polarization, polarization).lower()
+            back = {v.lower(): k for k, v in gk.POLARIZATION.items()}
+            if polarization in back:
+                step.basis = match.group(1) + "G"
+                step.basis_diffuse = {v: k for k, v in gk.DIFFUSE.items()}[match.group(2)]
+                step.basis_polarization = back[polarization]
+                return
+        known = {b.upper(): b for b in gk.POPLE_BASES + gk.OTHER_BASES}
+        if text.upper() in known:
+            step.basis = known[text.upper()]
+        else:
+            step.basis, step.basis_other = gk.OTHER, text
+
+    def _state_options(self, options: Sequence[str]) -> List[str]:
+        step, rest = self.step, []
+        spins = gk.reverse(gk.STATE_SPINS)
+        step.n_states, step.root, step.state_spin = gk.DEFAULT_N_STATES, 1, "Default"
+        for option in options:
+            key = option_key(option)
+            if key == "NSTATES" and _int_option(option):
+                step.n_states = _int_option(option)
+            elif key == "ROOT" and _int_option(option):
+                step.root = _int_option(option)
+            elif option.upper() in spins:
+                step.state_spin = spins[option.upper()]
+            else:
+                rest.append(option)
+        return rest
+
+    # --- keywords (each returns the options it does not model; None = keep the token as it is) ---
+    def _opt(self, keyword: RouteKeyword) -> List[str]:
+        self.jobs.append("OPT")
+        rest, fc = [], gk.reverse(gk.FORCE_CONSTANTS)
+        for option in keyword.options:
+            key = option_key(option)
+            if key == "TS":
+                self.step.opt_target = gk.OPT_TS
+            elif key in fc:
+                self.step.force_constants = fc[key]
+            elif key == "TIGHT":
+                self.step.opt_tight = True
+            elif key == "MAXCYCLES" and _int_option(option):
+                self.step.opt_max_cycles = _int_option(option)
+            elif key == "MODREDUNDANT":
+                self.modredundant = True
+            else:
+                rest.append(option)
+        return rest
+
+    def _flags(self, keyword: RouteKeyword, table: Dict[str, str]) -> List[str]:
+        back = {option.upper(): name for name, option in table.items()}
+        rest = []
+        for option in keyword.options:
+            if option.upper() in back:
+                setattr(self.step, back[option.upper()], True)
+            else:
+                rest.append(option)
+        return rest
+
+    def _freq(self, keyword: RouteKeyword) -> List[str]:
+        self.jobs.append("FREQ")
+        return self._flags(keyword, gk.FREQ_FLAG_FIELDS)
+
+    def _irc(self, keyword: RouteKeyword) -> List[str]:
+        self.jobs.append("IRC")
+        step, rest = self.step, []
+        step.irc_force_constants = gk.FC_DEFAULT
+        directions, fc = gk.reverse(gk.IRC_DIRECTIONS), gk.reverse(gk.FORCE_CONSTANTS)
+        for option in keyword.options:
+            key = option_key(option)
+            if key in directions:
+                step.irc_direction = directions[key]
+            elif key in fc:
+                step.irc_force_constants = fc[key]
+            elif key == "MAXPOINTS" and _int_option(option):
+                step.irc_max_points = _int_option(option)
+            elif key == "STEPSIZE" and _int_option(option):
+                step.irc_step_size = _int_option(option)
+            else:
+                rest.append(option)
+        return rest
+
+    def _stable(self, keyword: RouteKeyword) -> List[str]:
+        self.jobs.append("STABLE")
+        rest = [o for o in keyword.options if o.upper() != "OPT"]
+        self.step.stable_opt = len(rest) < len(keyword.options)
+        return rest
+
+    def _nmr(self, keyword: RouteKeyword) -> List[str]:
+        self.jobs.append("NMR")
+        methods, rest = gk.reverse(gk.NMR_METHODS), []
+        for option in keyword.options:
+            key = option.upper()
+            if key == "GIAO":
+                self.step.nmr_method = "GIAO"
+            elif key in methods:
+                self.step.nmr_method = methods[key]
+            elif key == "SPINSPIN":
+                self.step.nmr_spinspin = True
+            else:
+                rest.append(option)
+        return rest
+
+    def _td(self, keyword: RouteKeyword) -> List[str]:
+        self.step.state = gk.STATE_TD if keyword.key == "TD" else gk.STATE_TDA
+        return self._state_options(keyword.options)
+
+    def _dispersion(self, keyword: RouteKeyword) -> Optional[List[str]]:
+        back = gk.reverse(gk.DISPERSION)
+        if len(keyword.options) == 1 and keyword.options[0].upper() in back:
+            self.step.dispersion = back[keyword.options[0].upper()]
+            return []
+        return None
+
+    def _iop(self, keyword: RouteKeyword) -> List[str]:
+        rest = [o for o in keyword.options if o.replace(" ", "") != gk.COEFFICIENTS_IOP]
+        self.step.print_all_coefficients = len(rest) < len(keyword.options)
+        return rest
+
+    def _scf(self, keyword: RouteKeyword) -> List[str]:
+        rest = []
+        for option in keyword.options:
+            if option.upper() == "TIGHT":
+                self.step.scf_tight = True
+            elif option.upper() == "QC":
+                self.step.scf_qc = True
+            else:
+                rest.append(option)
+        return rest
+
+    def _switch(self, name: str):
+        def handler(keyword: RouteKeyword) -> Optional[List[str]]:
+            if keyword.options:
+                return None
+            setattr(self.step, name, True)
+            return []
+        return handler
+
+    def _geom(self, keyword: RouteKeyword) -> List[str]:
+        sources, rest = gk.reverse(gk.GEOMETRY_SOURCES), []
+        for option in keyword.options:
+            key = option.upper()
+            if key in sources:
+                self.step.geometry_source = sources[key]
+            elif key in ("CONNECTIVITY", "CONNECT"):
+                self.step.connectivity = True
+            else:
+                rest.append(option)
+        return rest
+
+    def _guess(self, keyword: RouteKeyword) -> List[str]:
+        methods = gk.reverse(gk.GUESS_METHODS)
+        flags = {option.upper(): name for name, option in gk.GUESS_FLAG_FIELDS.items()}
+        rest = []
+        for option in keyword.options:
+            key = option.upper()
+            if key in methods:
+                self.step.guess = methods[key]
+            elif key in flags:
+                setattr(self.step, flags[key], True)
+            else:
+                rest.append(option)
+        return rest
+
+    def _pop(self, keyword: RouteKeyword) -> List[str]:
+        levels = gk.reverse(gk.POP_LEVELS)
+        flags = {option.upper(): name for name, option in gk.POP_FLAG_FIELDS.items()}
+        rest = []
+        for option in keyword.options:
+            key = option.upper()
+            if key in levels:
+                self.step.pop_level = levels[key]
+            elif key in flags:
+                setattr(self.step, flags[key], True)
+            else:
+                rest.append(option)
+        return rest
+
+    def _scrf(self, keyword: RouteKeyword) -> List[str]:
+        models = gk.reverse(gk.SOLVATION_MODELS)
+        solvents = {s.upper(): s for s in gk.SOLVENTS if s != gk.OTHER}
+        step, rest = self.step, []
+        step.solvation, step.solvent = "IEFPCM", "Water"   # Gaussian's defaults for a bare SCRF
+        for option in keyword.options:
+            key = gk.SOLVATION_ALIASES.get(option.upper(), option.upper())
+            if key in models:
+                step.solvation = models[key]
+            elif option_key(option) == "SOLVENT" and "=" in option:
+                name = option.split("=", 1)[1].strip()
+                if name.upper() in solvents:
+                    step.solvent = solvents[name.upper()]
+                else:
+                    step.solvent, step.solvent_other = gk.OTHER, name
+            else:
+                rest.append(option)
+        return rest
+
+
+def _split_blocks(text: str) -> List[List[str]]:
+    blocks, current = [], []
+    for raw in (text or "").splitlines():
+        line = raw.split("!", 1)[0].rstrip()          # '!' starts a comment in Gaussian input
+        if line.strip().lower() == "--link1--":
+            blocks.append(current)
+            current = []
+        else:
+            current.append(line)
+    blocks.append(current)
+    return [b for b in blocks if any(line.strip() for line in b)]
+
+
+def _sections(lines: Sequence[str]) -> List[List[str]]:
+    sections, current = [], []
+    for line in lines:
+        if line.strip():
+            current.append(line)
+        elif current:
+            sections.append(current)
+            current = []
+    if current:
+        sections.append(current)
+    return sections
+
+
+def _reopened_name(value: str, label: str, where: str, notes: List[str]) -> str:
+    name = PureWindowsPath(value.strip()).name
+    if name != value.strip():
+        notes.append(f"{where}: {label}={value.strip()} becomes {name} (the job runs from the input's folder).")
+    return name
+
+
+def _read_charge(step: GaussianStepSpec, line: str, where: str) -> None:
+    tokens = line.replace(",", " ").split()
+    if len(tokens) != 2 or not all(_INTEGER_RE.fullmatch(t) for t in tokens):
+        raise ValueError(f"{where}: '{line.strip()}' is not one charge and one multiplicity "
+                         "(per-fragment charges are not supported).")
+    step.charge, step.multiplicity = int(tokens[0]), int(tokens[1])
+
+
+def _read_block(lines: Sequence[str], index: int, stem: str, notes: List[str]
+                ) -> Tuple[GaussianStepSpec, Optional[str]]:
+    """One linked step -> (its panels, its geometry text or None)."""
+    where = f"Step {index}"
+    sections = _sections(lines)
+    head = sections[0]
+    route_start = next((k for k, line in enumerate(head) if line.lstrip().startswith("#")), None)
+    if route_start is None:
+        raise ValueError(f"{where}: no route section (a line starting with '#') was found.")
+    step = GaussianStepSpec(write_chk=False)
+
+    extra_link0, seen = [], set()
+    for line in head[:route_start]:
+        text = line.strip()
+        if not text.startswith("%"):
+            raise ValueError(f"{where}: '{text}' before the route is not a Link 0 (%) line.")
+        key, _, value = text[1:].partition("=")
+        key, value = key.strip().lower(), value.strip()
+        seen.add(key)
+        if key == "mem":
+            step.memory = value
+        elif key in ("nprocshared", "nproc") and value.isdigit():
+            step.nproc = int(value)
+        elif key == "chk":
+            step.write_chk = True
+            name = _reopened_name(value, "%Chk", where, notes)
+            step.chk = "" if name == f"{stem}.chk" else name
+        elif key == "oldchk":
+            step.old_chk = _reopened_name(value, "%OldChk", where, notes)
+        else:
+            extra_link0.append(text)
+    step.extra_link0 = "\n".join(extra_link0)
+    if "mem" not in seen:
+        notes.append(f"{where}: no %Mem in the file; {fi.DEFAULT_MEMORY} is used.")
+
+    route_text = " ".join(line.strip() for line in head[route_start:])
+    match = re.match(r"#([PNTpnt]?)(?=\s|$)", route_text)
+    step.print_level = "#" + (match.group(1).upper() if match else "")
+    reader = _RouteReader(step, notes, where)
+    reader.read(fi.route_tokens(route_text[match.end():] if match else route_text[1:]))
+
+    rest = sections[1:]
+    geometry = None
+    title_lines: List[str] = []
+    if step.geometry_source == gk.GEOM_CHECK:
+        if len(rest) < 2:
+            raise ValueError(f"{where}: Geom=Check needs a title and a charge/multiplicity line.")
+        title_lines, charge_lines, rest = rest[0], rest[1], rest[2:]
+        _read_charge(step, charge_lines[0], where)
+    elif step.geometry_source == gk.GEOM_COORDINATES:
+        if len(rest) < 2:
+            raise ValueError(f"{where}: the file ends before the molecule specification.")
+        title_lines, molecule, rest = rest[0], rest[1], rest[2:]
+        _read_charge(step, molecule[0], where)
+        try:
+            atoms = fi.parse_geometry("\n".join(molecule[1:]), check_distances=False)
+        except ValueError as exc:
+            raise ValueError(f"{where}: {exc}") from exc
+        geometry = "\n".join(fi.format_geometry(atoms))
+    if title_lines:
+        title = " ".join(line.strip() for line in title_lines)
+        clean = " ".join("".join(" " if ch in fi.TITLE_FORBIDDEN else ch for ch in title).split())
+        if clean != title:
+            notes.append(f"{where}: the title had characters Gaussian does not allow; they became blanks.")
+        step.title = "" if clean == fi._title_text(stem) else clean
+
+    if step.connectivity:
+        if rest and rest[0][0].split()[0].isdigit():
+            rest = rest[1:]
+            notes.append(f"{where}: the connectivity section is rebuilt from the distances when saving.")
+        else:
+            notes.append(f"{where}: Geom=Connectivity but no connectivity section follows.")
+    scan_lines = False
+    if reader.modredundant:
+        if rest:
+            step.modredundant = "\n".join(line.strip() for line in rest[0])
+            rest = rest[1:]
+            try:
+                scan_lines = any(p[2] == "S" for p in parse_modredundant(step.modredundant))
+            except ValueError:
+                scan_lines = False      # prepare reports the line
+        else:
+            notes.append(f"{where}: Opt=ModRedundant but no coordinate lines follow.")
+    step.job_type = reader.job_type(scan_lines)
+    step.additional_input = "\n\n".join("\n".join(section) for section in rest)
+    step.additional_keywords = " ".join(reader.extra)
+    return step, geometry
+
+
+def read_input_text(text: str, stem: str = fi.DEFAULT_STEM, output_dir: str = ""
+                    ) -> Tuple[GaussianJobSpec, List[str]]:
+    """A Gaussian input -> (job spec, notes). ValueError names the step."""
+    blocks = _split_blocks(text)
+    if not blocks:
+        raise ValueError("The input is empty.")
+    notes: List[str] = []
+    steps: List[GaussianStepSpec] = []
+    geometry = ""
+    for index, lines in enumerate(blocks, start=1):
+        step, step_geometry = _read_block(lines, index, stem, notes)
+        if step_geometry is not None:
+            if not geometry:
+                geometry = step_geometry
+            elif step_geometry != geometry:
+                raise ValueError(f"Step {index} has its own geometry, different from the first one; the builder "
+                                 "writes one geometry per job.")
+        steps.append(step)
+    if len(steps) == 3 and " Fukui " in f" {steps[0].title} ":
+        notes.append("This is a Fukui job written by the builder; it is shown as three linked steps. Choose the "
+                     "Fukui functions job type to rebuild it from its panels.")
+    return GaussianJobSpec(stem=stem, output_dir=output_dir, geometry=geometry, steps=steps), notes
+
+
+def read_input_file(path) -> Tuple[GaussianJobSpec, List[str]]:
+    path = Path(path)
+    if path.suffix.lower() not in GAUSSIAN_INPUT_SUFFIXES:
+        raise ValueError(f"'{path.name}' is not a Gaussian input ({', '.join(GAUSSIAN_INPUT_SUFFIXES)}).")
+    try:
+        text = path.read_bytes().decode("utf-8-sig", errors="replace")
+    except OSError as exc:
+        raise ValueError(f"'{path.name}' could not be opened: {exc.strerror or exc}") from exc
+    stem = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in path.stem) or fi.DEFAULT_STEM
+    try:
+        return read_input_text(text, stem, str(path.resolve().parent))
+    except ValueError as exc:
+        raise ValueError(f"{path.name}: {exc}") from exc
