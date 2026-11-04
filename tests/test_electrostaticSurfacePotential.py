@@ -523,6 +523,29 @@ class TestTabDisplay:
         water_ui.on_display_change(None)
         assert water_ui.viewer.esp_layer.colour_unit == "kcal/mol"
 
+    def test_the_viewer_default_solid_style_keeps_the_50_percent(self, water_ui):
+        from volumeData import SURFACE_SOLID
+        water_ui.viewer = StubViewer()
+        water_ui.viewer.esp_layer.set_surface_style(SURFACE_SOLID)   # what MolecularViewerUI pushes
+        water_ui.opacity_selection.value = "Transparent (50 %)"
+        asyncio.run(water_ui.show_surface(None))
+        layer = water_ui.viewer.esp_layer
+        assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 0.5)
+
+    def test_mesh_is_the_tab_own_choice(self, water_ui):
+        from volumeData import SURFACE_SOLID
+        assert esp.SURFACE_MESH_LABEL in esp.SURFACE_LOOKS and esp.SURFACE_LOOKS[0] == "Opaque"
+        water_ui.viewer = StubViewer()
+        layer = water_ui.viewer.esp_layer
+        layer.set_surface_style(SURFACE_SOLID)
+        water_ui.opacity_selection.value = esp.SURFACE_MESH_LABEL
+        asyncio.run(water_ui.show_surface(None))
+        assert layer.show_mesh and layer.styled_rgba(layer.get()) is None
+        assert layer.surface_style() == (SURFACE_SOLID, 0.5)        # the Display tab's style is unchanged
+        water_ui.opacity_selection.value = "Opaque"
+        water_ui.on_display_change(None)
+        assert not layer.show_mesh and np.allclose(layer.styled_rgba(layer.get())[:, 3], 1.0)
+
     def test_clear_removes_the_surface(self, water_ui):
         water_ui.viewer = StubViewer()
         asyncio.run(water_ui.show_surface(None))

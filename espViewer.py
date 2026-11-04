@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
-import glfw
 import numpy as np
 
 from espSurfaceLayer import (  # noqa: F401 - re-exported for existing importers
@@ -39,7 +38,7 @@ from espSurfaceLayer import (  # noqa: F401 - re-exported for existing importers
     symmetric_range,
     unit_factor,
 )
-from molecularViewer import MolecularViewer
+from selectionViewer import SelectionViewer
 from viewerSelection import submesh
 from volumeData import same_structure
 
@@ -62,16 +61,17 @@ class _SurfaceSource:
     marker_atoms: Optional[np.ndarray]
 
 
-class ESPSurfaceViewer(MolecularViewer):
-    """MolecularViewer that also draws one ESP-mapped surface and its colour bar."""
+class ESPSurfaceViewer(SelectionViewer):
+    """MolecularViewer that also draws one ESP-mapped surface and its colour bar.
+
+    ``selection_listener`` (from SelectionViewer) is set by the Fukui window.
+    """
 
     def __init__(self):
         # Before super(): the base constructor may already touch the selection hooks.
         self._source_lock = threading.Lock()
         self._surface_source: Optional[_SurfaceSource] = None
         self._hidden_by_selection = False
-        # Called on self.loop (the Toga loop) after every selection change; the Fukui window sets it.
-        self.selection_listener: Optional[Callable[[], None]] = None
         super().__init__()
         self.window_title = "ESP Surface Viewer"
         self.esp_layer = ESPSurfaceLayer()
@@ -203,24 +203,10 @@ class ESPSurfaceViewer(MolecularViewer):
     def colour_bar_text(self) -> Optional[Tuple[str, str, str]]:
         return self.esp_layer.colour_bar_text()
 
-    def _notify_selection_changed(self):
-        listener, loop = self.selection_listener, getattr(self, "loop", None)
-        if listener is None or loop is None or loop.is_closed():
-            return
-        loop.call_soon_threadsafe(listener)
-
     def get_scene_radius(self, frame_data=None) -> float:
         base = super().get_scene_radius(frame_data)
         s = self.get_surface()
         return max(base, s.radius + 0.3) if s is not None else base
-
-    def request_close(self):
-        """Ask GLFW to close the window (glfwSetWindowShouldClose is thread-safe)."""
-        if self.window is not None:
-            try:
-                glfw.set_window_should_close(self.window, True)
-            except Exception:
-                pass
 
     # --- drawing (render thread) ----------------------------------------
     def render_scene_extras(self):

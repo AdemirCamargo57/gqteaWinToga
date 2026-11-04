@@ -98,15 +98,21 @@ class TestCanvasSurfaceStyle:
         layer.draw_scene(None)
         assert ("glDepthMask", (el.GL_FALSE,)) in gl_calls      # translucent, as surface_opacity says
 
-    def test_solid_is_opaque_and_transparent_scales_the_tab_opacity(self):
+    def test_solid_keeps_the_tab_opacity_and_transparent_scales_it(self, gl_calls):
         layer = el.ESPSurfaceLayer()
         sphere_surface(layer)
         layer.set_display_options(opacity=0.5)
-        layer.set_surface_style(vd.SURFACE_SOLID)
-        solid = layer.styled_rgba(layer.get())
-        assert np.allclose(solid[:, 3], 1.0) and np.allclose(solid[:, :3], layer.get().rgba[:, :3])
-        assert layer.styled_rgba(layer.get()) is solid                # computed once, not every frame
+        layer.set_surface_style(vd.SURFACE_SOLID)       # the viewer's default canvas style
+        assert layer.styled_rgba(layer.get()) is layer.get().rgba     # the ESP tab's 50 %, no copy
+        assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 0.5)
+        layer.draw_scene(None)
+        assert ("glDepthMask", (el.GL_FALSE,)) in gl_calls            # drawn translucent
+        layer.set_display_options(opacity=1.0)
+        assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 1.0)
+        layer.set_display_options(opacity=0.5)
         layer.set_surface_style(vd.SURFACE_TRANSPARENT, 0.5)
+        transparent = layer.styled_rgba(layer.get())
+        assert layer.styled_rgba(layer.get()) is transparent          # computed once, not every frame
         assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 0.25)   # tab opacity 0.5 x (1 - 0.5)
         layer.set_display_options(opacity=1.0)
         assert np.allclose(layer.styled_rgba(layer.get())[:, 3], 0.5)
@@ -127,6 +133,25 @@ class TestCanvasSurfaceStyle:
         draws = [args for name, args in gl_calls if name == "glDrawArrays"]
         assert draws == [(el.GL_LINES, 0, len(vertices))]
         assert not [name for name, _ in gl_calls if name == "glDrawElements"]
+
+    @pytest.mark.parametrize("style", [None, vd.SURFACE_SOLID, vd.SURFACE_TRANSPARENT, vd.SURFACE_MESH])
+    def test_the_tab_mesh_draws_lines_whatever_the_canvas_style(self, style, gl_calls):
+        layer = el.ESPSurfaceLayer()
+        sphere_surface(layer)
+        layer.set_surface_style(style)
+        layer.set_display_options(mesh=True)
+        assert layer.surface_style() == (None if style is None else (style, 0.5))   # canvas style untouched
+        assert layer.styled_rgba(layer.get()) is None
+        layer.draw_scene(None)
+        assert [args[0] for name, args in gl_calls if name == "glDrawArrays"] == [el.GL_LINES]
+        layer.set_display_options(mesh=False)
+        assert (layer.styled_rgba(layer.get()) is None) == (style == vd.SURFACE_MESH)
+
+    def test_mesh_option_left_out_keeps_the_previous_choice(self):
+        layer = el.ESPSurfaceLayer()
+        layer.set_display_options(mesh=True)
+        layer.set_display_options(opacity=0.5)
+        assert layer.show_mesh
 
     def test_unknown_style(self):
         with pytest.raises(ValueError, match="surface style"):

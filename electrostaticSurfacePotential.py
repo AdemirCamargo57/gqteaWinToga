@@ -40,7 +40,7 @@ from espIntegrals import HARTREE_TO_KCAL_MOL
 from espSurfaceLayer import COLOUR_UNITS, UNIT_AU, SurfaceMarker, symmetric_range
 from gaussianUtilities import find_gaussian_utility
 from help import AtomicData, HelpGqteaWin
-from volumeData import same_structure  # shared with the Cube tab
+from volumeData import SURFACE_MESH, same_structure  # shared with the Cube tab
 
 DEFAULT_ISOVALUE = 0.0004
 MIN_SPACING, MAX_SPACING = 0.05, 0.6
@@ -435,6 +435,9 @@ class ESPSurfaceAnalyser:
 # Toga UI
 # ----------------------------------------------------------------------
 OPACITY_LABELS = {"Opaque": 1.0, "Transparent (50 %)": 0.5}
+# The tab's own Mesh look (the Display tab's name): lines whatever the canvas style.
+SURFACE_MESH_LABEL = SURFACE_MESH
+SURFACE_LOOKS = list(OPACITY_LABELS) + [SURFACE_MESH_LABEL]
 # Canvas background; the first entry is the default (GaussView's black).
 BACKGROUND_COLOURS = {
     "Black": (0.0, 0.0, 0.0),
@@ -498,7 +501,7 @@ class ESPTabController:
         self.surface_selection = toga.Selection(items=[], on_change=self.on_display_change, style=Pack(width=260))
         self.unit_selection = toga.Selection(items=list(COLOUR_UNITS), on_change=self.on_display_change,
                                              style=Pack(width=140))
-        self.opacity_selection = toga.Selection(items=list(OPACITY_LABELS), on_change=self.on_display_change,
+        self.opacity_selection = toga.Selection(items=SURFACE_LOOKS, on_change=self.on_display_change,
                                                 style=Pack(width=180))
         self.extrema_switch = toga.Switch("Show extrema markers", value=True, on_change=self.on_display_change)
         self.background_selection = toga.Selection(items=list(BACKGROUND_COLOURS),
@@ -696,7 +699,8 @@ class ESPTabController:
         layer = self.viewer.esp_layer
         layer.set_display_options(unit=self.unit_selection.value or UNIT_AU,
                                   opacity=OPACITY_LABELS.get(self.opacity_selection.value, 1.0),
-                                  show_extrema=bool(self.extrema_switch.value))
+                                  show_extrema=bool(self.extrema_switch.value),
+                                  mesh=self.opacity_selection.value == SURFACE_MESH_LABEL)
         layer.set_surface(surface.mesh.vertices * BOHR_RADIUS_ANGSTROM, surface.mesh.triangles,
                           surface.mesh.vertex_normals(), surface.esp, surface.isovalue,
                           self.surface_markers(surface), centre=self.viewer.get_system_center())

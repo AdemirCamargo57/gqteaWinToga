@@ -559,7 +559,7 @@ Inputs:
 - `trajectory.xyz` or `TRAJEC.xyz` trajectory file.
 - **Maximum connection distance (A)** — **leave blank to use the default `1.7`**.
 - **Cell lattices a b c (A)** — three positive box lengths for PBC; leave blank for no periodic boundaries. When used, the connection distance must not exceed half the smallest lattice.
-- **Solute atom indices** — 1-based labels; **range syntax is supported**, e.g. `1-5 14-16 18 20` is equivalent to `1 2 3 4 5 14 15 16 18 20`. Whitespace and commas both separate tokens. Leave blank to use all atoms.
+- **Solute atom indices** — 1-based labels; **range syntax is supported**, e.g. `1-5 14-16 18 20` is equivalent to `1 2 3 4 5 14 15 16 18 20`. Whitespace and commas both separate tokens. Leave blank to use all atoms. The atoms can also be selected in a 3D view: see [Selecting the Solute Atoms](#selecting-the-solute-atoms).
 - Output TXT filename, default `all_bond_analysis_combined.txt`.
 
 Step-by-step:
@@ -568,7 +568,7 @@ Step-by-step:
 2. Click **Browse** and select the trajectory XYZ file.
 3. Enter the maximum connection distance, or leave it blank for the `1.7` default.
 4. To apply periodic boundaries, enter the cell lattices `a b c`; otherwise leave blank.
-5. If the system contains a solute in solvent, enter the solute atom labels in **Solute atom indices** (ranges allowed, e.g. `1-5 14-16 18 20`).
+5. If the system contains a solute in solvent, enter the solute atom labels in **Solute atom indices** (ranges allowed, e.g. `1-5 14-16 18 20`), or click **Show 3D** and **Shift+click** the solute (then **Ctrl+click** to add or remove single atoms).
 6. Enter the output filename or keep `all_bond_analysis_combined.txt`.
 7. Click **Analyze**.
 8. Wait until the final summary appears in the text area.
@@ -594,6 +594,20 @@ row  atom_i  atom_j  element_i  element_j  first_bonded_distance  average  varia
 ```
 
 Because the data rows include the two element-symbol columns, load the numeric columns with `np.loadtxt(path, usecols=(0,1,2,5,6,7,8,9,10))`, or use `np.genfromtxt(path, dtype=None, names=True, comments='#')` to keep the element strings.
+
+##### Selecting the Solute Atoms
+
+The same for **All bond distance analysis**, **All bond angle analysis** and **All dihedral angle analysis**. Under **Solute atom indices** are the selection controls of the 3D Molecular Viewer's Display tab, and the field itself holds the selection:
+
+| Control | What it does |
+| --- | --- |
+| **Show 3D** | Opens a 3D view of the trajectory's **first frame** (available after **Browse**). **Ctrl+click** an atom to select or deselect it; **Shift+click** an atom to select its whole molecule (the bonds drawn in the 3D view, from the viewer's element-pair bond lengths, not the *Maximum bond length* field). Selected atoms get an orange rim. |
+| **Clear** | Empties the selection and the field (all atoms again). |
+| **Expand to molecules** | Adds every atom bonded, directly or not, to a selected atom. |
+| **Show only selected atoms/molecules** | Draws only the selection in the 3D view. A display setting; the analysis is not affected. |
+| Summary line | The selection's size and composition, e.g. `4 atoms: H2 O2`. |
+
+Every selection change writes the 1-based ranges into **Solute atom indices** (e.g. `1-4, 6`). Typing ranges there and pressing **Enter** selects them in the 3D view. The analysis reads only the field, as before: a typed value is used without pressing Enter or opening the 3D view, and a blank field means all atoms. Choosing another trajectory keeps the typed indices; if the new file does not have them, the field is left as typed and the line under the summary says why. Only one 3D window can be open at a time in the program: while the 3D Molecular Viewer (or another tool's 3D view) is open, **Show 3D** reports an error. Closing the tool closes its 3D view.
 
 #### Bond Angle Analysis
 
@@ -635,7 +649,7 @@ Inputs:
 - `trajectory.xyz` or `TRAJEC.xyz` trajectory file.
 - **Maximum connection distance (A)** — **leave blank to use the default `1.7`**.
 - **Cell lattices a b c (A)** — three positive box lengths for PBC (orthorhombic minimum-image); leave blank for no periodic boundaries.
-- **Solute atom indices** — 1-based labels; **range syntax is supported**, e.g. `1-5 14-16 18 20`. Leave blank to use all atoms.
+- **Solute atom indices** — 1-based labels; **range syntax is supported**, e.g. `1-5 14-16 18 20`. Leave blank to use all atoms. The atoms can also be selected in a 3D view: see [Selecting the Solute Atoms](#selecting-the-solute-atoms).
 - Output TXT filename, default `all_angle_analysis_combined.txt`.
 
 Step-by-step:
@@ -644,7 +658,7 @@ Step-by-step:
 2. Click **Browse** and select the trajectory XYZ file.
 3. Enter the maximum connection distance, or leave it blank for the `1.7` default.
 4. To apply periodic boundaries, enter the cell lattices `a b c`; otherwise leave blank.
-5. Enter solute atom labels if solvent atoms must be excluded (ranges allowed).
+5. Enter solute atom labels if solvent atoms must be excluded (ranges allowed), or select them with **Show 3D** (Ctrl+click an atom, Shift+click a molecule).
 6. Enter the output filename or keep `all_angle_analysis_combined.txt`.
 7. Click **Analyze**.
 8. Wait until the text area reports that the analysis is completed.
@@ -708,7 +722,7 @@ Inputs:
 - `trajectory.xyz` or `TRAJEC.xyz` trajectory file.
 - **Maximum connection distance (A)** — **leave blank to use the default `1.7`**.
 - **Cell lattices a b c (A)** — three positive box lengths for PBC (orthorhombic minimum-image); leave blank for no periodic boundaries.
-- **Solute atom indices** — 1-based labels; **range syntax is supported**, e.g. `1-5 14-16 18 20`. Leave blank to use all atoms.
+- **Solute atom indices** — 1-based labels; **range syntax is supported**, e.g. `1-5 14-16 18 20`. Leave blank to use all atoms. The atoms can also be selected in a 3D view: see [Selecting the Solute Atoms](#selecting-the-solute-atoms).
 - Output TXT filename, default `all_dihedral_analysis_combined.txt`.
 
 Step-by-step:
@@ -717,7 +731,7 @@ Step-by-step:
 2. Click **Browse** and select the trajectory XYZ file.
 3. Enter the maximum connection distance, or leave it blank for the `1.7` default.
 4. To apply periodic boundaries, enter the cell lattices `a b c`; otherwise leave blank.
-5. Enter solute atom labels if solvent atoms must be excluded (ranges allowed).
+5. Enter solute atom labels if solvent atoms must be excluded (ranges allowed), or select them with **Show 3D** (Ctrl+click an atom, Shift+click a molecule).
 6. Enter the output filename or keep `all_dihedral_analysis_combined.txt`.
 7. Click **Analyze**.
 8. Wait until the text area reports that the analysis is completed.
@@ -2546,7 +2560,7 @@ with the molecule, so the other tabs (Display, Measure, Cube, ...) work on it to
 |---|---|
 | Surface shown | Which isovalue's surface the 3D window displays (filled after a run). |
 | Colour-bar unit | `a.u.` or `kcal/mol` for the colour-bar labels. |
-| Surface | `Opaque` or `Transparent (50 %)`; **Show extrema markers** on/off. |
+| Surface | `Opaque`, `Transparent (50 %)` or `Mesh` (the surface as coloured contour lines, as the Display tab's *Mesh* style draws it, without changing the Display tab); **Show extrema markers** on/off. The Display tab's *Solid* style keeps this choice; its *Transparent* style scales it by (1 − transparency). |
 | Canvas background | `Black` (default), `White`, `Dark grey` or `Light grey`, for the viewer's 3D window. On a light background the colour-bar labels and caption are drawn in black so they stay readable. |
 | Export image... | Saves the 3D canvas as an image file (see below). |
 | Text box | The help text before a run; the results summary after it. |

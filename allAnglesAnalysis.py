@@ -12,6 +12,7 @@ from toga.style import Pack
 # Shared, unit-tested range parser (e.g. "1-5 14-16 18 20"); reused across the
 # all-bond / all-angle / all-dihedral tools so the syntax stays identical.
 from allBondAnalysis import parse_solute_index_ranges
+from trajectorySelection import TrajectorySelectionUI
 
 
 @dataclass
@@ -367,7 +368,7 @@ class AllAnglesAnalysis:
         return output_file
 
 
-class allAnglesAnalysisUI:
+class allAnglesAnalysisUI(TrajectorySelectionUI):
     """Toga frontend for all connected bond-angle statistics."""
 
     def __init__(self, *args) -> None:
@@ -381,7 +382,8 @@ class allAnglesAnalysisUI:
     def layout_main_window(self, widget) -> None:
         self.main_window = toga.Window(
             title="All Bond Angle Analysis from Molecular Dynamics Simulations",
-            size=(740, 580),
+            size=(740, 680),
+            on_close=self.on_window_close,
         )
 
         heading_style = Pack(font_size=18, font_weight="bold", margin=(0, 0, 10, 0))
@@ -440,6 +442,8 @@ class allAnglesAnalysisUI:
         solute_row.add(solute_label)
         solute_row.add(self.textInput_solute_indices)
         main_box.add(solute_row)
+        for selection_row in self.build_selection_rows(self.textInput_solute_indices, label_style.width):
+            main_box.add(selection_row)
 
         output_row = toga.Box(style=row_style)
         output_label = toga.Label("Output txt filename:", style=label_style)
@@ -461,7 +465,9 @@ class allAnglesAnalysisUI:
             "variance, standard deviation (degrees), and occurrence (fraction of frames the "
             "triplet is connected) for each. Enter cell lattices a b c to apply the minimum-"
             "image convention (PBC); leave blank for an isolated system. Solute atom indices "
-            "accept ranges (e.g. 1-5 14-16 18 20) to exclude solvent atoms."
+            "accept ranges (e.g. 1-5 14-16 18 20) to exclude solvent atoms, or select them: "
+            "after Browse, Show 3D opens the first frame, where Ctrl+click selects an atom and "
+            "Shift+click its whole molecule; the selection fills the solute field."
         )
         main_box.add(self.multi_line_text)
 
@@ -494,10 +500,11 @@ class allAnglesAnalysisUI:
 
         try:
             analyzer = AllAnglesAnalysis(self.trajec)
-            analyzer.read_first_frame()
+            elements, coordinates = analyzer.read_first_frame()
         except Exception as exc:
             await self.warning_function("Error", f"Failed to read trajectory file: {exc}")
             return
+        self.load_selection_structure(elements, coordinates)
 
         self.multi_line_text.value = (
             f"Selected file: {self.trajec}\n"
@@ -651,4 +658,5 @@ class allAnglesAnalysisUI:
         )
 
     def closeTopLevel(self, widget) -> None:
+        self.close_selection_viewer()
         self.main_window.close()

@@ -132,6 +132,8 @@ class ESPSurfaceLayer:
         self.colour_unit = UNIT_AU
         self.surface_opacity = 1.0
         self.show_extrema = True
+        # The ESP tab's own Mesh choice: contour lines whatever the canvas style.
+        self.show_mesh = False
         # The 3D viewer's canvas surface style; None (the Fukui tool's own
         # window) draws with surface_opacity alone, as before.
         self._style: Optional[Tuple[str, float]] = None
@@ -174,12 +176,15 @@ class ESPSurfaceLayer:
         s = self.get()
         return s.radius if s is not None else 0.0
 
-    def set_display_options(self, unit: str = None, opacity: float = None, show_extrema: bool = None):
+    def set_display_options(self, unit: str = None, opacity: float = None, show_extrema: bool = None,
+                            mesh: bool = None):
         if unit is not None:
             unit_factor(unit)  # validates
             self.colour_unit = unit
         if show_extrema is not None:
             self.show_extrema = bool(show_extrema)
+        if mesh is not None:
+            self.show_mesh = bool(mesh)
         if opacity is not None:
             self.surface_opacity = float(min(1.0, max(MIN_OPACITY, opacity)))
             with self._lock:
@@ -197,13 +202,19 @@ class ESPSurfaceLayer:
             return self._style
 
     def styled_rgba(self, s: SurfaceDrawData) -> Optional[np.ndarray]:
-        """The surface colours under the canvas style; None for the Mesh style (drawn as lines)."""
+        """The surface colours under the canvas style; None for a mesh (drawn as lines).
+
+        Solid keeps the ESP tab's own opacity (its alpha is already in
+        ``s.rgba``); Transparent scales it by (1 - transparency).
+        """
+        if self.show_mesh:
+            return None
         style = self.surface_style()
         if style is None:
             return s.rgba
         name, transparency = style
         if name == SURFACE_SOLID:
-            alpha = 1.0
+            return s.rgba
         elif name == SURFACE_TRANSPARENT:
             alpha = max(MIN_OPACITY, self.surface_opacity * (1.0 - transparency))
         else:

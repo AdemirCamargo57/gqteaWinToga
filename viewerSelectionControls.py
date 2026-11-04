@@ -10,16 +10,20 @@ with its own row helpers and supplies two methods:
 
 plus the project's usual ``async _show_error(title, message)``. The selection
 itself lives in the viewer (``viewerSelection`` has the pure helpers); the
-3D Molecular Viewer's Display tab and the Fukui Function Analysis window use
-these controls, so both behave and read the same.
+3D Molecular Viewer's Display tab, the Fukui Function Analysis window and the
+All bond / angle / dihedral analysis windows (``trajectorySelection``, which
+passes its Solute atom indices field as ``selection_input``) use these
+controls, so all of them behave and read the same.
 """
 
 import toga
 from toga.style import Pack
 
-from cubeTab import _assign  # write-only-on-change: every widget write re-lays out the window
 from indexRanges import format_index_ranges
 from viewerSelection import selection_summary
+# Write-only-on-change (every widget write re-lays out the window); the same
+# function as cubeTab._assign, without importing cubeTab's numba/OpenGL chain.
+from widgetWrites import assign_if_changed as _assign
 
 SELECTION_HINT = (
     "In the 3D window, Ctrl+click selects or deselects an atom and Shift+click "
@@ -33,14 +37,23 @@ NOTHING_LOADED_MESSAGE = "Nothing is loaded yet: there are no atoms to select."
 class SelectionControls:
     """Selected-atoms field, summary, Clear / Expand to molecules and Show only selected."""
 
-    def build_selection_widgets(self):
-        """Create the widgets (not laid out). The switch reads the viewer's flag, if any."""
+    def build_selection_widgets(self, selection_input=None):
+        """Create the widgets (not laid out). The switch reads the viewer's flag, if any.
+
+        ``selection_input``: an existing TextInput to use as the selection
+        field (the All-* analysis windows' Solute atom indices); by default a
+        new one is created.
+        """
         viewer = self.selection_viewer()
-        self.selection_input = toga.TextInput(
-            placeholder="e.g. 1-3, 295-297",
-            style=Pack(flex=1, margin=(0, 8, 0, 0)),
-            on_confirm=self.apply_selection_field,
-        )
+        if selection_input is None:
+            selection_input = toga.TextInput(
+                placeholder="e.g. 1-3, 295-297",
+                style=Pack(flex=1, margin=(0, 8, 0, 0)),
+                on_confirm=self.apply_selection_field,
+            )
+        else:
+            selection_input.on_confirm = self.apply_selection_field
+        self.selection_input = selection_input
         self.selection_summary_label = toga.Label("No atoms selected.", style=Pack(margin=(0, 0, 6, 0)))
         self.selection_clear_button = toga.Button(
             "Clear", on_press=self.clear_atom_selection, style=Pack(width=90, margin=(0, 8, 0, 0)))
