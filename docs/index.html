@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>gqteaWinToga</title>
-<meta name="description" content="gqteaWinToga is a free Windows toolkit for preparing, visualizing and analyzing molecular dynamics and electronic-structure simulations (CPMD, Quantum ESPRESSO cp.x, ORCA, Gaussian, surface hopping), including electrostatic potentials mapped on molecular surfaces and Fukui functions for chemical reactivity.">
+<meta name="description" content="gqteaWinToga is a free Windows toolkit for preparing, visualizing and analyzing molecular dynamics and electronic-structure simulations (CPMD, Quantum ESPRESSO cp.x, ORCA, Gaussian 16, surface hopping): a GaussView-style Gaussian 16 input builder, molecular orbitals, electrostatic potentials, QTAIM, natural transition orbitals, excited-state analysis and Fukui functions.">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,6 +21,8 @@
     </a>
     <nav aria-label="Main">
       <a href="#tools">Tools</a>
+      <a href="#gaussian">What's new</a>
+      <a href="#viewer">3D viewer</a>
       <a href="#install">Install</a>
       <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md">Manual</a>
       <a href="https://github.com/AdemirCamargo57/gqteaWinToga">Source code</a>
@@ -35,7 +37,7 @@
       <div class="hero-text">
         <h1>gqteaWinToga</h1>
         <p class="lede">A Windows toolkit for preparing, visualizing and analyzing molecular simulations.</p>
-        <p>Build inputs for CPMD, Quantum ESPRESSO <code>cp.x</code>, ORCA and surface hopping runs, then turn the trajectories they produce into bond distributions, radial distribution functions, residence times, power spectra and rate constants. From Gaussian wavefunctions, map the electrostatic potential onto molecular surfaces and find the reactive sites of a molecule with Fukui functions, all from one window.</p>
+        <p>Build inputs for Gaussian 16, CPMD, Quantum ESPRESSO <code>cp.x</code>, ORCA and surface hopping runs, then turn the trajectories they produce into bond distributions, radial distribution functions, residence times, power spectra and rate constants. From Gaussian wavefunctions, show molecular orbitals, map the electrostatic potential onto molecular surfaces, find bond and ring critical points with QTAIM, take excited states apart with natural transition orbitals and hole&ndash;electron analysis, and find the reactive sites of a molecule with Fukui functions, all from one window.</p>
 
         <div class="download">
           <a id="download-btn" class="btn-download" href="https://github.com/AdemirCamargo57/gqteaWinToga/releases/latest">
@@ -77,6 +79,7 @@
             <li>Dihedral angle and all dihedral angles</li>
             <li>Hydrogen bond analysis</li>
             <li>Comparison of geometric parameters between two runs, for example isolated versus solvated, with MAE and RMSD</li>
+            <li>For the all-at-once tools: pick the atoms or whole molecules to analyze by clicking them in a 3D view</li>
           </ul>
         </div>
 
@@ -89,8 +92,7 @@
             <li>Quantum ESPRESSO <code>cp.x</code> input builder</li>
             <li>ORCA input builder</li>
             <li>gqteaMD input builder</li>
-            <li>Gaussian 16 input builder in the style of GaussView: job types, methods, solvation, linked steps and the Fukui N, N+1 and N&minus;1 calculations in one linked job, plus a <code>formchk</code> script</li>
-            <li>Vanderbilt <code>runatom.x</code> input builder</li>
+            <li>Gaussian 16 input builder in the style of GaussView: every common job type, ground and excited states, solvation, linked steps, reopening of <code>.gjf</code> files and the Fukui N, N+1 and N&minus;1 job, plus a <code>formchk</code> script <a href="#gaussian">(new in 1.7.0)</a></li>
           </ul>
         </div>
 
@@ -98,7 +100,7 @@
           <p class="panel-lead">Analyze solvation structure and dynamics, and build the boxes to simulate them in.</p>
           <ul class="tool-list">
             <li>Radial distribution function</li>
-            <li>Mean residence time, with the legacy workflow still available</li>
+            <li>Mean residence time, by the statistical (survival function) and the classical method</li>
             <li>Velocity autocorrelation function and power spectrum</li>
             <li>Single-solute solvent box</li>
             <li>Mixture of two solvents</li>
@@ -117,11 +119,10 @@
         <div role="tabpanel" id="panel-tools" aria-labelledby="tab-tools" class="tab-panel" hidden>
           <p class="panel-lead">Visualization, plotting and the many small conversions a simulation project needs.</p>
           <ul class="tool-list">
-            <li>3D molecular viewer with trajectory playback and measurements</li>
-            <li>Electrostatic surface potential (ESP) from Gaussian <code>.fchk</code> files: colour-mapped surfaces and their maxima and minima, exported as images <a href="#esp">(more)</a></li>
-            <li>Analysis of Fukui functions: f<sup>+</sup>, f<sup>&minus;</sup>, f<sup>0</sup> and the dual descriptor in 3D, with global and atom-condensed reactivity indices <a href="#fukui">(new)</a></li>
-            <li>Molecular design: sketch a molecule, pre-optimize it and send it to the viewer</li>
-            <li>Plots: CPMD and gqteaMD energy files, multi-column data, grouped bar charts of tables with text labels such as atom symbols (new), and saved figures reopened from their JSON files</li>
+            <li>3D molecular viewer: trajectory playback, measurements, atom and molecule selection, a molecular design canvas, and tabs for cube files, molecular orbitals, ESP, QTAIM, natural transition orbitals and excitation analysis <a href="#viewer">(more)</a></li>
+            <li>Analysis of Fukui functions: f<sup>+</sup>, f<sup>&minus;</sup>, f<sup>0</sup> and the dual descriptor in 3D, with global and atom-condensed reactivity indices <a href="#fukui">(more)</a></li>
+            <li>Vanderbilt USPP generator: runs the bundled <code>runatom</code> to make and test ultrasoft pseudopotentials, with a formatted file for CPMD and defaults for any element picked from a periodic table</li>
+            <li>Plots: CPMD and gqteaMD energy files, multi-column data, grouped bar charts of tables with text labels such as atom symbols, and saved figures (UV-Vis spectra, MO diagrams, QTAIM maps and more) reopened from their JSON files</li>
             <li>Molecular axis alignment</li>
             <li>Frame selection, including by interatomic distance range</li>
             <li>Surface hopping geometry analyzer: separate frames by electronic state</li>
@@ -134,18 +135,112 @@
     </div>
   </section>
 
+  <section id="gaussian" class="section section-alt">
+    <div class="wrap feature-grid">
+      <div class="feature-text">
+        <p class="feature-tag">New in version 1.7.0</p>
+        <h2>Gaussian 16 inputs, set up the GaussView way</h2>
+        <p>The <b>Gaussian 16 Input Builder</b> on the Inputs tab is modelled on GaussView 6.1&rsquo;s Gaussian Calculation Setup: choose the job, the method, the basis set and the solvent from panels, and watch the route line being written as you go. Load the geometry from an XYZ, Gaussian, MOL/SDF, MOL2, PDB or <code>.fchk</code> file.</p>
+        <ul class="feature-list">
+          <li><b>Every common job.</b> Energy, optimization to a minimum or a transition state, frequencies (with Raman, VCD or anharmonic options), Opt+Freq, IRC, relaxed scans, stability and NMR.</li>
+          <li><b>Ground and excited states.</b> Hartree&ndash;Fock, DFT with dispersion corrections, semi-empirical, MP2, MP4, coupled-cluster and compound methods; TD-SCF, TDA, CIS and ZINDO excited states, with the option that prints the CI coefficients the NTO and Excitation tabs read.</li>
+          <li><b>Linked steps.</b> Chain several steps in one input with <code>--Link1--</code>, for example an optimization followed by a TD-SCF single point in solvent. Each later step reads the geometry and orbitals from the checkpoint, and the builder checks that the checkpoint it reads is really written earlier.</li>
+          <li><b>Open input.</b> Read an existing <code>.gjf</code> back into the panels, edit it and save it again.</li>
+          <li><b>Checked before writing.</b> All problems are listed at once, with the step they belong to. Charge and spin multiplicity are never guessed, and combinations Gaussian 16 refuses, such as an IRC without force constants, are caught here instead of in the queue. Every job type was run through Gaussian 16 to a normal termination.</li>
+          <li><b>Ready for Linux.</b> Relative file names and Linux line endings for Gaussian 16 under WSL or on a cluster, plus a <code>formchk</code> script that turns the checkpoints into the <code>.fchk</code> files this program analyzes.</li>
+          <li><b>Fukui functions job type.</b> The former Fukui input builder is now one of the job types, and writes exactly the same files as before (<a href="#fukui">more</a>).</li>
+        </ul>
+        <p><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#gaussian-16-input-builder">How to use it</a> &middot; <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#gaussian-16-input-builder-messages">What its messages mean</a></p>
+      </div>
+
+      <figure class="feature-figure input-sample">
+<pre><code>%Chk=formaldehyde.chk
+%Mem=2GB
+%NProcShared=4
+#P B3LYP/6-31+G(d) Opt Freq
+
+Formaldehyde
+
+0 1
+C       0.00000000      0.00000000      0.52800000
+O       0.00000000      0.00000000     -0.67700000
+H       0.00000000      0.94000000      1.11000000
+H       0.00000000     -0.94000000      1.11000000
+
+--Link1--
+%Chk=formaldehyde.chk
+%Mem=2GB
+%NProcShared=4
+#P B3LYP/6-31+G(d) TD=(NStates=6) IOp(9/40=4) Geom=AllCheck Guess=Read
+SCRF=(IEFPCM,Solvent=Water)
+</code></pre>
+        <figcaption>A two-step input written by the builder: formaldehyde is optimized and its frequencies computed in the gas phase, then six excited states are computed in water at the optimized geometry, read from the checkpoint. The builder also notes that the <code>.fchk</code> will hold the ground-state density unless <code>Density=Current</code> is added.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="viewer" class="section">
+    <div class="wrap">
+      <h2>The 3D Molecular Viewer</h2>
+      <p class="section-intro">One window for structures, trajectories and wavefunctions. Play an <code>.xyz</code> trajectory, measure it, draw a new molecule, or open a Gaussian <code>.fchk</code> and look at what its electrons do. The analysis tabs need no external program at run time; each was checked against Gaussian&rsquo;s <code>cubegen</code> or Multiwfn. The viewer opens in about a second, and each analysis tab is built the first time you open it.</p>
+
+      <div class="card-grid">
+        <article class="card">
+          <h3>Display, Box, Dynamics, Measure</h3>
+          <p>Trajectory playback, bonds detected per element pair, lengths, angles and dihedrals by clicking atoms. Ctrl+click selects an atom and Shift+click its whole molecule; show the selection alone and export it for one frame or the whole trajectory. Any background colour, and solid, transparent or mesh drawing for every surface on the canvas.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#3d-molecular-viewer">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>Design</h3>
+          <p>Draw a molecule with the mouse on a 3D canvas, import or save XYZ, Gaussian, MOL/SDF, MOL2 and PDB files, set or freeze bond lengths, angles and dihedrals, add hydrogens, pre-optimize, and send it to the viewer.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#molecular-design">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>Cube</h3>
+          <p>Gaussian cube files of any kind as &plusmn; isosurfaces and a slice plane; add or subtract two grids, colour one cube&rsquo;s surface by another (an ESP on its density), and save cubes and images.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#cube-tab">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>Orbitals</h3>
+          <p>Molecular orbitals of restricted, unrestricted and restricted open-shell wavefunctions, as GaussView shows them: an MO table with occupancies and energies, HOMO/LUMO and Next/Previous, phase isosurfaces or |&phi;|&sup2;, an energy-level diagram, and cube export of a range such as <code>HOMO-2:LUMO+2</code>.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#molecular-orbitals-orbitals-tab">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>ESP</h3>
+          <p>The electrostatic potential mapped on electron-density surfaces, with its maxima and minima found as Multiwfn finds them (<a href="#esp">more below</a>).</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#electrostatic-surface-potential-esp">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>QTAIM</h3>
+          <p>Bader&rsquo;s topology of the electron density: nuclear, bond, ring and cage critical points with &rho;, &nabla;&sup2;&rho;, ellipticity and the energy densities G, V and H; bond and ring paths; the Poincar&eacute;&ndash;Hopf check; and a 2D map of contours, gradient lines and bond paths in any plane.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#qtaim-topology-analysis">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>NTO</h3>
+          <p>Natural transition orbitals of CIS, TDA and TD excited states from the <code>.fchk</code> and the output of the same job: pair weights, hole and particle isosurfaces, cube files, an NTO <code>.fchk</code> for GaussView, and the UV-Vis spectrum of all the states.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#natural-transition-orbitals-nto">Manual</a></p>
+        </article>
+        <article class="card">
+          <h3>Excitation</h3>
+          <p>Hole&ndash;electron analysis of an excited state: the distance and overlap indices, MO, atom and fragment contributions, interfragment charge transfer, the &Delta;r and &Lambda; indices, and a classification (local, charge transfer, Rydberg-like) that shows its evidence.</p>
+          <p class="card-link"><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#electron-excitation-analysis-excitation-tab">Manual</a></p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <section id="esp" class="section section-alt">
     <div class="wrap feature-grid">
       <div class="feature-text">
-        <p class="feature-tag">Since version 0.7.5</p>
+        <p class="feature-tag">ESP tab of the 3D viewer</p>
         <h2>Electrostatic potential on molecular surfaces</h2>
-        <p>Open a Gaussian formatted checkpoint (<code>.fchk</code> or <code>.fch</code>, made with <code>formchk</code>). The tool builds one or more electron-density isosurfaces, computes the electrostatic potential exactly at every surface point, and finds its maxima and minima the way Multiwfn does. The result is drawn the way GaussView draws a mapped ESP: red where the potential is negative, blue where it is positive.</p>
+        <p>Open a Gaussian formatted checkpoint (<code>.fchk</code> or <code>.fch</code>, made with <code>formchk</code>) in the viewer&rsquo;s ESP tab. It builds one or more electron-density isosurfaces, computes the electrostatic potential exactly at every surface point, and finds its maxima and minima the way Multiwfn does. The result is drawn the way GaussView draws a mapped ESP: red where the potential is negative, blue where it is positive.</p>
         <ul class="feature-list">
           <li><b>Two quantities, kept apart.</b> The surface is set by the electron density (default isovalue 0.0004 a.u.; several isovalues per run); the potential is what is mapped onto it, in a.u. or kcal/mol.</li>
           <li><b>Exact potential.</b> Analytic integrals over the Gaussian basis set (s to g functions, closed or open shell), matching Gaussian&rsquo;s own <code>cubegen</code> to better than 10<sup>&minus;6</sup> a.u. If <code>cubegen</code> is installed, it can be used instead.</li>
           <li><b>Surface extrema saved.</b> Every global and local maximum and minimum, with its value in a.u. and kcal/mol, its position in &Aring;, the nearest atom and the isovalue of its surface, goes to <code>&lt;name&gt;_ESP_extrema.txt</code>.</li>
           <li><b>Fast.</b> A small molecule takes a second or two; the optional <code>numba</code> package makes larger ones about five times faster.</li>
-          <li><b>Ready for a paper.</b> Choose a black, white or grey background and export the 3D view as a PNG image.</li>
+          <li><b>Ready for a paper.</b> Choose a black, white or grey background and export the 3D view as a PNG image, or save the potential and the density as cube files, which the Cube tab reopens as the same coloured surface.</li>
         </ul>
         <p><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#electrostatic-surface-potential-esp">How to use it</a> &middot; <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#formulas-and-methods-electrostatic-surface-potential-tool">The equations and methods</a></p>
       </div>
@@ -160,17 +255,17 @@
   <section id="fukui" class="section">
     <div class="wrap feature-grid">
       <div class="feature-text">
-        <p class="feature-tag">New in version 0.8.0</p>
+        <p class="feature-tag">Tools tab, since version 0.8.0</p>
         <h2>Fukui functions: where a molecule reacts</h2>
         <p>Give the tool three Gaussian <code>.fchk</code> files of one molecule at one geometry: the neutral molecule (N electrons), its anion (N+1) and its cation (N&minus;1). It computes the Fukui functions from the three electron densities and shows where an added electron goes and where a removed one comes from. In other words, it shows which atoms favour nucleophilic, electrophilic or radical attack.</p>
         <ul class="feature-list">
           <li><b>All the conceptual-DFT descriptors.</b> f<sup>+</sup>, f<sup>&minus;</sup>, f<sup>0</sup> and the dual descriptor on a 3D grid, saved as cube files; the global indices (ionization potential, electron affinity, electronegativity, hardness, softness, electrophilicity and nucleophilicity); and the same functions condensed to each atom.</li>
           <li><b>No external program needed.</b> The atom-condensed indices come from built-in Hirshfeld charges for elements H to Ar. They agree with Multiwfn to within 3&times;10<sup>&minus;4</sup>, and the 3D functions agree with Multiwfn&rsquo;s cube files to within 10<sup>&minus;5</sup> a.u.</li>
-          <li><b>Seen in 3D.</b> Show each function as positive and negative isosurfaces, or mapped in colour on the molecule&rsquo;s density surface with its maxima and minima. Atoms can be drawn as lines, balls and sticks, or space-filling spheres, with or without their numbers.</li>
+          <li><b>Seen in 3D.</b> Show each function as positive and negative isosurfaces, or mapped in colour on the molecule&rsquo;s density surface with its maxima and minima. Atoms can be drawn as lines, balls and sticks, or space-filling spheres, with or without their numbers. In a solvated cluster, select the solute and show only its atoms and its part of the surfaces.</li>
           <li><b>Checked before computing.</b> The tool refuses files with different atoms, geometries, basis sets or methods, and it says why. Phenol takes about eight seconds; the optional <code>numba</code> package makes the density grid about four times faster.</li>
         </ul>
         <h3 class="feature-subhead">Prepare the three calculations</h3>
-        <p>The <b>Gaussian 16 Input Builder</b> (Inputs tab, job type Fukui functions) writes one Gaussian 16 input with three linked jobs: it optimizes the neutral molecule, then runs the anion and the cation as single points at exactly that geometry. It also writes a <code>formchk</code> script that converts the checkpoint files into <code>.fchk</code> files. You must enter the spin multiplicity of every state, because the builder never guesses one. When you then pick the neutral molecule&rsquo;s file in the analysis tool, the anion and cation files are filled in for you. <span class="feature-note">The input builder is in the source code now and will be in the next installer release.</span></p>
+        <p>The <b>Gaussian 16 Input Builder</b> (Inputs tab, job type Fukui functions) writes one Gaussian 16 input with three linked jobs: it optimizes the neutral molecule, then runs the anion and the cation as single points at exactly that geometry. It also writes a <code>formchk</code> script that converts the checkpoint files into <code>.fchk</code> files. You must enter the spin multiplicity of every state, because the builder never guesses one. When you then pick the neutral molecule&rsquo;s file in the analysis tool, the anion and cation files are filled in for you.</p>
         <p><a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#analysis-of-fukui-functions">How to use it</a> &middot; <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#example-8-read-a-fukui-function-figure-phenol-f">How to read the figure</a> &middot; <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md#formulas-and-methods-fukui-function-tool">The equations and methods</a></p>
       </div>
 
@@ -188,7 +283,7 @@
         <ol class="steps">
           <li>
             <h3>Download the installer</h3>
-            <p>Use the download button above. You get a zip file named like <code>gqteaWinToga-v0.8.0-INSTALLER.zip</code>.</p>
+            <p>Use the download button above. You get a zip file named like <code>gqteaWinToga-v1.7.0-INSTALLER.zip</code>.</p>
           </li>
           <li>
             <h3>Extract it</h3>
@@ -210,7 +305,8 @@
         <ul>
           <li>Windows 10 or 11, 64-bit</li>
           <li>The graphics driver from your card's maker (Intel, NVIDIA or AMD). The 3D viewer needs OpenGL, which Windows' basic display driver doesn't provide.</li>
-          <li>The simulation programs themselves (CPMD, Quantum ESPRESSO, ORCA, Gaussian and so on) are installed separately. gqteaWinToga prepares and analyzes their files; the ESP and Fukui function tools need only Gaussian <code>.fchk</code> files, not Gaussian itself.</li>
+          <li>The simulation programs themselves (CPMD, Quantum ESPRESSO, ORCA, Gaussian and so on) are installed separately. gqteaWinToga prepares and analyzes their files; the Orbitals, ESP, QTAIM, NTO, Excitation and Fukui function tools need only Gaussian&rsquo;s <code>.fchk</code> files (and, for excited states, the job&rsquo;s output), not Gaussian itself.</li>
+          <li>The USPP generator&rsquo;s <code>runatom</code> program is included; nothing else needs to be installed for it.</li>
         </ul>
 
         <details class="source-install">
@@ -233,7 +329,7 @@ python gqteaWinToga.py</code></pre>
     <div class="wrap docs-grid">
       <div>
         <h2>Learn to use it</h2>
-        <p>The <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md">user manual</a> describes every tool, its input files and outputs, with worked examples such as finding a bond-length free-energy minimum, preparing a CPMD collision restart, grouping surface hopping frames by electronic state, locating the electrostatic potential minima of a molecule and reading a Fukui function figure of phenol.</p>
+        <p>The <a href="https://github.com/AdemirCamargo57/gqteaWinToga/blob/main/USER_MANUAL.md">user manual</a> describes every tool, its input files and outputs, with worked examples such as finding a bond-length free-energy minimum, preparing a CPMD collision restart, grouping surface hopping frames by electronic state, locating the electrostatic potential minima of a molecule, reading a Fukui function figure of phenol, a QTAIM analysis of the hydrogen bond in the water dimer, the natural transition orbitals of uracil, classifying the excited states of a push&ndash;pull molecule and the frontier orbitals of benzene. Each analysis has a section on the theory and the formulas behind it.</p>
         <p>Found a bug or have a request? <a href="https://github.com/AdemirCamargo57/gqteaWinToga/issues">Open an issue on GitHub</a>.</p>
       </div>
       <div>
