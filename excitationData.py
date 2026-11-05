@@ -299,11 +299,22 @@ def check_against_wavefunction(data: ExcitationFile, wfn) -> List[str]:
     return notes
 
 
+EXCITED_SUFFIX = "_excited"     # the Gaussian 16 Input Builder's <stem>_excited.chk (gaussianKeywords.EXCITED_CHK_SUFFIX)
+
+
 def sibling_excitation_file(fchk_path) -> Optional[Path]:
-    """The Gaussian output beside an .fchk: <stem>.log, else <stem>.out (Multiwfn's ENTER default)."""
+    """The Gaussian output beside an .fchk: <stem>.log, else <stem>.out (Multiwfn's ENTER default).
+
+    For <job>_excited.fchk (the excited-state checkpoint of the builder's Geometry optimization + excited
+    states job) the output of the whole linked job, <job>.log or <job>.out, is tried next.
+    """
     fchk_path = Path(fchk_path)
-    for suffix in (".log", ".out"):
-        candidate = fchk_path.with_suffix(suffix)
-        if candidate.is_file():
-            return candidate
+    stems = [fchk_path.stem]
+    if fchk_path.stem.endswith(EXCITED_SUFFIX) and len(fchk_path.stem) > len(EXCITED_SUFFIX):
+        stems.append(fchk_path.stem[:-len(EXCITED_SUFFIX)])
+    for stem in stems:
+        for suffix in (".log", ".out"):
+            candidate = fchk_path.with_name(stem + suffix)
+            if candidate.is_file():
+                return candidate
     return None

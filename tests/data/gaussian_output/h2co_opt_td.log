@@ -1,7 +1,7 @@
  Entering Gaussian System, Link 0=g16
  Initial command:
- /usr/local/g16/l1.exe "/tmp/gqout/Gau-172.inp" -scrdir="/tmp/gqout/"
- Entering Link 1 = /usr/local/g16/l1.exe PID=       173.
+ /usr/local/g16/l1.exe "/tmp/gqout/Gau-888.inp" -scrdir="/tmp/gqout/"
+ Entering Link 1 = /usr/local/g16/l1.exe PID=       889.
   
  Copyright (c) 1988-2019, Gaussian, Inc.  All Rights Reserved.
   
@@ -102,7 +102,7 @@
  2/9=110/2;
  6/7=2,8=2,9=2,10=2,19=2,28=1/1;
  99/9=1/99;
- Leave Link    1 at Thu Nov  5 12:53:23 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link    1 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l101.exe)
  -----------
  h2co opt td
@@ -130,7 +130,7 @@
  NQMom=    0.0000000   0.0000000   0.0000000   0.0000000
  NMagM=    0.0000000   0.0000000   2.7928460   2.7928460
  AtZNuc=   6.0000000   8.0000000   1.0000000   1.0000000
- Leave Link  101 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.4 elap:               0.2
+ Leave Link  101 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.4 elap:               0.2
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -154,7 +154,7 @@
  Number of steps in this run=     20 maximum allowed number of steps=    100.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -189,7 +189,7 @@
       4          1           0       -0.000000   -0.950000   -1.103750
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         277.8144623          38.7869427          34.0351416
- Leave Link  202 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l301.exe)
  Standard basis: 6-31G(d) (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -211,7 +211,7 @@
  Integral buffers will be    131072 words long.
  Raffenetti 2 integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -223,10 +223,10 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=    34    34    34    34    34 MxSgAt=     4 MxSgA2=     4.
- Leave Link  302 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l401.exe)
  ExpMin= 1.61D-01 ExpMax= 5.48D+03 ExpMxC= 8.25D+02 IAcc=3 IRadAn=         5 AccDes= 0.00D+00
  Harris functional with IExCor=  402 and IRadAn=       5 diagonalized for initial guess.
@@ -245,7 +245,7 @@
                  (A1) (B1) (B2) (A1) (B1) (A2) (A1) (B2) (A2) (A1)
                  (A1) (B1) (B2) (A1) (A1) (A1)
  The electronic state of the initial guess is 1-A1.
- Leave Link  401 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ Leave Link  401 at Thu Nov  5 13:14:28 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=1908090.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -359,7 +359,7 @@
  RMSDP=4.50D-07 MaxDP=6.14D-06 DE= 1.02D-10 OVMax= 1.08D-05
 
  Cycle   9  Pass 1  IDiag  1:
- E= -114.500228564807     Delta-E=       -0.000000000241 Rises=F Damp=F
+ E= -114.500228564807     Delta-E=       -0.000000000242 Rises=F Damp=F
  DIIS: error= 1.57D-06 at cycle   3 NSaved=   3.
  NSaved= 3 IEnMin= 3 EnMin= -114.500228564807     IErMin= 3 ErrMin= 1.57D-06
  ErrMax= 1.57D-06  0.00D+00 EMaxC= 1.00D-01 BMatC= 5.04D-11 BMatP= 2.04D-10
@@ -367,7 +367,7 @@
  Coeff-Com:  0.146D+00 0.289D+00 0.565D+00
  Coeff:      0.146D+00 0.289D+00 0.565D+00
  Gap=     0.225 Goal=   None    Shift=    0.000
- RMSDP=1.79D-07 MaxDP=1.48D-06 DE=-2.41D-10 OVMax= 2.47D-06
+ RMSDP=1.79D-07 MaxDP=1.48D-06 DE=-2.42D-10 OVMax= 2.47D-06
 
  Cycle  10  Pass 1  IDiag  1:
  E= -114.500228564846     Delta-E=       -0.000000000039 Rises=F Damp=F
@@ -378,7 +378,7 @@
  Coeff-Com:  0.225D-01 0.101D+00 0.192D+00 0.685D+00
  Coeff:      0.225D-01 0.101D+00 0.192D+00 0.685D+00
  Gap=     0.225 Goal=   None    Shift=    0.000
- RMSDP=2.62D-08 MaxDP=2.88D-07 DE=-3.85D-11 OVMax= 3.10D-07
+ RMSDP=2.62D-08 MaxDP=2.88D-07 DE=-3.86D-11 OVMax= 3.10D-07
 
  Cycle  11  Pass 1  IDiag  1:
  E= -114.500228564847     Delta-E=       -0.000000000001 Rises=F Damp=F
@@ -389,12 +389,12 @@
  Coeff-Com: -0.105D-01-0.741D-03-0.129D-01 0.155D+00 0.869D+00
  Coeff:     -0.105D-01-0.741D-03-0.129D-01 0.155D+00 0.869D+00
  Gap=     0.225 Goal=   None    Shift=    0.000
- RMSDP=6.89D-09 MaxDP=6.11D-08 DE=-9.09D-13 OVMax= 7.46D-08
+ RMSDP=6.89D-09 MaxDP=6.11D-08 DE=-9.66D-13 OVMax= 7.46D-08
 
  SCF Done:  E(RB3LYP) =  -114.500228565     A.U. after   11 cycles
             NFock= 11  Conv=0.69D-08     -V/T= 2.0090
  KE= 1.134827616955D+02 PE=-3.308158893479D+02 EE= 7.163406296195D+01
- Leave Link  502 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.5 elap:               0.2
+ Leave Link  502 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.5 elap:               0.2
  (Enter /usr/local/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -430,13 +430,13 @@
      2  O   -0.325777
      3  H    0.123509
      4  H    0.123509
- Sum of Mulliken charges =   0.00000
+ Sum of Mulliken charges =  -0.00000
  Mulliken charges with hydrogens summed into heavy atoms:
                1
      1  C    0.325777
      2  O   -0.325777
  Electronic spatial extent (au):  <R**2>=             60.1880
- Charge=              0.0000 electrons
+ Charge=             -0.0000 electrons
  Dipole moment (field-independent basis, Debye):
     X=             -0.0000    Y=              0.0000    Z=             -2.2032  Tot=              2.2032
  Quadrupole moment (field-independent basis, Debye-Ang):
@@ -460,14 +460,14 @@
  Symmetry B1   KE= 3.625974873159D+00
  Symmetry B2   KE= 6.727102653258D+00
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  601 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
- Leave Link  701 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  701 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -479,7 +479,7 @@
          wScrn=  0.000000 ICntrl=      2127 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ Leave Link  703 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.3 elap:               0.1
  (Enter /usr/local/g16/l716.exe)
  Dipole        =-1.97080420D-17 0.00000000D+00-8.66816280D-01
  ***** Axes restored to original set *****
@@ -487,13 +487,13 @@
  Center     Atomic                   Forces (Hartrees/Bohr)
  Number     Number              X              Y              Z
  -------------------------------------------------------------------
-      1        6          -0.000000000    0.000000000    0.011114021
+      1        6          -0.000000000   -0.000000000    0.011114021
       2        8          -0.000000000    0.000000000   -0.002820329
       3        1           0.000000000   -0.001755860   -0.004146846
       4        1           0.000000000    0.001755860   -0.004146846
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.011114021 RMS     0.003786318
- Leave Link  716 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  716 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -546,7 +546,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -582,7 +582,7 @@
       4          1           0       -0.000000   -0.939618   -1.119509
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         283.9876374          38.6053551          33.9853742
- Leave Link  202 at Thu Nov  5 12:53:24 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l301.exe)
  Standard basis: 6-31G(d) (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -604,7 +604,7 @@
  Integral buffers will be    131072 words long.
  Raffenetti 2 integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -616,14 +616,14 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=    34    34    34    34    34 MxSgAt=     4 MxSgA2=     4.
- Leave Link  302 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l401.exe)
  Initial guess from the checkpoint file:  "h2co_opt_td.chk"
- B after Tr=     0.000000   -0.000000    0.000000
-         Rot=    1.000000    0.000000   -0.000000   -0.000000 Ang=   0.00 deg.
+ B after Tr=     0.000000    0.000000    0.000000
+         Rot=    1.000000    0.000000    0.000000   -0.000000 Ang=   0.00 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
  Initial guess orbital symmetries:
@@ -632,7 +632,7 @@
                  (A1) (B1) (B2) (A1) (A2) (B1) (A1) (B2) (A2) (A1)
                  (A1) (B1) (B2) (A1) (A1) (A1)
  The electronic state of the initial guess is 1-A1.
- Leave Link  401 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  401 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=1908090.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -673,9 +673,9 @@
  RMSDP=1.22D-04 MaxDP=1.61D-03 DE=-2.62D-05 OVMax= 2.63D-03
 
  Cycle   3  Pass 1  IDiag  1:
- E= -114.500447055925     Delta-E=       -0.000000459664 Rises=F Damp=F
+ E= -114.500447055924     Delta-E=       -0.000000459663 Rises=F Damp=F
  DIIS: error= 8.03D-04 at cycle   3 NSaved=   3.
- NSaved= 3 IEnMin= 3 EnMin= -114.500447055925     IErMin= 2 ErrMin= 7.36D-04
+ NSaved= 3 IEnMin= 3 EnMin= -114.500447055924     IErMin= 2 ErrMin= 7.36D-04
  ErrMax= 8.03D-04  0.00D+00 EMaxC= 1.00D-01 BMatC= 1.13D-05 BMatP= 1.35D-05
  IDIUse=3 WtCom= 9.92D-01 WtEn= 8.03D-03
  Coeff-Com:  0.968D-02 0.475D+00 0.515D+00
@@ -685,7 +685,7 @@
  RMSDP=7.76D-05 MaxDP=9.36D-04 DE=-4.60D-07 OVMax= 1.65D-03
 
  Cycle   4  Pass 1  IDiag  1:
- E= -114.500455964760     Delta-E=       -0.000008908835 Rises=F Damp=F
+ E= -114.500455964760     Delta-E=       -0.000008908836 Rises=F Damp=F
  DIIS: error= 7.80D-05 at cycle   4 NSaved=   4.
  NSaved= 4 IEnMin= 4 EnMin= -114.500455964760     IErMin= 4 ErrMin= 7.80D-05
  ErrMax= 7.80D-05  0.00D+00 EMaxC= 1.00D-01 BMatC= 1.25D-07 BMatP= 1.13D-05
@@ -728,7 +728,7 @@
  Coeff:      0.556D-04-0.525D-03-0.838D-03-0.575D-02-0.524D-02 0.923D-01
  Coeff:      0.920D+00
  Gap=     0.226 Goal=   None    Shift=    0.000
- RMSDP=3.10D-08 MaxDP=3.07D-07 DE=-4.52D-11 OVMax= 2.69D-07
+ RMSDP=3.10D-08 MaxDP=3.07D-07 DE=-4.53D-11 OVMax= 2.69D-07
 
  Cycle   8  Pass 1  IDiag  1:
  E= -114.500456073449     Delta-E=       -0.000000000001 Rises=F Damp=F
@@ -741,19 +741,19 @@
  Coeff:      0.744D-05-0.132D-04-0.282D-04-0.589D-03-0.299D-02-0.762D-02
  Coeff:      0.868D-01 0.924D+00
  Gap=     0.226 Goal=   None    Shift=    0.000
- RMSDP=6.50D-09 MaxDP=5.71D-08 DE=-1.34D-12 OVMax= 5.80D-08
+ RMSDP=6.50D-09 MaxDP=5.71D-08 DE=-1.36D-12 OVMax= 5.80D-08
 
  SCF Done:  E(RB3LYP) =  -114.500456073     A.U. after    8 cycles
             NFock=  8  Conv=0.65D-08     -V/T= 2.0090
  KE= 1.134821154818D+02 PE=-3.308071995469D+02 EE= 7.162376029082D+01
- Leave Link  502 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.5 elap:               0.2
+ Leave Link  502 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.5 elap:               0.3
  (Enter /usr/local/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
- Leave Link  701 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  701 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Thu Nov  5 13:14:29 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -765,7 +765,7 @@
          wScrn=  0.000000 ICntrl=      2127 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ Leave Link  703 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.3 elap:               0.1
  (Enter /usr/local/g16/l716.exe)
  Dipole        =-1.92371906D-17 0.00000000D+00-8.64194451D-01
  ***** Axes restored to original set *****
@@ -774,12 +774,12 @@
  Number     Number              X              Y              Z
  -------------------------------------------------------------------
       1        6          -0.000000000    0.000000000    0.004800431
-      2        8          -0.000000000    0.000000000   -0.002638802
+      2        8          -0.000000000   -0.000000000   -0.002638802
       3        1           0.000000000    0.000069871   -0.001080814
       4        1           0.000000000   -0.000069871   -0.001080814
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.004800431 RMS     0.001641988
- Leave Link  716 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -812,13 +812,13 @@
  Use linear search instead of GDIIS.
      Eigenvalues ---    0.00230   0.12780   0.16000   0.32785   0.32825
      Eigenvalues ---    0.98175
- RFO step:  Lambda=-9.40611621D-06 EMin= 2.30000000D-03
+ RFO step:  Lambda=-9.40611622D-06 EMin= 2.30000000D-03
  Quartic linear search produced a step of  0.27543.
  Iteration  1 RMS(Cart)=  0.00407941 RMS(Int)=  0.00001687
  Iteration  2 RMS(Cart)=  0.00001726 RMS(Int)=  0.00000000
  Iteration  3 RMS(Cart)=  0.00000000 RMS(Int)=  0.00000000
  ITry= 1 IFail=0 DXMaxC= 6.24D-03 DCOld= 1.00D+10 DXMaxT= 3.00D-01 DXLimC= 3.00D+00 Rises=F
- ClnCor:  largest displacement from symmetrization is 6.59D-11 for atom     1.
+ ClnCor:  largest displacement from symmetrization is 6.61D-11 for atom     1.
  Variable       Old X    -DE/DX   Delta X   Delta X   Delta X     New X
                                  (Linear)    (Quad)   (Total)
     R1        2.28375  -0.00264  -0.00078  -0.00266  -0.00344   2.28031
@@ -837,7 +837,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -867,13 +867,13 @@
  Center     Atomic      Atomic             Coordinates (Angstroms)
  Number     Number       Type             X           Y           Z
  ---------------------------------------------------------------------
-      1          6           0        0.000000   -0.000000   -0.529025
-      2          8           0        0.000000    0.000000    0.677664
-      3          1           0       -0.000000    0.937595   -1.123582
+      1          6           0        0.000000    0.000000   -0.529025
+      2          8           0       -0.000000   -0.000000    0.677664
+      3          1           0        0.000000    0.937595   -1.123582
       4          1           0       -0.000000   -0.937595   -1.123582
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         285.2143472          38.6280111          34.0204507
- Leave Link  202 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l301.exe)
  Standard basis: 6-31G(d) (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -895,7 +895,7 @@
  Integral buffers will be    131072 words long.
  Raffenetti 2 integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -907,14 +907,14 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=    34    34    34    34    34 MxSgAt=     4 MxSgA2=     4.
- Leave Link  302 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l401.exe)
  Initial guess from the checkpoint file:  "h2co_opt_td.chk"
- B after Tr=     0.000000    0.000000   -0.000000
-         Rot=    1.000000   -0.000000    0.000000   -0.000000 Ang=   0.00 deg.
+ B after Tr=     0.000000   -0.000000   -0.000000
+         Rot=    1.000000    0.000000    0.000000    0.000000 Ang=   0.00 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
  Initial guess orbital symmetries:
@@ -923,7 +923,7 @@
                  (A1) (B1) (B2) (A1) (A2) (B1) (A1) (B2) (A2) (A1)
                  (A1) (B1) (B2) (A1) (A1) (A1)
  The electronic state of the initial guess is 1-A1.
- Leave Link  401 at Thu Nov  5 12:53:25 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  401 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=1908090.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -976,9 +976,9 @@
  RMSDP=3.21D-05 MaxDP=3.75D-04 DE=-1.03D-06 OVMax= 6.63D-04
 
  Cycle   4  Pass 1  IDiag  1:
- E= -114.500472631409     Delta-E=       -0.000001439058 Rises=F Damp=F
+ E= -114.500472631408     Delta-E=       -0.000001439058 Rises=F Damp=F
  DIIS: error= 3.10D-05 at cycle   4 NSaved=   4.
- NSaved= 4 IEnMin= 4 EnMin= -114.500472631409     IErMin= 4 ErrMin= 3.10D-05
+ NSaved= 4 IEnMin= 4 EnMin= -114.500472631408     IErMin= 4 ErrMin= 3.10D-05
  ErrMax= 3.10D-05  0.00D+00 EMaxC= 1.00D-01 BMatC= 1.60D-08 BMatP= 1.81D-06
  IDIUse=1 WtCom= 1.00D+00 WtEn= 0.00D+00
  Coeff-Com: -0.802D-02 0.357D-01 0.131D+00 0.841D+00
@@ -987,9 +987,9 @@
  RMSDP=3.67D-06 MaxDP=2.60D-05 DE=-1.44D-06 OVMax= 5.34D-05
 
  Cycle   5  Pass 1  IDiag  1:
- E= -114.500472645557     Delta-E=       -0.000000014148 Rises=F Damp=F
+ E= -114.500472645556     Delta-E=       -0.000000014148 Rises=F Damp=F
  DIIS: error= 5.37D-07 at cycle   5 NSaved=   5.
- NSaved= 5 IEnMin= 5 EnMin= -114.500472645557     IErMin= 5 ErrMin= 5.37D-07
+ NSaved= 5 IEnMin= 5 EnMin= -114.500472645556     IErMin= 5 ErrMin= 5.37D-07
  ErrMax= 5.37D-07  0.00D+00 EMaxC= 1.00D-01 BMatC= 1.20D-11 BMatP= 1.60D-08
  IDIUse=1 WtCom= 1.00D+00 WtEn= 0.00D+00
  Coeff-Com: -0.331D-03-0.407D-02-0.120D-02 0.288D-01 0.977D+00
@@ -1006,12 +1006,12 @@
  Coeff-Com:  0.381D-04-0.170D-02-0.167D-02 0.473D-03 0.289D+00 0.714D+00
  Coeff:      0.381D-04-0.170D-02-0.167D-02 0.473D-03 0.289D+00 0.714D+00
  Gap=     0.226 Goal=   None    Shift=    0.000
- RMSDP=4.76D-08 MaxDP=4.18D-07 DE=-1.22D-11 OVMax= 5.08D-07
+ RMSDP=4.76D-08 MaxDP=4.18D-07 DE=-1.23D-11 OVMax= 5.08D-07
 
  Cycle   7  Pass 1  IDiag  1:
- E= -114.500472645570     Delta-E=       -0.000000000001 Rises=F Damp=F
+ E= -114.500472645569     Delta-E=       -0.000000000001 Rises=F Damp=F
  DIIS: error= 7.40D-08 at cycle   7 NSaved=   7.
- NSaved= 7 IEnMin= 7 EnMin= -114.500472645570     IErMin= 7 ErrMin= 7.40D-08
+ NSaved= 7 IEnMin= 7 EnMin= -114.500472645569     IErMin= 7 ErrMin= 7.40D-08
  ErrMax= 7.40D-08  0.00D+00 EMaxC= 1.00D-01 BMatC= 1.48D-13 BMatP= 1.06D-12
  IDIUse=1 WtCom= 1.00D+00 WtEn= 0.00D+00
  Coeff-Com:  0.300D-04-0.438D-04-0.232D-03-0.314D-02-0.229D-01 0.239D+00
@@ -1019,19 +1019,19 @@
  Coeff:      0.300D-04-0.438D-04-0.232D-03-0.314D-02-0.229D-01 0.239D+00
  Coeff:      0.787D+00
  Gap=     0.226 Goal=   None    Shift=    0.000
- RMSDP=9.09D-09 MaxDP=1.07D-07 DE=-8.53D-13 OVMax= 1.23D-07
+ RMSDP=9.09D-09 MaxDP=1.07D-07 DE=-7.96D-13 OVMax= 1.23D-07
 
  SCF Done:  E(RB3LYP) =  -114.500472646     A.U. after    7 cycles
             NFock=  7  Conv=0.91D-08     -V/T= 2.0090
- KE= 1.134845618514D+02 PE=-3.308443757577D+02 EE= 7.163816675473D+01
- Leave Link  502 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.4 elap:               0.2
+ KE= 1.134845618514D+02 PE=-3.308443757577D+02 EE= 7.163816675472D+01
+ Leave Link  502 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.5 elap:               0.2
  (Enter /usr/local/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
- Leave Link  701 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  701 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  702 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -1043,7 +1043,7 @@
          wScrn=  0.000000 ICntrl=      2127 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ Leave Link  703 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l716.exe)
  Dipole        =-1.90204048D-17 0.00000000D+00-8.60646174D-01
  ***** Axes restored to original set *****
@@ -1051,13 +1051,13 @@
  Center     Atomic                   Forces (Hartrees/Bohr)
  Number     Number              X              Y              Z
  -------------------------------------------------------------------
-      1        6          -0.000000000   -0.000000000    0.000421651
+      1        6          -0.000000000    0.000000000    0.000421651
       2        8          -0.000000000    0.000000000   -0.000327536
       3        1           0.000000000    0.000109609   -0.000047058
       4        1           0.000000000   -0.000109609   -0.000047058
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.000421651 RMS     0.000161639
- Leave Link  716 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -1090,7 +1090,7 @@
  Use linear search instead of GDIIS.
      Eigenvalues ---    0.00230   0.13276   0.16000   0.32255   0.32825
      Eigenvalues ---    0.94499
- RFO step:  Lambda=-1.55533865D-07 EMin= 2.30000000D-03
+ RFO step:  Lambda=-1.55533872D-07 EMin= 2.30000000D-03
  Quartic linear search produced a step of  0.04219.
  Iteration  1 RMS(Cart)=  0.00019531 RMS(Int)=  0.00000000
  Iteration  2 RMS(Cart)=  0.00000000 RMS(Int)=  0.00000000
@@ -1131,7 +1131,7 @@
  Largest change from initial coordinates is atom    3       0.023 Angstoms.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -1153,7 +1153,7 @@
  Framework group  C2V[C2(CO),SGV(H2)]
  Deg. of freedom     3
  Full point group                 C2V     NOp   4
- RotChk:  IX=0 Diff= 6.28D-16
+ RotChk:  IX=0 Diff= 5.06D-16
  Largest Abelian subgroup         C2V     NOp   4
  Largest concise Abelian subgroup C2      NOp   2
                          Standard orientation:                         
@@ -1161,13 +1161,13 @@
  Center     Atomic      Atomic             Coordinates (Angstroms)
  Number     Number       Type             X           Y           Z
  ---------------------------------------------------------------------
-      1          6           0       -0.000000   -0.000000   -0.529025
-      2          8           0        0.000000    0.000000    0.677664
-      3          1           0       -0.000000    0.937595   -1.123582
+      1          6           0        0.000000   -0.000000   -0.529025
+      2          8           0       -0.000000    0.000000    0.677664
+      3          1           0        0.000000    0.937595   -1.123582
       4          1           0       -0.000000   -0.937595   -1.123582
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         285.2143472          38.6280111          34.0204507
- Leave Link  202 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -1203,15 +1203,15 @@
      2  O   -0.323009
      3  H    0.121294
      4  H    0.121294
- Sum of Mulliken charges =  -0.00000
+ Sum of Mulliken charges =   0.00000
  Mulliken charges with hydrogens summed into heavy atoms:
                1
      1  C    0.323009
      2  O   -0.323009
  Electronic spatial extent (au):  <R**2>=             60.3133
- Charge=             -0.0000 electrons
+ Charge=              0.0000 electrons
  Dipole moment (field-independent basis, Debye):
-    X=             -0.0000    Y=             -0.0000    Z=             -2.1875  Tot=              2.1875
+    X=             -0.0000    Y=              0.0000    Z=             -2.1875  Tot=              2.1875
  Quadrupole moment (field-independent basis, Debye-Ang):
    XX=            -11.4047   YY=            -11.5080   ZZ=            -11.9267
    XY=              0.0000   XZ=              0.0000   YZ=             -0.0000
@@ -1220,20 +1220,20 @@
    XY=              0.0000   XZ=              0.0000   YZ=             -0.0000
  Octapole moment (field-independent basis, Debye-Ang**2):
   XXX=              0.0000  YYY=             -0.0000  ZZZ=              1.2437  XYY=              0.0000
-  XXY=             -0.0000  XXZ=              0.9134  XZZ=              0.0000  YZZ=             -0.0000
+  XXY=              0.0000  XXZ=              0.9134  XZZ=              0.0000  YZZ=              0.0000
   YYZ=              0.0665  XYZ=             -0.0000
  Hexadecapole moment (field-independent basis, Debye-Ang**3):
  XXXX=             -9.1916 YYYY=            -17.9863 ZZZZ=            -44.4018 XXXY=             -0.0000
  XXXZ=             -0.0000 YYYX=             -0.0000 YYYZ=              0.0000 ZZZX=             -0.0000
  ZZZY=             -0.0000 XXYY=             -4.7333 XXZZ=             -8.9025 YYZZ=            -10.1682
- XXYZ=              0.0000 YYXZ=             -0.0000 ZZXY=             -0.0000
- N-N= 3.122117450599D+01 E-N=-3.308443779575D+02  KE= 1.134845618514D+02
+ XXYZ=             -0.0000 YYXZ=             -0.0000 ZZXY=             -0.0000
+ N-N= 3.122117450599D+01 E-N=-3.308443779574D+02  KE= 1.134845618514D+02
  Symmetry A1   KE= 1.031334663559D+02
- Symmetry A2   KE= 6.122561907388D-35
- Symmetry B1   KE= 3.635111069446D+00
- Symmetry B2   KE= 6.715984426045D+00
+ Symmetry A2   KE= 6.122561906952D-35
+ Symmetry B1   KE= 3.635111069455D+00
+ Symmetry B2   KE= 6.715984426035D+00
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  601 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l9999.exe)
  Unable to Open any file for archive entry.
  1\1\GINC-GALAXY-BOOK2-AJC\FOpt\RB3LYP\6-31G(d)\C1H2O1\AJC\05-Nov-2026\
@@ -1245,18 +1245,16 @@
  The archive entry for this job was punched.
 
 
- SUCCESS IS COUNTED SWEETEST
- BY THOSE WHO NE'ER SUCCEED.
- TO COMPREHEND NECTAR
- REQUIRES SOREST NEED.
-           EMILY DICKINSON
- Job cpu time:       0 days  0 hours  0 minutes  4.5 seconds.
- Elapsed time:       0 days  0 hours  0 minutes  2.2 seconds.
+ I DON'T EXACTLY UNDERSTAND WHAT YOU ARE SAYING,
+ BUT YOU ARE ABSOLUTELY RIGHT.
+     M.S.GORDON, IN A NDSU FACULTY MEETING
+ Job cpu time:       0 days  0 hours  0 minutes  4.9 seconds.
+ Elapsed time:       0 days  0 hours  0 minutes  2.4 seconds.
  File lengths (MBytes):  RWF=      6 Int=      0 D2E=      0 Chk=      1 Scr=      1
- Normal termination of Gaussian 16 at Thu Nov  5 12:53:26 2026.
+ Normal termination of Gaussian 16 at Thu Nov  5 13:14:30 2026.
  Initial command:
- /usr/local/g16/l1.exe "/tmp/gqout/Gau-172.inp" -scrdir="/tmp/gqout/"
- Entering Link 1 = /usr/local/g16/l1.exe PID=       214.
+ /usr/local/g16/l1.exe "/tmp/gqout/Gau-888.inp" -scrdir="/tmp/gqout/"
+ Entering Link 1 = /usr/local/g16/l1.exe PID=       930.
   
  Copyright (c) 1988-2019, Gaussian, Inc.  All Rights Reserved.
   
@@ -1338,9 +1336,9 @@
  Will use up to    2 processors via shared memory.
  Copying data from "h2co_opt_td.chk" to current chk file "h2co_opt_td_excited.chk"
  IOpt=  2 FromEx=T IUOpen= 4 IOptOp= 5 NList=   0 IFRang= 0 IUIn= 4 IUOut= 2.
- ---------------------------------------------------------------------
- #P B3LYP/6-31G(d) TD(NStates=10) Geom=AllCheck Guess=Read IOp(9/40=4)
- ---------------------------------------------------------------------
+ ----------------------------------------------------------------------
+ #P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read
+ ----------------------------------------------------------------------
  1/29=7,38=1,172=1/1;
  2/12=2,40=1/2;
  3/5=1,6=6,7=1,11=9,14=-4,25=1,30=1,74=-5,116=-2/1,2,3,8;
@@ -1350,7 +1348,7 @@
  9/40=4,41=10,42=1,70=2/14;
  6/7=2,8=2,9=2,10=2/1;
  99/5=1,9=1/99;
- Leave Link    1 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link    1 at Thu Nov  5 13:14:30 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l101.exe)
  Structure from the checkpoint file:  "h2co_opt_td_excited.chk"
  -----------
@@ -1393,15 +1391,15 @@
  NQMom=    0.0000000   0.0000000   0.0000000   0.0000000
  NMagM=    0.0000000   0.0000000   2.7928460   2.7928460
  AtZNuc=   6.0000000   8.0000000   1.0000000   1.0000000
- Leave Link  101 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.3 elap:               0.2
+ Leave Link  101 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.3 elap:               0.2
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
  Center     Atomic      Atomic             Coordinates (Angstroms)
  Number     Number       Type             X           Y           Z
  ---------------------------------------------------------------------
-      1          6           0        0.000000   -0.000000   -0.516894
-      2          8           0       -0.000000    0.000000    0.689795
+      1          6           0        0.000000    0.000000   -0.516894
+      2          8           0       -0.000000   -0.000000    0.689795
       3          1           0        0.000000    0.937595   -1.111451
       4          1           0       -0.000000   -0.937595   -1.111451
  ---------------------------------------------------------------------
@@ -1415,7 +1413,7 @@
  Framework group  C2V[C2(CO),SGV(H2)]
  Deg. of freedom     3
  Full point group                 C2V     NOp   4
- RotChk:  IX=0 Diff= 5.05D-16
+ RotChk:  IX=0 Diff= 5.08D-16
  Largest Abelian subgroup         C2V     NOp   4
  Largest concise Abelian subgroup C2      NOp   2
                          Standard orientation:                         
@@ -1424,12 +1422,12 @@
  Number     Number       Type             X           Y           Z
  ---------------------------------------------------------------------
       1          6           0        0.000000   -0.000000   -0.529025
-      2          8           0       -0.000000    0.000000    0.677664
-      3          1           0       -0.000000    0.937595   -1.123582
+      2          8           0        0.000000    0.000000    0.677664
+      3          1           0        0.000000    0.937595   -1.123582
       4          1           0       -0.000000   -0.937595   -1.123582
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         285.2143472          38.6280111          34.0204507
- Leave Link  202 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l301.exe)
  Standard basis: 6-31G(d) (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -1451,7 +1449,7 @@
  Integral buffers will be    131072 words long.
  Regular integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -1463,16 +1461,16 @@
  IXCGrd= 4 IRadAn=           5 IRanWt=          -1 IRanGd=           0 AccXCQ= 0.00D+00.
  Generated NRdTot=       0 NPtTot=           0 NUsed=           0 NTot=          32
  NSgBfM=    34    34    34    34    34 MxSgAt=     4 MxSgA2=     4.
- Leave Link  302 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l308.exe)
- Leave Link  308 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  308 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l401.exe)
  Initial guess from the checkpoint file:  "h2co_opt_td_excited.chk"
- B after Tr=    -0.000000   -0.000000   -0.000000
-         Rot=    1.000000    0.000000   -0.000000    0.000000 Ang=   0.00 deg.
+ B after Tr=     0.000000    0.000000    0.000000
+         Rot=    1.000000    0.000000    0.000000    0.000000 Ang=   0.00 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
  Initial guess orbital symmetries:
@@ -1481,7 +1479,7 @@
                  (A1) (B1) (B2) (A1) (A2) (B1) (A1) (B2) (A2) (A1)
                  (A1) (B1) (B2) (A1) (A1) (A1)
  The electronic state of the initial guess is 1-A1.
- Leave Link  401 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  401 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=1908090.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -1510,8 +1508,8 @@
 
  SCF Done:  E(RB3LYP) =  -114.500472646     A.U. after    1 cycles
             NFock=  1  Conv=0.37D-08     -V/T= 2.0090
- KE= 1.134845613367D+02 PE=-3.308443774428D+02 EE= 7.163816895452D+01
- Leave Link  502 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ KE= 1.134845613367D+02 PE=-3.308443774428D+02 EE= 7.163816895451D+01
+ Leave Link  502 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l801.exe)
  DoSCS=F DFT=T ScalE2(SS,OS)=  1.000000  1.000000
  ExpMin= 1.61D-01 ExpMax= 5.48D+03 ExpMxC= 8.25D+02 IAcc=3 IRadAn=         5 AccDes= 0.00D+00
@@ -1522,7 +1520,7 @@
  Range of M.O.s used for correlation:     3    34
  NBasis=    34 NAE=     8 NBE=     8 NFC=     2 NFV=     0
  NROrb=     32 NOA=     6 NOB=     6 NVA=    26 NVB=    26
- Leave Link  801 at Thu Nov  5 12:53:26 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  801 at Thu Nov  5 13:14:31 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l914.exe)
  RHF ground state
  Keep R1, R2, and R3 ints in memory in symmetry-blocked form, NReq=2828668.
@@ -1553,96 +1551,96 @@
  New state      7 was old state      8
  New state      8 was old state      5
  Excitation Energies [eV] at current iteration:
- Root      1 :     4.109924545101078
- Root      2 :     9.132397544209935
- Root      3 :     9.272728501383769
- Root      4 :    10.047400962296447
- Root      5 :    10.314739151738971
- Root      6 :    11.627574721427965
- Root      7 :    12.274735461244138
- Root      8 :    12.416600376064276
- Root      9 :    14.085710199776358
- Root     10 :    14.190350236603335
- Root     11 :    15.096652697691457
- Root     12 :    15.128021793747434
- Root     13 :    15.931114254458789
- Root     14 :    16.234953319215855
- Root     15 :    16.973773535035079
- Root     16 :    17.700652837636724
- Root     17 :    18.135824337131293
- Root     18 :    19.292805063219884
- Root     19 :    19.942079810795832
- Root     20 :    21.102156180056770
- Root     21 :    22.245703892813594
- Root     22 :    22.960492210125725
- Root     23 :    23.564866346586669
- Root     24 :    24.127280806583205
- Root     25 :    24.243568992084001
- Root     26 :    24.493100701381508
- Root     27 :    25.074515863304914
- Root     28 :    25.877547487049338
- Root     29 :    25.881008972465835
- Root     30 :    26.727637822308800
- Root     31 :    27.409029635129841
- Root     32 :    27.931656092819143
- Root     33 :    27.933492862519085
- Root     34 :    28.059317267303758
- Root     35 :    28.852731241036508
- Root     36 :    29.094380798439133
- Root     37 :    29.205165079461246
- Root     38 :    30.070636026823504
- Root     39 :    30.532957940890945
- Root     40 :    33.771600524640206
+ Root      1 :     4.109924545127201
+ Root      2 :     9.132397544262595
+ Root      3 :     9.272728501465835
+ Root      4 :    10.047400962310791
+ Root      5 :    10.314739151634805
+ Root      6 :    11.627574721424274
+ Root      7 :    12.274735461313984
+ Root      8 :    12.416600376134198
+ Root      9 :    14.085710199912668
+ Root     10 :    14.190350236638123
+ Root     11 :    15.096652697722698
+ Root     12 :    15.128021793646456
+ Root     13 :    15.931114254520077
+ Root     14 :    16.234953319245715
+ Root     15 :    16.973773535058164
+ Root     16 :    17.700652837578247
+ Root     17 :    18.135824337035523
+ Root     18 :    19.292805063225035
+ Root     19 :    19.942079810843595
+ Root     20 :    21.102156180103020
+ Root     21 :    22.245703892834701
+ Root     22 :    22.960492210302426
+ Root     23 :    23.564866346401516
+ Root     24 :    24.127280806585574
+ Root     25 :    24.243568992154163
+ Root     26 :    24.493100701704872
+ Root     27 :    25.074515863197025
+ Root     28 :    25.877547487149297
+ Root     29 :    25.881008972234454
+ Root     30 :    26.727637822482219
+ Root     31 :    27.409029634944318
+ Root     32 :    27.931656093098724
+ Root     33 :    27.933492862828004
+ Root     34 :    28.059317267269318
+ Root     35 :    28.852731241028739
+ Root     36 :    29.094380798450601
+ Root     37 :    29.205165079491497
+ Root     38 :    30.070636026499539
+ Root     39 :    30.532957940947011
+ Root     40 :    33.771600524706187
  Iteration     2 Dimension    60 NMult    40 NNew     20
  CISAX will form    20 AO SS matrices at one time.
  NMat=    20 NSing=    20 JSym2X=-1.
- Root      1 not converged, maximum delta is    0.010748705302772
- Root      2 not converged, maximum delta is    0.019646184231736
- Root      3 not converged, maximum delta is    0.015398464266609
- Root      4 not converged, maximum delta is    0.060917658018331
- Root      5 not converged, maximum delta is    0.005397233279947
- Root      6 not converged, maximum delta is    0.008002733618774
+ Root      1 not converged, maximum delta is    0.010748705302643
+ Root      2 not converged, maximum delta is    0.019646184232086
+ Root      3 not converged, maximum delta is    0.015398464266786
+ Root      4 not converged, maximum delta is    0.060917658016581
+ Root      5 not converged, maximum delta is    0.005397233280050
+ Root      6 not converged, maximum delta is    0.008002733618680
  New state      7 was old state      8
- Root      7 not converged, maximum delta is    0.069384139042538
+ Root      7 not converged, maximum delta is    0.069384139047210
  New state      8 was old state      7
- Root      8 not converged, maximum delta is    0.007768715660545
- Root      9 not converged, maximum delta is    0.039953981344413
- Root     10 not converged, maximum delta is    0.020557599376420
+ Root      8 not converged, maximum delta is    0.007768715660560
+ Root      9 not converged, maximum delta is    0.039953981346272
+ Root     10 not converged, maximum delta is    0.020557599376700
  Excitation Energies [eV] at current iteration:
- Root      1 :     4.087068038499218   Change is   -0.022856506601860
- Root      2 :     9.096287416454187   Change is   -0.036110127755747
- Root      3 :     9.176146205035913   Change is   -0.096582296347855
- Root      4 :     9.794976562743553   Change is   -0.252424399552893
- Root      5 :    10.307027903820824   Change is   -0.007711247918148
- Root      6 :    11.594233487631143   Change is   -0.033341233796822
- Root      7 :    12.076775322884293   Change is   -0.339825053179982
- Root      8 :    12.260889985283864   Change is   -0.013845475960274
- Root      9 :    13.966666934134071   Change is   -0.119043265642287
- Root     10 :    14.172142025108903   Change is   -0.018208211494432
+ Root      1 :     4.087068038525588   Change is   -0.022856506601613
+ Root      2 :     9.096287416505421   Change is   -0.036110127757175
+ Root      3 :     9.176146205116408   Change is   -0.096582296349426
+ Root      4 :     9.794976562758981   Change is   -0.252424399551810
+ Root      5 :    10.307027903716675   Change is   -0.007711247918132
+ Root      6 :    11.594233487628385   Change is   -0.033341233795889
+ Root      7 :    12.076775322951617   Change is   -0.339825053182582
+ Root      8 :    12.260889985353206   Change is   -0.013845475960778
+ Root      9 :    13.966666934254050   Change is   -0.119043265658619
+ Root     10 :    14.172142025143135   Change is   -0.018208211494988
  Iteration     3 Dimension    80 NMult    60 NNew     20
  CISAX will form    20 AO SS matrices at one time.
  NMat=    20 NSing=    20 JSym2X=-1.
  Root      1 has converged.
  Root      2 has converged.
- Root      3 not converged, maximum delta is    0.001254223196241
- Root      4 not converged, maximum delta is    0.004339812430119
+ Root      3 not converged, maximum delta is    0.001254223196254
+ Root      4 not converged, maximum delta is    0.004339812429872
  Root      5 has converged.
- Root      6 not converged, maximum delta is    0.001112216062962
- Root      7 not converged, maximum delta is    0.006149336599795
+ Root      6 not converged, maximum delta is    0.001112216062908
+ Root      7 not converged, maximum delta is    0.006149336599713
  Root      8 has converged.
- Root      9 not converged, maximum delta is    0.002899569457661
+ Root      9 not converged, maximum delta is    0.002899569457964
  Root     10 has converged.
  Excitation Energies [eV] at current iteration:
- Root      1 :     4.087059255455308   Change is   -0.000008783043911
- Root      2 :     9.096177162089422   Change is   -0.000110254364766
- Root      3 :     9.175863181747509   Change is   -0.000283023288403
- Root      4 :     9.789847320588542   Change is   -0.005129242155010
- Root      5 :    10.307015688123279   Change is   -0.000012215697545
- Root      6 :    11.593937793696927   Change is   -0.000295693934216
- Root      7 :    12.069708872226325   Change is   -0.007066450657968
- Root      8 :    12.260867890401393   Change is   -0.000022094882471
- Root      9 :    13.965157779042096   Change is   -0.001509155091975
- Root     10 :    14.172130156241835   Change is   -0.000011868867068
+ Root      1 :     4.087059255481677   Change is   -0.000008783043911
+ Root      2 :     9.096177162140600   Change is   -0.000110254364819
+ Root      3 :     9.175863181827935   Change is   -0.000283023288474
+ Root      4 :     9.789847320604178   Change is   -0.005129242154802
+ Root      5 :    10.307015688019057   Change is   -0.000012215697616
+ Root      6 :    11.593937793694185   Change is   -0.000295693934201
+ Root      7 :    12.069708872293537   Change is   -0.007066450658080
+ Root      8 :    12.260867890470736   Change is   -0.000022094882470
+ Root      9 :    13.965157779161760   Change is   -0.001509155092289
+ Root     10 :    14.172130156276012   Change is   -0.000011868867122
  Iteration     4 Dimension    90 NMult    80 NNew     10
  CISAX will form    10 AO SS matrices at one time.
  NMat=    10 NSing=    10 JSym2X=-1.
@@ -1657,16 +1655,16 @@
  Root      9 has converged.
  Root     10 has converged.
  Excitation Energies [eV] at current iteration:
- Root      1 :     4.087059255455288   Change is   -0.000000000000020
- Root      2 :     9.096177146320814   Change is   -0.000000015768606
- Root      3 :     9.175861724228316   Change is   -0.000001457519194
- Root      4 :     9.789818129121837   Change is   -0.000029191466706
- Root      5 :    10.307015688123231   Change is   -0.000000000000047
- Root      6 :    11.593933928922915   Change is   -0.000003864774011
- Root      7 :    12.069660104699610   Change is   -0.000048767526715
- Root      8 :    12.260867767087463   Change is   -0.000000123313931
- Root      9 :    13.965145044285808   Change is   -0.000012734756286
- Root     10 :    14.172130156241842   Change is    0.000000000000006
+ Root      1 :     4.087059255481516   Change is   -0.000000000000161
+ Root      2 :     9.096177146372076   Change is   -0.000000015768525
+ Root      3 :     9.175861724308733   Change is   -0.000001457519202
+ Root      4 :     9.789818129137364   Change is   -0.000029191466815
+ Root      5 :    10.307015688019057   Change is    0.000000000000000
+ Root      6 :    11.593933928920057   Change is   -0.000003864774126
+ Root      7 :    12.069660104766905   Change is   -0.000048767526632
+ Root      8 :    12.260867767156791   Change is   -0.000000123313944
+ Root      9 :    13.965145044405507   Change is   -0.000012734756253
+ Root     10 :    14.172130156275982   Change is   -0.000000000000030
  Convergence achieved on expansion vectors.
  ***********************************************************************
  Excited states from <AA,BB:AA,BB> singles matrix:
@@ -1676,90 +1674,90 @@
  Ground to excited state transition densities written to RWF  633
  Ground to excited state transition electric dipole moments (Au):
        state          X           Y           Z        Dip. S.      Osc.
-         1        -0.0000      0.0000     -0.0000      0.0000      0.0000
-         2        -0.0000     -0.8470      0.0000      0.7174      0.1599
-         3         0.0838     -0.0000     -0.0000      0.0070      0.0016
+         1         0.0000     -0.0000      0.0000      0.0000      0.0000
+         2         0.0000     -0.8470     -0.0000      0.7174      0.1599
+         3         0.0838      0.0000     -0.0000      0.0070      0.0016
          4        -0.0000      0.0000      0.4114      0.1692      0.0406
-         5         0.0000      0.0000     -0.0000      0.0000      0.0000
-         6        -0.0000      0.1361     -0.0000      0.0185      0.0053
-         7        -0.0000     -0.0000     -1.2220      1.4933      0.4416
-         8         0.0371      0.0000     -0.0000      0.0014      0.0004
-         9        -0.0000     -0.0000     -0.6396      0.4090      0.1400
-        10         0.0000      0.0000     -0.0000      0.0000      0.0000
+         5        -0.0000     -0.0000      0.0000      0.0000      0.0000
+         6         0.0000      0.1361     -0.0000      0.0185      0.0053
+         7         0.0000      0.0000     -1.2220      1.4933      0.4416
+         8         0.0371      0.0000      0.0000      0.0014      0.0004
+         9         0.0000     -0.0000     -0.6396      0.4090      0.1400
+        10         0.0000     -0.0000      0.0000      0.0000      0.0000
  Ground to excited state transition velocity dipole moments (Au):
        state          X           Y           Z        Dip. S.      Osc.
          1        -0.0000      0.0000     -0.0000      0.0000      0.0000
          2        -0.0000      0.2538     -0.0000      0.0644      0.1285
-         3        -0.0569      0.0000      0.0000      0.0032      0.0064
-         4        -0.0000      0.0000     -0.1345      0.0181      0.0335
-         5         0.0000     -0.0000      0.0000      0.0000      0.0000
-         6        -0.0000     -0.1028     -0.0000      0.0106      0.0165
+         3        -0.0569     -0.0000      0.0000      0.0032      0.0064
+         4         0.0000     -0.0000     -0.1345      0.0181      0.0335
+         5        -0.0000      0.0000     -0.0000      0.0000      0.0000
+         6        -0.0000     -0.1028      0.0000      0.0106      0.0165
          7         0.0000      0.0000      0.5287      0.2795      0.4201
-         8        -0.0345     -0.0000      0.0000      0.0012      0.0018
+         8        -0.0345     -0.0000     -0.0000      0.0012      0.0018
          9         0.0000      0.0000      0.3305      0.1092      0.1419
-        10         0.0000     -0.0000      0.0000      0.0000      0.0000
+        10         0.0000     -0.0000     -0.0000      0.0000      0.0000
  Ground to excited state transition magnetic dipole moments (Au):
        state          X           Y           Z
          1        -0.0000     -0.0000      1.1843
-         2         0.8153      0.0000      0.0000
-         3         0.0000     -1.5691     -0.0000
-         4        -0.0000     -0.0000      0.0000
-         5        -0.0000      0.0000     -0.6544
-         6         1.2239     -0.0000      0.0000
-         7        -0.0000     -0.0000     -0.0000
-         8        -0.0000      0.1253      0.0000
+         2         0.8153     -0.0000      0.0000
+         3        -0.0000     -1.5691     -0.0000
+         4         0.0000      0.0000      0.0000
+         5         0.0000     -0.0000     -0.6544
+         6         1.2239      0.0000      0.0000
+         7        -0.0000      0.0000      0.0000
+         8         0.0000      0.1253      0.0000
          9         0.0000      0.0000      0.0000
-        10        -0.0000     -0.0000     -0.0203
+        10         0.0000      0.0000     -0.0203
  Ground to excited state transition velocity quadrupole moments (Au):
        state          XX          YY          ZZ          XY          XZ          YZ
-         1        -0.0000      0.0000     -0.0000     -0.0272     -0.0000     -0.0000
-         2        -0.0000     -0.0000      0.0000     -0.0000      0.0000     -0.7989
-         3        -0.0000     -0.0000     -0.0000     -0.0000     -0.2692     -0.0000
-         4         0.2107     -0.1487     -0.3159     -0.0000     -0.0000      0.0000
-         5         0.0000      0.0000      0.0000      0.1542      0.0000      0.0000
-         6        -0.0000     -0.0000     -0.0000      0.0000     -0.0000     -0.0519
+         1        -0.0000     -0.0000     -0.0000     -0.0272     -0.0000     -0.0000
+         2         0.0000      0.0000      0.0000     -0.0000     -0.0000     -0.7989
+         3         0.0000      0.0000     -0.0000      0.0000     -0.2692      0.0000
+         4         0.2107     -0.1487     -0.3159     -0.0000      0.0000     -0.0000
+         5         0.0000      0.0000      0.0000      0.1542     -0.0000     -0.0000
+         6        -0.0000     -0.0000     -0.0000      0.0000      0.0000     -0.0519
          7        -0.2025     -0.6765     -0.5401      0.0000     -0.0000      0.0000
-         8        -0.0000     -0.0000      0.0000     -0.0000      0.0353      0.0000
+         8         0.0000      0.0000     -0.0000      0.0000      0.0353     -0.0000
          9        -0.0788     -0.6160     -0.4422      0.0000      0.0000     -0.0000
-        10         0.0000     -0.0000      0.0000      0.0253      0.0000      0.0000
+        10        -0.0000      0.0000     -0.0000      0.0253      0.0000     -0.0000
  <0|del|b> * <b|rxdel|0> + <0|del|b> * <b|delr+rdel|0>
  Rotatory Strengths (R) in cgs (10**-40 erg-esu-cm/Gauss)
        state          XX          YY          ZZ    R(velocity)    E-M Angle
          1        -0.0000     -0.0000     -0.0000     -0.0000       90.00
-         2         0.0000     -0.0000      0.0000      0.0000       90.00
-         3        -0.0000     -0.0000     -0.0000     -0.0000       90.00
+         2        -0.0000     -0.0000     -0.0000     -0.0000       90.00
+         3         0.0000      0.0000      0.0000      0.0000       90.00
          4         0.0000     -0.0000      0.0000     -0.0000       90.00
-         5        -0.0000     -0.0000     -0.0000     -0.0000       90.00
-         6        -0.0000     -0.0000     -0.0000     -0.0000       90.00
-         7        -0.0000     -0.0000     -0.0000     -0.0000       90.00
+         5         0.0000      0.0000     -0.0000      0.0000       90.00
+         6         0.0000     -0.0000     -0.0000     -0.0000       90.00
+         7         0.0000     -0.0000      0.0000      0.0000       90.00
          8        -0.0000     -0.0000     -0.0000     -0.0000       90.00
          9         0.0000     -0.0000      0.0000      0.0000       90.00
-        10         0.0000     -0.0000     -0.0000     -0.0000       90.00
+        10        -0.0000      0.0000     -0.0000      0.0000       90.00
  1/2[<0|r|b>*<b|rxdel|0> + (<0|rxdel|b>*<b|r|0>)*]
  Rotatory Strengths (R) in cgs (10**-40 erg-esu-cm/Gauss)
        state          XX          YY          ZZ     R(length)
-         1        -0.0000      0.0000      0.0000      0.0000
-         2         0.0000      0.0000     -0.0000      0.0000
-         3        -0.0000     -0.0000     -0.0000     -0.0000
-         4        -0.0000      0.0000     -0.0000     -0.0000
-         5         0.0000     -0.0000     -0.0000     -0.0000
-         6         0.0000      0.0000      0.0000      0.0000
-         7        -0.0000     -0.0000     -0.0000     -0.0000
-         8         0.0000     -0.0000      0.0000     -0.0000
-         9         0.0000      0.0000      0.0000      0.0000
-        10         0.0000      0.0000     -0.0000     -0.0000
+         1         0.0000     -0.0000     -0.0000     -0.0000
+         2        -0.0000     -0.0000      0.0000     -0.0000
+         3         0.0000      0.0000     -0.0000      0.0000
+         4         0.0000     -0.0000     -0.0000     -0.0000
+         5         0.0000     -0.0000      0.0000      0.0000
+         6        -0.0000     -0.0000      0.0000     -0.0000
+         7         0.0000     -0.0000      0.0000      0.0000
+         8        -0.0000     -0.0000     -0.0000     -0.0000
+         9        -0.0000      0.0000      0.0000      0.0000
+        10        -0.0000      0.0000      0.0000      0.0000
   1/2[<0|del|b>*<b|r|0> + (<0|r|b>*<b|del|0>)*] (Au)
        state          X           Y           Z        Dip. S.   Osc.(frdel)
-         1         0.0000      0.0000      0.0000     -0.0000     -0.0000
-         2         0.0000     -0.2150     -0.0000      0.2150      0.1433
+         1        -0.0000     -0.0000     -0.0000      0.0000      0.0000
+         2        -0.0000     -0.2150      0.0000      0.2150      0.1433
          3        -0.0048     -0.0000     -0.0000      0.0048      0.0032
-         4         0.0000      0.0000     -0.0553      0.0553      0.0369
-         5         0.0000     -0.0000     -0.0000      0.0000      0.0000
-         6         0.0000     -0.0140      0.0000      0.0140      0.0093
-         7        -0.0000     -0.0000     -0.6461      0.6461      0.4307
+         4        -0.0000     -0.0000     -0.0553      0.0553      0.0369
+         5         0.0000     -0.0000     -0.0000     -0.0000     -0.0000
+         6        -0.0000     -0.0140     -0.0000      0.0140      0.0093
+         7         0.0000      0.0000     -0.6461      0.6461      0.4307
          8        -0.0013     -0.0000     -0.0000      0.0013      0.0009
-         9        -0.0000     -0.0000     -0.2113      0.2113      0.1409
-        10         0.0000     -0.0000     -0.0000      0.0000      0.0000
+         9         0.0000     -0.0000     -0.2113      0.2113      0.1409
+        10         0.0000      0.0000     -0.0000     -0.0000     -0.0000
 
  Excitation energies and oscillator strengths:
  
@@ -2526,7 +2524,7 @@
        8 <- 20        -0.00136
        8 <- 24         0.00081
  SavETr:  write IOETrn=   770 NScale= 10 NData=  16 NLR=1 NState=   10 LETran=     190.
- Leave Link  914 at Thu Nov  5 12:53:28 2026, MaxMem=   134217728 cpu:               2.5 elap:               1.3
+ Leave Link  914 at Thu Nov  5 13:14:32 2026, MaxMem=   134217728 cpu:               2.5 elap:               1.2
  (Enter /usr/local/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -2562,36 +2560,36 @@
      2  O   -0.323008
      3  H    0.121294
      4  H    0.121294
- Sum of Mulliken charges =   0.00000
+ Sum of Mulliken charges =  -0.00000
  Mulliken charges with hydrogens summed into heavy atoms:
                1
      1  C    0.323008
      2  O   -0.323008
  Electronic spatial extent (au):  <R**2>=             60.3133
- Charge=              0.0000 electrons
+ Charge=             -0.0000 electrons
  Dipole moment (field-independent basis, Debye):
-    X=             -0.0000    Y=             -0.0000    Z=             -2.1875  Tot=              2.1875
+    X=             -0.0000    Y=              0.0000    Z=             -2.1875  Tot=              2.1875
  Quadrupole moment (field-independent basis, Debye-Ang):
    XX=            -11.4047   YY=            -11.5080   ZZ=            -11.9267
-   XY=              0.0000   XZ=              0.0000   YZ=              0.0000
+   XY=              0.0000   XZ=              0.0000   YZ=             -0.0000
  Traceless Quadrupole moment (field-independent basis, Debye-Ang):
    XX=              0.2084   YY=              0.1051   ZZ=             -0.3135
-   XY=              0.0000   XZ=              0.0000   YZ=              0.0000
+   XY=              0.0000   XZ=              0.0000   YZ=             -0.0000
  Octapole moment (field-independent basis, Debye-Ang**2):
   XXX=              0.0000  YYY=             -0.0000  ZZZ=              1.2437  XYY=              0.0000
-  XXY=             -0.0000  XXZ=              0.9134  XZZ=              0.0000  YZZ=              0.0000
+  XXY=              0.0000  XXZ=              0.9134  XZZ=              0.0000  YZZ=              0.0000
   YYZ=              0.0665  XYZ=             -0.0000
  Hexadecapole moment (field-independent basis, Debye-Ang**3):
  XXXX=             -9.1916 YYYY=            -17.9863 ZZZZ=            -44.4018 XXXY=             -0.0000
  XXXZ=             -0.0000 YYYX=             -0.0000 YYYZ=              0.0000 ZZZX=             -0.0000
- ZZZY=              0.0000 XXYY=             -4.7333 XXZZ=             -8.9025 YYZZ=            -10.1682
- XXYZ=              0.0000 YYXZ=             -0.0000 ZZXY=             -0.0000
+ ZZZY=             -0.0000 XXYY=             -4.7333 XXZZ=             -8.9025 YYZZ=            -10.1682
+ XXYZ=             -0.0000 YYXZ=             -0.0000 ZZXY=             -0.0000
  N-N= 3.122117450599D+01 E-N=-3.308443768168D+02  KE= 1.134845613367D+02
  Symmetry A1   KE= 1.031334662101D+02
- Symmetry A2   KE= 6.122561598629D-35
- Symmetry B1   KE= 3.635110862980D+00
- Symmetry B2   KE= 6.715984263650D+00
- Leave Link  601 at Thu Nov  5 12:53:28 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Symmetry A2   KE= 6.122561598194D-35
+ Symmetry B1   KE= 3.635110862989D+00
+ Symmetry B2   KE= 6.715984263639D+00
+ Leave Link  601 at Thu Nov  5 13:14:32 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l9999.exe)
  Electronic transition elements 
                  1             2             3             4             5 
@@ -2631,19 +2629,21 @@
 
  Test job not archived.
  1\1\GINC-GALAXY-BOOK2-AJC\SP\RB3LYP TD-FC\6-31G(d)\C1H2O1\AJC\05-Nov-2
- 026\0\\#P B3LYP/6-31G(d) TD(NStates=10) Geom=AllCheck Guess=Read IOp(9
- /40=4)\\h2co opt td\\0,1\C,0,0.,0.,-0.5168935275\O,0,0.,0.,0.689795202
- 8\H,0,0.,0.9375951374,-1.1114508377\H,0,0.,-0.9375951374,-1.1114508377
- \\Version=ES64L-G16RevC.01\State=1-A1\HF=-114.5004726\RMSD=3.685e-09\P
- G=C02V [C2(C1O1),SGV(H2)]\\@
+ 026\0\\#P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Gue
+ ss=Read\\h2co opt td\\0,1\C,0,0.,0.,-0.5168935275\O,0,0.,0.,0.68979520
+ 28\H,0,0.,0.9375951374,-1.1114508377\H,0,0.,-0.9375951374,-1.111450837
+ 7\\Version=ES64L-G16RevC.01\State=1-A1\HF=-114.5004726\RMSD=3.685e-09\
+ PG=C02V [C2(C1O1),SGV(H2)]\\@
 
 
- BETTER TO HUNT IN FIELDS, FOR HEALTH UNBOUGHT
- THAN FEE THE DOCTOR FOR A NAUSEOUS DRAUGHT.
- THE WISE, FOR CURE, ON EXERCISE DEPEND;
- GOD NEVER MADE HIS WORK FOR MAN TO MEND.
-     -- JOHN DRYDEN (1631-1700)
+ THERE IS AN OLD, OLD RECIPE IN MAINE FOR STEWING COOT. PLACE THE
+ BIRD IN A KETTLE OF WATER WITH A RED BUILDING BRICK FREE OF MORTAR AND
+ BLEMISHES. PARBOIL THE COOT AND BRICK TOGETHER FOR THREE HOURS.
+ POUR OFF THE WATER, REFILL THE KETTLE, AND AGAIN PARBOIL FOR THREE HOURS.
+ ONCE AGAIN POUR OFF THE WATER, FOR THE LAST TIME ADD FRESH WATER,
+ AND LET THE COOT AND BRICK SIMMER TOGETHER OVERNIGHT. IN THE MORNING,
+ THROW AWAY THE COOT AND EAT THE BRICK.
  Job cpu time:       0 days  0 hours  0 minutes  3.6 seconds.
  Elapsed time:       0 days  0 hours  0 minutes  1.8 seconds.
  File lengths (MBytes):  RWF=     22 Int=      0 D2E=      0 Chk=      2 Scr=      1
- Normal termination of Gaussian 16 at Thu Nov  5 12:53:28 2026.
+ Normal termination of Gaussian 16 at Thu Nov  5 13:14:32 2026.

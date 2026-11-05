@@ -1,7 +1,7 @@
  Entering Gaussian System, Link 0=g16
  Initial command:
- /usr/local/g16/l1.exe "/tmp/gqout/Gau-73.inp" -scrdir="/tmp/gqout/"
- Entering Link 1 = /usr/local/g16/l1.exe PID=        74.
+ /usr/local/g16/l1.exe "/tmp/gqout/Gau-512.inp" -scrdir="/tmp/gqout/"
+ Entering Link 1 = /usr/local/g16/l1.exe PID=       513.
   
  Copyright (c) 1988-2019, Gaussian, Inc.  All Rights Reserved.
   
@@ -102,7 +102,7 @@
  2/9=110/2;
  6/7=2,8=2,9=2,10=2,19=2,28=1/1;
  99/9=1/99;
- Leave Link    1 at Thu Nov  5 12:52:36 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link    1 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l101.exe)
  -------------------------------------
  formaldehyde opt stopped by MaxCycles
@@ -130,7 +130,7 @@
  NQMom=    0.0000000   0.0000000   0.0000000   0.0000000
  NMagM=    0.0000000   0.0000000   2.7928460   2.7928460
  AtZNuc=   6.0000000   8.0000000   1.0000000   1.0000000
- Leave Link  101 at Thu Nov  5 12:52:36 2026, MaxMem=   134217728 cpu:               0.5 elap:               0.2
+ Leave Link  101 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.4 elap:               0.2
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -154,7 +154,7 @@
  Number of steps in this run=      2 maximum allowed number of steps=    100.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:52:36 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -189,7 +189,7 @@
       4          1           0        0.815625    1.078125    0.000000
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         290.6779758          33.9664264          30.4126361
- Leave Link  202 at Thu Nov  5 12:52:36 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l301.exe)
  Standard basis: 3-21G (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -207,7 +207,7 @@
  Integral buffers will be    131072 words long.
  Raffenetti 1 integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  301 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -215,10 +215,10 @@
  One-electron integral symmetry used in STVInt
  NBasis=    22 RedAO= T EigKep=  3.60D-02  NBF=    18     4
  NBsUse=    22 1.00D-06 EigRej= -1.00D+00 NBFU=    18     4
- Leave Link  302 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l401.exe)
  ExpMin= 1.83D-01 ExpMax= 3.22D+02 ExpMxC= 3.22D+02 IAcc=3 IRadAn=         5 AccDes= 0.00D+00
  Harris functional with IExCor=  205 and IRadAn=       5 diagonalized for initial guess.
@@ -236,7 +236,7 @@
        Virtual   (A") (A') (A') (A') (A') (A") (A') (A') (A') (A')
                  (A") (A') (A') (A')
  The electronic state of the initial guess is 1-A'.
- Leave Link  401 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ Leave Link  401 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=837432.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -302,7 +302,7 @@
  RMSDP=5.38D-04 MaxDP=3.10D-03 DE=-2.94D-03 OVMax= 3.06D-03
 
  Cycle   5  Pass 1  IDiag  1:
- E= -113.181264257862     Delta-E=       -0.000146691261 Rises=F Damp=F
+ E= -113.181264257862     Delta-E=       -0.000146691262 Rises=F Damp=F
  DIIS: error= 6.13D-04 at cycle   5 NSaved=   5.
  NSaved= 5 IEnMin= 5 EnMin= -113.181264257862     IErMin= 5 ErrMin= 6.13D-04
  ErrMax= 6.13D-04  0.00D+00 EMaxC= 1.00D-01 BMatC= 5.49D-06 BMatP= 1.75D-04
@@ -388,12 +388,12 @@
  Coeff:     -0.115D-06 0.951D-06-0.179D-05 0.134D-04 0.236D-04-0.261D-03
  Coeff:      0.173D-02-0.104D-01 0.545D-01-0.265D+00 0.122D+01
  Gap=     0.561 Goal=   None    Shift=    0.000
- RMSDP=4.32D-09 MaxDP=1.80D-08 DE=-2.27D-13 OVMax= 2.48D-08
+ RMSDP=4.32D-09 MaxDP=1.80D-08 DE=-2.84D-14 OVMax= 2.48D-08
 
  SCF Done:  E(RHF) =  -113.181285530     A.U. after   11 cycles
             NFock= 11  Conv=0.43D-08     -V/T= 2.0048
  KE= 1.126409451234D+02 PE=-3.261246937709D+02 EE= 7.048117436094D+01
- Leave Link  502 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  502 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -453,14 +453,14 @@
  Symmetry A'   KE= 1.093351806988D+02
  Symmetry A"   KE= 3.305764424628D+00
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  601 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
- Leave Link  701 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  701 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -472,7 +472,7 @@
          wScrn=  0.000000 ICntrl=      2127 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Thu Nov  5 12:52:37 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  703 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
  (Enter /usr/local/g16/l716.exe)
  Dipole        = 7.47922134D-02 1.15410114D+00 0.00000000D+00
  ***** Axes restored to original set *****
@@ -486,7 +486,7 @@
       4        1          -0.000000000   -0.123589678   -0.077981018
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.180054256 RMS     0.092471977
- Leave Link  716 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -541,7 +541,7 @@
  Lowest energy point so far.  Saving SCF results.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -577,7 +577,7 @@
       4          1           0        0.880387    1.100805    0.000000
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         294.0563417          37.8560951          33.5384384
- Leave Link  202 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:13:14 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l301.exe)
  Standard basis: 3-21G (6D, 7F)
  Ernie: Thresh=  0.10000D-02 Tol=  0.10000D-05 Strict=F.
@@ -595,7 +595,7 @@
  Integral buffers will be    131072 words long.
  Raffenetti 1 integral format.
  Two-electron integral symmetry is turned on.
- Leave Link  301 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  301 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l302.exe)
  NPDir=0 NMtPBC=     1 NCelOv=     1 NCel=       1 NClECP=     1 NCelD=      1
          NCelK=      1 NCelE2=     1 NClLst=     1 CellRange=     0.0.
@@ -603,14 +603,14 @@
  One-electron integral symmetry used in STVInt
  NBasis=    22 RedAO= T EigKep=  4.22D-02  NBF=    18     4
  NBsUse=    22 1.00D-06 EigRej= -1.00D+00 NBFU=    18     4
- Leave Link  302 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  302 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l303.exe)
  DipDrv:  MaxL=1.
- Leave Link  303 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  303 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l401.exe)
  Initial guess from the checkpoint file:  "h2co_opt_maxcycles.chk"
- B after Tr=     0.000000   -0.000000   -0.000000
-         Rot=    0.999997    0.000000   -0.000000    0.002352 Ang=   0.27 deg.
+ B after Tr=    -0.000000   -0.000000    0.000000
+         Rot=    0.999997    0.000000    0.000000    0.002352 Ang=   0.27 deg.
  Guess basis will be translated and rotated to current coordinates.
  JPrj=2 DoOrth=T DoCkMO=T.
  Initial guess orbital symmetries:
@@ -629,7 +629,7 @@
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
  Harris En= -113.301503843893    
- Leave Link  401 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
+ Leave Link  401 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.2 elap:               0.1
  (Enter /usr/local/g16/l502.exe)
  Keep R1 ints in memory in symmetry-blocked form, NReq=837432.
  FoFCou: FMM=F IPFlag=           0 FMFlag=           0 FMFlg1=           0
@@ -766,7 +766,7 @@
  RMSDP=1.06D-07 MaxDP=5.13D-07 DE=-4.02D-11 OVMax= 6.38D-07
 
  Cycle  11  Pass 1  IDiag  1:
- E= -113.218357783946     Delta-E=       -0.000000000002 Rises=F Damp=F
+ E= -113.218357783946     Delta-E=       -0.000000000001 Rises=F Damp=F
  DIIS: error= 2.77D-08 at cycle  11 NSaved=  11.
  NSaved=11 IEnMin=11 EnMin= -113.218357783946     IErMin=11 ErrMin= 2.77D-08
  ErrMax= 2.77D-08  0.00D+00 EMaxC= 1.00D+00 BMatC= 1.12D-14 BMatP= 6.39D-13
@@ -776,12 +776,12 @@
  Coeff:     -0.268D-05-0.492D-06 0.469D-04-0.118D-03-0.443D-03 0.188D-02
  Coeff:     -0.471D-02 0.886D-02 0.455D-01-0.326D+00 0.128D+01
  Gap=     0.577 Goal=   None    Shift=    0.000
- RMSDP=1.60D-08 MaxDP=8.04D-08 DE=-1.59D-12 OVMax= 1.03D-07
+ RMSDP=1.60D-08 MaxDP=8.04D-08 DE=-1.31D-12 OVMax= 1.03D-07
 
  Cycle  12  Pass 1  IDiag  1:
- E= -113.218357783946     Delta-E=        0.000000000000 Rises=F Damp=F
+ E= -113.218357783946     Delta-E=       -0.000000000000 Rises=F Damp=F
  DIIS: error= 4.53D-09 at cycle  12 NSaved=  12.
- NSaved=12 IEnMin=11 EnMin= -113.218357783946     IErMin=12 ErrMin= 4.53D-09
+ NSaved=12 IEnMin=12 EnMin= -113.218357783946     IErMin=12 ErrMin= 4.53D-09
  ErrMax= 4.53D-09  0.00D+00 EMaxC= 1.00D+00 BMatC= 2.79D-16 BMatP= 1.12D-14
  IDIUse=1 WtCom= 1.00D+00 WtEn= 0.00D+00
  Coeff-Com:  0.489D-06 0.914D-07-0.881D-05 0.231D-04 0.811D-04-0.361D-03
@@ -789,19 +789,19 @@
  Coeff:      0.489D-06 0.914D-07-0.881D-05 0.231D-04 0.811D-04-0.361D-03
  Coeff:      0.944D-03-0.204D-02-0.805D-02 0.685D-01-0.368D+00 0.131D+01
  Gap=     0.577 Goal=   None    Shift=    0.000
- RMSDP=2.66D-09 MaxDP=1.65D-08 DE= 1.42D-13 OVMax= 1.98D-08
+ RMSDP=2.66D-09 MaxDP=1.65D-08 DE=-1.71D-13 OVMax= 1.98D-08
 
  SCF Done:  E(RHF) =  -113.218357784     A.U. after   12 cycles
             NFock= 12  Conv=0.27D-08     -V/T= 2.0033
  KE= 1.128477011733D+02 PE=-3.287513570470D+02 EE= 7.162870814372D+01
- Leave Link  502 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  502 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l701.exe)
  ... and contract with generalized density number  0.
  Compute integral first derivatives.
- Leave Link  701 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  701 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l702.exe)
  L702 exits ... SP integral derivatives will be done elsewhere.
- Leave Link  702 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  702 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l703.exe)
  Integral derivatives from FoFJK, PRISM(SPDF).
  Compute integral first derivatives, UseDBF=F ICtDFT=           0.
@@ -813,7 +813,7 @@
          wScrn=  0.000000 ICntrl=      2127 IOpCl=  0 I1Cent=           0 NGrid=           0
          NMat0=    1 NMatS0=      1 NMatT0=    0 NMatD0=    1 NMtDS0=    0 NMtDT0=    0
  Petite list used in FoFCou.
- Leave Link  703 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.1
+ Leave Link  703 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l716.exe)
  Dipole        = 3.36486106D-02 1.07155287D+00 0.00000000D+00
  ***** Axes restored to original set *****
@@ -827,7 +827,7 @@
       4        1          -0.000000000   -0.028096127   -0.019434229
  -------------------------------------------------------------------
  Cartesian Forces:  Max     0.055920397 RMS     0.025312745
- Leave Link  716 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  716 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l103.exe)
 
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
@@ -852,10 +852,10 @@
            A1           0.01109   0.00477  -0.01327   0.16116
            A2          -0.00271  -0.00111   0.00334  -0.00040   0.16012
            A3          -0.00838  -0.00366   0.00993  -0.00076   0.00027
-           D1          -0.00000  -0.00000   0.00000  -0.00000   0.00000
+           D1           0.00000   0.00000  -0.00000   0.00000  -0.00000
                           A3        D1
            A3           0.16049
-           D1           0.00000   0.02174
+           D1          -0.00000   0.02174
  ITU=  1  0
  Use linear search instead of GDIIS.
      Eigenvalues ---    0.02174   0.15985   0.16027   0.21903   0.61541
@@ -875,7 +875,7 @@
     A1        2.10908   0.00284  -0.00623   0.03533   0.02909   2.13817
     A2        2.13935   0.00006   0.00387  -0.00623  -0.00236   2.13699
     A3        2.03475  -0.00290   0.00236  -0.02909  -0.02673   2.00802
-    D1        3.14159  -0.00000   0.00000  -0.00000   0.00000   3.14159
+    D1        3.14159   0.00000   0.00000   0.00000   0.00000   3.14159
          Item               Value     Threshold  Converged?
  Maximum Force            0.034129     0.000450     NO 
  RMS     Force            0.020942     0.000300     NO 
@@ -903,7 +903,7 @@
  Largest change from initial coordinates is atom    3       0.069 Angstoms.
  GradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGradGrad
 
- Leave Link  103 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  103 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l202.exe)
                           Input orientation:                          
  ---------------------------------------------------------------------
@@ -925,7 +925,7 @@
  Framework group  CS[SG(CH2O)]
  Deg. of freedom     5
  Full point group                 CS      NOp   2
- RotChk:  IX=0 Diff= 3.16D-16
+ RotChk:  IX=0 Diff= 2.13D-16
  Largest Abelian subgroup         CS      NOp   2
  Largest concise Abelian subgroup C1      NOp   1
                          Standard orientation:                         
@@ -939,7 +939,7 @@
       4          1           0        0.880387    1.100805    0.000000
  ---------------------------------------------------------------------
  Rotational constants (GHZ):         294.0563417          37.8560951          33.5384384
- Leave Link  202 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
+ Leave Link  202 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.0 elap:               0.0
  (Enter /usr/local/g16/l601.exe)
  Copying SCF densities to generalized density rwf, IOpCl= 0 IROHF=0.
 
@@ -971,7 +971,7 @@
      2  O   -0.482121
      3  H    0.166266
      4  H    0.195104
- Sum of Mulliken charges =  -0.00000
+ Sum of Mulliken charges =   0.00000
  Mulliken charges with hydrogens summed into heavy atoms:
                1
      1  C    0.482121
@@ -999,13 +999,16 @@
  Symmetry A'   KE= 1.095164298947D+02
  Symmetry A"   KE= 3.331271278677D+00
  No NMR shielding tensors so no spin-rotation constants.
- Leave Link  601 at Thu Nov  5 12:52:38 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
+ Leave Link  601 at Thu Nov  5 13:13:15 2026, MaxMem=   134217728 cpu:               0.1 elap:               0.0
  (Enter /usr/local/g16/l9999.exe)
 
 
- GARBAGE IN, GARBAGE OUT
+     "IF I COULD JUST GET IT ON PAPER"
+ LIFE AND INK, THEY RUN OUT AT THE SAME TIME,
+ OR SO SAID MY OLD FRIEND THE SQUID.
+     -- JIMMY BUFFETT, 1981
  Error termination request processed by link 9999.
- Error termination via Lnk1e in /usr/local/g16/l9999.exe at Thu Nov  5 12:52:38 2026.
- Job cpu time:       0 days  0 hours  0 minutes  2.5 seconds.
- Elapsed time:       0 days  0 hours  0 minutes  1.3 seconds.
+ Error termination via Lnk1e in /usr/local/g16/l9999.exe at Thu Nov  5 13:13:15 2026.
+ Job cpu time:       0 days  0 hours  0 minutes  2.4 seconds.
+ Elapsed time:       0 days  0 hours  0 minutes  1.2 seconds.
  File lengths (MBytes):  RWF=      6 Int=      0 D2E=      0 Chk=      1 Scr=      1

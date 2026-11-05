@@ -114,3 +114,61 @@ class TestSynthetic:
     ])
     def test_which_routes_optimize(self, route, optimizes):
         assert go._Job(1, [], route, [], True).optimizes is optimizes
+
+
+# The builder's own Geometry optimization + excited states job, as run on G16 (inputs/ holds its exact text).
+H2CO = ("C 0.0 0.0 -0.53\n"
+        "O 0.0 0.0 0.68\n"
+        "H 0.0 0.95 -1.10\n"
+        "H 0.0 -0.95 -1.10")
+BUILDER_JOBS = {
+    "h2co_opt_td": {},
+    "h2co_opt_td_gen": {"basis": "Gen", "additional_input": "C O H 0\n6-31G(d)\n****", "excited_n_states": 3},
+}
+
+
+def builder_job(name, folder):
+    import gaussianInput as gi
+    step = gi.opt_excited_defaults(gi.GaussianStepSpec(multiplicity=1, memory="1GB", nproc=2, **BUILDER_JOBS[name]))
+    builder = gi.GaussianInputBuilder()
+    job = builder.prepare(gi.GaussianJobSpec(stem=name, output_dir=str(folder), geometry=H2CO, steps=[step]))
+    return builder, job
+
+
+class TestBuilderJobs:
+    @pytest.mark.parametrize("name", sorted(BUILDER_JOBS))
+    def test_the_fixture_input_is_the_builders(self, tmp_path, name):
+        builder, job = builder_job(name, tmp_path)
+        assert builder.input_text(job) == (DATA / "inputs" / f"{name}.gjf").read_text()
+        assert job.warnings == []
+
+    def test_the_gen_job_reads_its_basis_from_the_checkpoint(self, tmp_path):
+        builder, job = builder_job("h2co_opt_td_gen", tmp_path)
+        assert "ChkBasis" in " ".join(job.steps[1].route) and "Guess=Read" in " ".join(job.steps[1].route)
+
+    def test_the_optimized_geometry_reached_the_excited_step(self):
+        """Step 2 (Geom=AllCheck) ran at the geometry of step 1's completed optimization."""
+        text = text_of("h2co_opt_td.log")
+        optimized = go.parse_optimized_geometry(text, "h2co_opt_td.log")
+        step2 = text[text.index("Normal termination"):].split("\n", 1)[1]
+        lines = step2.splitlines()
+        start = next(k for k, line in enumerate(lines) if "Input orientation:" in line)
+        rows = [line.split() for line in lines[start + 5:start + 9]]
+        assert [tuple(float(v) for v in r[3:6]) for r in rows] == [a[1:] for a in optimized.atoms]
+        assert "Excitation energies and oscillator strengths" in step2
+
+    def test_the_excitation_tab_reads_the_jobs_files(self, tmp_path):
+        import gzip
+        import shutil
+        import excitationAnalysis as ea
+        import excitationData as ed
+        fchk = tmp_path / "h2co_opt_td_excited.fchk"
+        with gzip.open(DATA / "h2co_opt_td_excited.fchk.gz", "rb") as src, open(fchk, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        shutil.copy(DATA / "h2co_opt_td.log", tmp_path / "h2co_opt_td.log")
+        log = ed.sibling_excitation_file(fchk)
+        assert log == tmp_path / "h2co_opt_td.log"
+        data = ed.read_excitation_file(log)
+        assert len(data.states) == 10 and data.blocks == 1
+        results = ea.ExcitationAnalyser().run(fchk, log, 1)
+        assert results is not None

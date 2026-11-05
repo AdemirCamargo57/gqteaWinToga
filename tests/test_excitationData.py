@@ -221,6 +221,26 @@ def test_sibling_excitation_file(tmp_path):
     assert ed.sibling_excitation_file(fchk) == tmp_path / "mol.log"
 
 
+def test_sibling_of_an_excited_checkpoint_is_the_jobs_output(tmp_path):
+    """<stem>_excited.fchk (the builder's Opt + excited states job) belongs to <stem>.log."""
+    fchk = tmp_path / "mol_excited.fchk"
+    fchk.write_text("")
+    assert ed.sibling_excitation_file(fchk) is None
+    (tmp_path / "mol.out").write_text("")
+    assert ed.sibling_excitation_file(fchk) == tmp_path / "mol.out"
+    (tmp_path / "mol.log").write_text("")
+    assert ed.sibling_excitation_file(fchk) == tmp_path / "mol.log"
+    (tmp_path / "mol_excited.out").write_text("")
+    assert ed.sibling_excitation_file(fchk) == tmp_path / "mol_excited.out"      # its own output first
+    bare = tmp_path / "_excited.fchk"
+    assert ed.sibling_excitation_file(bare) is None                              # nothing left to strip
+
+
+def test_excited_suffix_matches_the_builder():
+    import gaussianKeywords as gk
+    assert ed.EXCITED_SUFFIX == gk.EXCITED_CHK_SUFFIX
+
+
 class TestTransitionDipoles:
     HARTREE_TO_EV = 27.211386245988
 

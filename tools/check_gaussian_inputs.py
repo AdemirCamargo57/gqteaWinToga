@@ -57,6 +57,11 @@ JOBS = {
     "irc_rcfc": (HCN_TS_GUESS, [TS_FREQ, replace(gi.linked_step(TS_FREQ), job_type=gk.JOB_IRC,
                                                  irc_force_constants=gk.FC_RCFC, irc_max_points=5)], False),
     "fukui": (WATER, [gi.fukui_defaults(step(fukui_plus_multiplicity=2, fukui_minus_multiplicity=2))], True),
+    # Geometry optimization + excited states: Opt, then TD with Geom=AllCheck from %OldChk (2 steps).
+    "opt_excited": (WATER, [gi.opt_excited_defaults(step(excited_n_states=3))], True),
+    # Gen in step 1 -> ChkBasis in step 2.
+    "opt_excited_gen": (WATER, [gi.opt_excited_defaults(step(basis="Gen", additional_input="O H 0\nSTO-3G\n****",
+                                                             excited_n_states=3))], True),
 }
 
 
