@@ -312,8 +312,10 @@ class GaussianInputBuilderUI:
         self.modred_add_button = toga.Button("Add", on_press=self.add_modredundant_line, style=Pack(width=60))
         return self._panel(
             self._row(self.load_geometry_button,
-                      self._hint("   .xyz .gjf .com .fchk .mol .sdf .mol2 .pdb; a .gjf/.fchk also sets the charge "
-                                 "and multiplicity")),
+                      self._hint("   .xyz .gjf .com .fchk .log .out .mol .sdf .mol2 .pdb; a .gjf/.fchk/.log/.out also "
+                                 "sets the charge and multiplicity")),
+            self._hint("A Gaussian .log/.out gives the geometry of its last completed optimization; an optimization "
+                       "that did not converge is refused."),
             self.geometry_input,
             self._hint("The geometry belongs to the whole job: step 1 writes it, and a later step can write it again."),
             self._field("Geometry source:", self._choice("geometry_source_selection", gk.GEOMETRY_SOURCES, 380)),
@@ -528,6 +530,9 @@ class GaussianInputBuilderUI:
     async def _show_error(self, title: str, message: str):
         await self.window.dialog(toga.ErrorDialog(title, message))
 
+    async def _show_info(self, title: str, message: str):
+        await self.window.dialog(toga.InfoDialog(title, message))
+
     async def _confirm(self, title: str, message: str) -> bool:
         return bool(await self.window.dialog(toga.QuestionDialog(title, message)))
 
@@ -619,23 +624,27 @@ class GaussianInputBuilderUI:
             path = await self.window.dialog(toga.OpenFileDialog(title="Geometry of the molecule",
                                                                 file_types=gi.GEOMETRY_FILE_TYPES))
             if path:
-                self.apply_geometry_file(path)
+                notes = self.apply_geometry_file(path)
+                if notes:
+                    await self._show_info("Geometry Notes", "\n".join(notes))
         except ValueError as exc:
             await self._show_error("Geometry Error", str(exc))
         except Exception as exc:
             await self._show_error("File Selection Error", str(exc))
 
-    def apply_geometry_file(self, path):
-        """Fill the geometry (and the charge/multiplicity a .gjf/.fchk gives); keep a typed job name.
+    def apply_geometry_file(self, path) -> List[str]:
+        """Fill the geometry (and the charge/multiplicity a .gjf/.fchk/.log/.out gives); keep a typed job name.
 
         The Fukui ion multiplicities are cleared, never guessed: they belong to the previous molecule.
+        Returns the notes of the file (a Gaussian output: e.g. a later optimization that did not complete).
         """
         path = Path(path)
-        text, charge, mult = gi.read_geometry_file(path)
+        geometry = gi.load_geometry_file(path)
+        charge, mult = geometry.charge, geometry.multiplicity
         self._store_current()
         self._syncing = True
         try:
-            _assign(self.geometry_input, "value", text)
+            _assign(self.geometry_input, "value", geometry.text)
             if charge is not None:
                 _assign(self.charge_input, "value", str(charge))
             if mult is not None:
@@ -654,8 +663,12 @@ class GaussianInputBuilderUI:
         several = len(own) > 1
         note = (f" Step{'s' if several else ''} {', '.join(own)} {'keep their' if several else 'keeps its'} "
                 "own charge and multiplicity: check them.") if own else ""
-        self._status(f"Geometry loaded from {path.name}.{note}")
+        what = geometry.source[:1].upper() + geometry.source[1:] if geometry.source else "Geometry"
+        self._status(f"{what} loaded from {path.name}.{note}")
+        if geometry.notes:
+            _assign(self.messages_output, "value", "\n".join(f"NOTE: {n}" for n in geometry.notes))
         self.refresh()
+        return list(geometry.notes)
 
     async def browse_output_dir(self, widget):
         try:

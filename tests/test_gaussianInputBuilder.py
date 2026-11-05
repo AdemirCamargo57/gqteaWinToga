@@ -45,6 +45,7 @@ def make_ui(tmp_path):
         ui.dialogs.append((title, message))
         return ui.answers.pop(0) if ui.answers else True
     ui._show_error = record
+    ui._show_info = record
     ui._confirm = confirm
     return ui
 
@@ -200,6 +201,7 @@ def test_window_module_imports_toga_but_the_core_does_not():
 
 
 FUKUI_INPUTS = SRC / "tests" / "data" / "fukui" / "inputs"
+OUTPUTS = SRC / "tests" / "data" / "gaussian_output"
 
 
 def load_phenol(ui, ions=True):
@@ -286,6 +288,35 @@ class TestGeometryAndFiles:
         ui.stem_input.value = ""
         ui.apply_geometry_file(N)
         assert ui.stem_input.value == "phenol" and ui.output_dir_input.value == str(tmp_path)
+
+    def test_apply_an_output_fills_geometry_charge_and_multiplicity(self, tmp_path):
+        ui = make_ui(tmp_path)
+        ui.charge_input.value, ui.multiplicity_input.value = "1", "2"
+        notes = ui.apply_geometry_file(OUTPUTS / "h2o_opt.log")
+        assert notes == [] and ui.charge_input.value == "0" and ui.multiplicity_input.value == "1"
+        assert len(gi.fi.parse_geometry(ui.geometry_input.value)) == 3
+        assert ui.status_label.text.startswith("The optimized geometry of job 1 of 1 loaded from h2o_opt.log.")
+
+    def test_load_geometry_shows_the_notes(self, tmp_path):
+        ui = make_ui(tmp_path)
+
+        async def ask(*args, **kwargs):
+            return OUTPUTS / "h2o_opt_then_failed.log"
+        ui.window = SimpleNamespace(dialog=ask)
+        asyncio.run(ui.load_geometry(None))
+        assert ui.dialogs[0][0] == "Geometry Notes" and "job 2" in ui.dialogs[0][1]
+        assert "NOTE: job 2" in ui.messages_output.value
+
+    def test_load_geometry_refuses_an_unconverged_output(self, tmp_path):
+        ui = make_ui(tmp_path)
+        before = ui.geometry_input.value
+
+        async def ask(*args, **kwargs):
+            return OUTPUTS / "h2co_opt_maxcycles.log"
+        ui.window = SimpleNamespace(dialog=ask)
+        asyncio.run(ui.load_geometry(None))
+        assert ui.dialogs[0][0] == "Geometry Error" and "not optimized" in ui.dialogs[0][1]
+        assert ui.geometry_input.value == before
 
     def test_apply_keeps_a_typed_job_name(self, tmp_path):
         ui = make_ui(tmp_path)

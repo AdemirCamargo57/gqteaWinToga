@@ -678,6 +678,30 @@ class TestGeometryFiles:
         text, charge, mult = gi.read_geometry_file(path)
         assert charge is None and mult is None and len(fi.parse_geometry(text)) == 3
 
+    OUTPUTS = SRC / "tests" / "data" / "gaussian_output"
+
+    @pytest.mark.parametrize("name", ["h2o_opt.log", "h2o_opt_freq.out"])
+    def test_gaussian_output_gives_the_optimized_geometry(self, name):
+        g = gi.load_geometry_file(self.OUTPUTS / name)
+        assert (g.charge, g.multiplicity) == (0, 1) and len(fi.parse_geometry(g.text)) == 3
+        assert g.source.startswith("the optimized geometry of job 1 of") and g.notes == []
+        assert gi.read_geometry_file(self.OUTPUTS / name) == (g.text, 0, 1)
+
+    def test_gaussian_output_notes(self):
+        g = gi.load_geometry_file(self.OUTPUTS / "h2o_opt_then_failed.log")
+        assert len(g.notes) == 1 and g.source == "the optimized geometry of job 1 of 2"
+
+    def test_unconverged_output_is_refused(self):
+        with pytest.raises(ValueError, match="no successfully optimized geometry"):
+            gi.load_geometry_file(self.OUTPUTS / "h2co_opt_maxcycles.log")
+
+    def test_other_files_have_no_notes(self):
+        g = gi.load_geometry_file(FUKUI_INPUTS / "phenol_Np1.gjf")
+        assert g.notes == [] and g.source == "" and (g.charge, g.multiplicity) == (-1, 2)
+
+    def test_output_suffixes_are_offered(self):
+        assert {"log", "out"} <= set(gi.GEOMETRY_FILE_TYPES)
+
     def test_unsupported_file(self, tmp_path):
         path = tmp_path / "x.log"
         path.write_text("")

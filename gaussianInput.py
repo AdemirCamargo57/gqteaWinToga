@@ -1503,17 +1503,43 @@ def read_input_file(path) -> Tuple[GaussianJobSpec, List[str]]:
 # ----------------------------------------------------------------------
 # Files the window reads, and paths it prints
 # ----------------------------------------------------------------------
-GEOMETRY_FILE_TYPES = ["xyz", "gjf", "com", "gau", "fchk", "fch", "pdb", "ent", "mol", "sdf", "mol2"]
+GEOMETRY_FILE_TYPES = ["xyz", "gjf", "com", "gau", "fchk", "fch", "log", "out", "pdb", "ent", "mol", "sdf", "mol2"]
 FCHK_SUFFIXES = (".fchk", ".fch")
+OUTPUT_SUFFIXES = (".log", ".out")
+
+
+@dataclass
+class GeometryFile:
+    """A loaded geometry: Angstrom 'El x y z' text, charge/multiplicity when the file gives them, notes for
+    the user, and what was taken from the file (blank for a plain structure file)."""
+    text: str
+    charge: Optional[int]
+    multiplicity: Optional[int]
+    notes: List[str] = field(default_factory=list)
+    source: str = ""
 
 
 def read_geometry_file(path) -> Tuple[str, Optional[int], Optional[int]]:
-    """(Angstrom 'El x y z' text, charge or None, multiplicity or None) from a structure file.
+    """(Angstrom 'El x y z' text, charge or None, multiplicity or None): load_geometry_file without notes."""
+    geometry = load_geometry_file(path)
+    return geometry.text, geometry.charge, geometry.multiplicity
 
-    A Gaussian input or formatted checkpoint also gives the charge and multiplicity.
+
+def load_geometry_file(path) -> GeometryFile:
+    """The geometry of a structure file.
+
+    A Gaussian input or formatted checkpoint also gives the charge and multiplicity; a Gaussian output
+    (.log/.out) gives the geometry, charge and multiplicity of its last completed optimization
+    (``gaussianOutput``), and refuses a file in which no optimization completed.
     """
-    import molecularFileFormats as mff        # numpy + scipy: loaded when a file is opened
     path = Path(path)
+    if path.suffix.lower() in OUTPUT_SUFFIXES:
+        import gaussianOutput as go
+        optimized = go.read_optimized_geometry(path)
+        return GeometryFile("\n".join(fi.format_geometry(optimized.atoms)), optimized.charge,
+                            optimized.multiplicity, list(optimized.notes),
+                            f"the optimized geometry of job {optimized.job_number} of {optimized.job_count}")
+    import molecularFileFormats as mff        # numpy + scipy: loaded when a file is opened
     if path.suffix.lower() in FCHK_SUFFIXES:
         import gaussianWavefunction as gw
         try:
@@ -1524,8 +1550,8 @@ def read_geometry_file(path) -> Tuple[str, Optional[int], Optional[int]]:
             raise ValueError(f"{path.name} is not a readable formatted checkpoint: {exc}") from exc
         atoms = [(fi.element_symbol(str(z)), *(mff.BOHR_RADIUS_ANGSTROM * float(v) for v in xyz[3 * i:3 * i + 3]))
                  for i, z in enumerate(numbers)]
-        return "\n".join(fi.format_geometry(atoms)), int(sections.get("Charge", 0)), \
-            int(sections.get("Multiplicity", 1))
+        return GeometryFile("\n".join(fi.format_geometry(atoms)), int(sections.get("Charge", 0)),
+                            int(sections.get("Multiplicity", 1)))
     structure = mff.read_structure_file(path)
     atoms = [(element, *(float(v) for v in xyz)) for element, xyz in zip(structure.elements, structure.coordinates)]
     text = "\n".join(fi.format_geometry(atoms))
@@ -1536,7 +1562,7 @@ def read_geometry_file(path) -> Tuple[str, Optional[int], Optional[int]]:
             if len(tokens) == 2 and all(t.lstrip("+-").isdigit() for t in tokens):
                 charge, mult = int(tokens[0]), int(tokens[1])
                 break
-    return text, charge, mult
+    return GeometryFile(text, charge, mult)
 
 
 def wsl_path(path) -> str:
