@@ -2502,7 +2502,8 @@ PANELS (of the selected step)
              Tight, MaxCycles); Frequency (Raman, VCD, Anharmonic);
              Opt+Freq; IRC (direction, force constants, MaxPoints,
              StepSize); Scan (relaxed, Opt=ModRedundant); Stability
-             (Stable=Opt); NMR (GIAO, CSGT, IGAIM, All; SpinSpin); Fukui
+             (Stable=Opt); NMR (GIAO, CSGT, IGAIM, All; SpinSpin);
+             Geometry optimization + excited states (see below); Fukui
              functions (see below).
              IRC needs force constants: CalcFC, CalcAll or RCFC (Read
              Cartesian FC from checkpoint). Gaussian 16 refuses ReadFC for
@@ -2513,11 +2514,22 @@ PANELS (of the selected step)
              coefficients" writes IOp(9/40=4), which the NTO and Excitation
              tabs of the 3D viewer need), spin prefix R/U/RO, method family
              and method, basis set (6-31G and 6-311G take the diffuse and
-             polarization lists), empirical dispersion.
+             polarization lists; "Read from checkpoint (ChkBasis)" takes the
+             basis set and ECP of the checkpoint a linked step reads),
+             empirical dispersion.
   Molecule   geometry (Load geometry... or Cartesian Angstrom lines), where
              this step's geometry comes from, charge, multiplicity, scan and
              freeze lines (helper row: type, atoms, Scan/Freeze, steps, step
              size, Add; or type B/A/D lines).
+             Load geometry... reads .xyz, .gjf/.com, .fchk, .mol/.sdf, .mol2,
+             .pdb and Gaussian outputs (.log/.out). From an output it takes
+             the geometry, charge and multiplicity of the LAST COMPLETED
+             optimization (the one followed by "Optimization completed"); in a
+             multi-step output, the last step whose optimization completed. An
+             output whose optimization never completed (MaxCycles reached, an
+             error termination, a job still running) is refused: its last
+             geometry is not optimized. A dialog lists notes, e.g. a later
+             step's optimization that did not complete.
   Title  Link 0 (%Mem, %NProcShared, %Chk, %OldChk, extra % lines)  General
   (print level, SCF=Tight, SCF=QC, NoSymm, Polar, connectivity, formchk
   script)  Guess  Pop  Solvation (IEFPCM, CPCM, SMD and the solvent)
@@ -2540,6 +2552,29 @@ LINKED STEPS (--Link1--)
   reads a checkpoint (Geom=Check or AllCheck, Guess=Read, ReadFC, RCFC)
   needs one written by an earlier step, or named in %OldChk. Checkpoint
   names are case-sensitive (the job runs under Linux).
+
+GEOMETRY OPTIMIZATION + EXCITED STATES (job type)
+  Two linked steps from one set of panels:
+  Step 1  the optimization, with the Method panel's model chemistry, the
+          Optimization options (minimum only) and, if "Confirm the minimum
+          with frequencies" is on, Opt Freq. It writes %Chk (<name>.chk).
+  Step 2  vertical excitations at the optimized geometry, set in the Job
+          Type panel: TD-SCF, TDA or CIS; number of states (10), Root,
+          Singlets/Triplets/50-50; method family and basis set ("Same as
+          optimization" or their own); IOp(9/40=4) (on); Excited-state
+          keywords (step 2 only, e.g. Density=Current); its %Chk
+          (<name>_excited.chk). It reads the geometry, charge and
+          multiplicity with Geom=AllCheck from %OldChk=<name>.chk, which it
+          leaves unchanged, and repeats %Mem, %NProcShared, the print level,
+          SCF/NoSymm/Polar, the solvation and the Additional Keywords (without
+          Opt/Freq). It starts from the optimization's orbitals (Guess=Read)
+          only when it uses the same basis set; otherwise from a new guess (a
+          warning says so). A Gen/GenECP basis is reused with ChkBasis.
+  Restricted-open (RO) references and Compound methods are refused. If the
+  optimization fails, Gaussian stops before step 2.
+  For the Excitation (or NTO) tab of the 3D viewer, open <name>_excited.fchk
+  (made by <name>_formchk.sh from the binary <name>_excited.chk) and give it
+  <name>.log, the output of both steps; the tab finds it by itself.
 
 OPEN INPUT...
   Reads a .gjf/.com/.gau back into the panels, every step. Keywords no

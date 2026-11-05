@@ -432,9 +432,9 @@ The details are in [Natural Transition Orbitals (NTO)](#natural-transition-orbit
 
 ### Analyse an Electronic Excitation
 
-1. Run a Gaussian CIS, TDA or TD job with `IOp(9/40=4)` in the route (for example `# CAM-B3LYP/6-31G(d) TD(NStates=5) IOp(9/40=4)`) and convert its checkpoint: `formchk name.chk name.fchk`.
+1. Run a Gaussian CIS, TDA or TD job with `IOp(9/40=4)` in the route (for example `# CAM-B3LYP/6-31G(d) TD(NStates=5) IOp(9/40=4)`) and convert its checkpoint: `formchk name.chk name.fchk`. To optimize the molecule first, use the Gaussian 16 Input Builder's job type [Geometry optimization + excited states](#geometry-optimization--excited-states-job-type): it writes both steps, and its formchk script makes `name_excited.fchk`.
 2. Open **Tools > 3D Molecular Viewer** and choose the **Excitation** tab.
-3. Browse to `name.fchk`; `name.log` (or `name.out`) beside it is filled in. Click **Load**.
+3. Browse to `name.fchk` (or `name_excited.fchk`); `name.log` (or `name.out`) beside it is filled in. Click **Load**.
 4. Choose an excited state. Optionally choose the atom partition (Mulliken-like or Hirshfeld) and type fragments such as `11-13; 1-10; 14-16`.
 5. Click **Run**. Read the classification line and the descriptor table; the full report `name_state<n>_excitation.txt` is written to the output folder.
 6. Choose **Show** (hole and electron, Sr, charge density difference, transition density, C functions) and click **Display** to see the surfaces, the hole/electron centroids and the charge-transfer arrow.
@@ -1027,8 +1027,8 @@ Common settings:
 
 | Panel | Controls | Writes |
 |---|---|---|
-| Job Type | Energy; Optimization (minimum or TS (Berny), force constants, tight convergence, maximum cycles); Frequency (Raman, VCD, anharmonic); Opt+Freq; IRC (direction, force constants (required: CalcFC, CalcAll or *Read Cartesian FC from checkpoint* (RCFC); Gaussian 16 refuses ReadFC for IRC), MaxPoints, StepSize); Scan (relaxed); Stability (reoptimize); NMR (GIAO, CSGT, IGAIM, All; spin-spin); Fukui functions | `Opt=(TS,CalcFC,Tight,MaxCycles=n)`, `Freq=(Raman,VCD,Anharmonic)`, `IRC=(...)`, `Opt=ModRedundant`, `Stable=Opt`, `NMR=(...)` |
-| Method | electronic state (ground, TD-SCF, TDA, CIS, ZINDO; number of states, Root, Singlets/Triplets/50-50); *Print all excitation coefficients*; spin (default, R, U, RO); method family (Hartree-Fock, DFT, semi-empirical, MP2, MP4(SDTQ), CCSD, CCSD(T), compound) and method; basis set, with diffuse (`+`, `++`) and polarization lists for 6-31G and 6-311G; empirical dispersion | `UB3LYP/6-31+G(d,p)`, `TD=(NStates=10)`, `CIS(NStates=3)/cc-pVDZ`, `IOp(9/40=4)`, `EmpiricalDispersion=GD3BJ` |
+| Job Type | Energy; Optimization (minimum or TS (Berny), force constants, tight convergence, maximum cycles); Frequency (Raman, VCD, anharmonic); Opt+Freq; IRC (direction, force constants (required: CalcFC, CalcAll or *Read Cartesian FC from checkpoint* (RCFC); Gaussian 16 refuses ReadFC for IRC), MaxPoints, StepSize); Scan (relaxed); Stability (reoptimize); NMR (GIAO, CSGT, IGAIM, All; spin-spin); [Geometry optimization + excited states](#geometry-optimization--excited-states-job-type); Fukui functions | `Opt=(TS,CalcFC,Tight,MaxCycles=n)`, `Freq=(Raman,VCD,Anharmonic)`, `IRC=(...)`, `Opt=ModRedundant`, `Stable=Opt`, `NMR=(...)` |
+| Method | electronic state (ground, TD-SCF, TDA, CIS, ZINDO; number of states, Root, Singlets/Triplets/50-50); *Print all excitation coefficients*; spin (default, R, U, RO); method family (Hartree-Fock, DFT, semi-empirical, MP2, MP4(SDTQ), CCSD, CCSD(T), compound) and method; basis set, with diffuse (`+`, `++`) and polarization lists for 6-31G and 6-311G, or *Read from checkpoint (ChkBasis)* for a linked step; empirical dispersion | `UB3LYP/6-31+G(d,p)`, `TD=(NStates=10)`, `CIS(NStates=3)/cc-pVDZ`, `IOp(9/40=4)`, `EmpiricalDispersion=GD3BJ` |
 | Molecule | geometry (**Load geometry...** or Cartesian `Element x y z` lines in Å), geometry source of the step, charge, multiplicity, scan and freeze lines | the molecule specification, `Geom=Check` / `Geom=AllCheck`, the ModRedundant section |
 | Title | one line; blank = the job name | the title section |
 | Link 0 | `%Mem`, `%NProcShared`, `%Chk` (on by default, `<name>.chk`), `%OldChk`, extra `%` lines | the Link 0 section |
@@ -1039,6 +1039,14 @@ Common settings:
 | Add. Inp. | free text | sections after the geometry: a `Gen` basis set, ECPs, … |
 
 *Print all excitation coefficients* writes `IOp(9/40=4)`: without it Gaussian prints only the largest CI coefficients, and the 3D viewer's NTO and Excitation tabs report a normalisation deviation.
+
+**Load geometry...** reads `.xyz`, `.gjf`/`.com`/`.gau`, `.fchk`/`.fch`, `.mol`/`.sdf`, `.mol2`, `.pdb`/`.ent` and Gaussian **output files** (`.log`, `.out`). A Gaussian input, formatted checkpoint or output also sets the charge and multiplicity. From an output the builder takes the geometry of the **last completed optimization**, not simply the last geometry in the file:
+
+- The output is read as its jobs: each `--Link1--` step, and the frequency part that Gaussian runs itself after `Opt Freq`. Only jobs whose route has `Opt` count.
+- The geometry is the one Gaussian declared converged: the orientation block just before `Optimization completed` (*Input orientation*, the frame of your input; *Standard orientation* when only that one is printed). The atom order is the file's. The charge and multiplicity are those of the same job.
+- In a multi-step output, the last job whose optimization completed is used. If a later job's optimization did not complete, its geometry is **not** used; a dialog says which job was taken and why.
+- An output in which no optimization completed (*Number of steps exceeded*, an error termination, or a job still running or cut off) is **refused** with the reason, and the molecule panel is left as it was: an unconverged structure is never imported. An output without any optimization, a non-Gaussian `.out` (ORCA, ...) and ghost or dummy atoms are refused too.
+- A relaxed scan gives its last optimized point, and a job that completed its optimization but did not end with *Normal termination* is accepted; both are noted.
 
 **IRC force constants.** Gaussian 16 needs force constants for an IRC. `CalcFC` computes them at the start. `RCFC` reads the Cartesian force constants from the checkpoint, and only a frequency run stores them: put the TS optimization and the frequencies in one step (job type Opt+Freq, *Optimize to a* TS) and add the IRC as a linked step. After an Opt-only TS step, Gaussian 16 stops in l123, so use `CalcFC` there; the builder warns when no earlier step runs `Freq`. `IRC=ReadFC` is refused: Gaussian 16 does not accept it for IRC. This sequence was checked with Gaussian 16 C.01 (3 normal terminations).
 
@@ -1061,6 +1069,52 @@ Common settings:
 1. In a Linux shell with Gaussian 16 set up, go to the folder that holds the input. Under WSL, `C:\jobs\water` is `/mnt/c/jobs/water`. On a cluster, copy the folder there first.
 2. Run `g16 < <name>.gjf > <name>.log`, or submit the job through the cluster's queue.
 3. Run `bash <name>_formchk.sh` to convert every checkpoint to a `.fchk`, which the 3D Molecular Viewer's Orbitals, ESP, QTAIM, NTO and Excitation tabs read.
+
+##### Geometry optimization + excited states job type
+
+The job type **Geometry optimization + excited states** writes one input with two linked steps: an optimization, then the vertical excitations at the optimized geometry. Its result opens directly in the 3D Molecular Viewer's [Excitation](#electron-excitation-analysis-excitation-tab) and NTO tabs.
+
+| Step | Calculation | Set in | Link 0 | Geometry, charge, multiplicity |
+|---|---|---|---|---|
+| 1 | `Opt` (or `Opt Freq`) | the Method, Molecule, Link 0, General, Guess, Pop and Solvation panels and the Optimization options | `%Chk=<name>.chk`, `%Mem`, `%NProcShared` | the Molecule panel |
+| 2 | `TD`, `TDA` or `CIS` single point | the *Geometry optimization + excited states* section of the Job Type panel | `%OldChk=<name>.chk`, `%Chk=<name>_excited.chk`, `%Mem`, `%NProcShared` | `Geom=AllCheck`: read from `<name>.chk` |
+
+Example (water, the defaults):
+
+```text
+%Chk=water.chk
+%Mem=2GB
+%NProcShared=4
+#P B3LYP/6-31G(d) Opt
+
+water
+
+0 1
+O ...
+
+--Link1--
+%OldChk=water.chk
+%Chk=water_excited.chk
+%Mem=2GB
+%NProcShared=4
+#P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read
+```
+
+- **Step 1** optimizes towards a minimum (TS and *Read from checkpoint* force constants are not offered; freeze lines are allowed, scan lines are not). *Confirm the minimum with frequencies (Opt Freq)* adds `Freq`, with the Raman/VCD/Anharmonic options. Compound methods are refused.
+- **Step 2** has its own controls: the excited-state method (TD-SCF, TDA, CIS), the number of states (default 10), the state of interest (Root), Singlets/Triplets/50-50 (closed-shell references only), the method family and functional and the basis set (each *Same as optimization* or its own), *Print all excitation coefficients* (`IOp(9/40=4)`, on by default, which the Excitation and NTO tabs need), *Excited-state keywords* (added to step 2 only, for example `Density=Current`), and *Excited-state %Chk* (blank = `<name>_excited.chk`, which must differ from the optimization's `%Chk`).
+- **Shared with step 1:** `%Mem`, `%NProcShared` and the extra `%` lines, the print level, `SCF`/`NoSymm`/`Polar`, the solvation model and solvent, and the Additional Keywords except job keywords (`Opt`, `Freq`, ...). The empirical dispersion is kept only when the method is *Same as optimization*, because its parameters belong to the functional. The Pop panel, the Guess panel's flags, freeze lines and Add. Inp. stay in step 1.
+- **Geometry, charge and multiplicity** come from the optimization's checkpoint (`Geom=AllCheck`). Gaussian copies `%OldChk` into step 2's own `%Chk` before step 2 starts, so `<name>.chk` keeps the optimization. If the optimization fails, Gaussian stops and step 2 does not run.
+- **Orbitals.** Step 2 starts from the optimization's orbitals (`Guess=Read`) **only when it uses the same basis set**. With another basis set, or after a semi-empirical optimization (which has no basis set), it starts from a new guess, and a warning says so. A `Gen`/`GenECP` basis set (Add. Inp.) is reused with `ChkBasis`, which reads the basis set and ECPs from the checkpoint; a different general basis is not offered for step 2.
+- Restricted-open (RO) references are refused: Gaussian's TD/CIS and the Excitation and NTO tabs need restricted or unrestricted references.
+
+**Files for the Excitation tab.** The Excitation and NTO tabs read two files of the **same** job:
+
+1. `<name>_excited.fchk`, the *formatted* checkpoint of step 2. The binary `<name>_excited.chk` cannot be read: run `bash <name>_formchk.sh` (it converts `<name>.chk` and `<name>_excited.chk`), or `formchk <name>_excited.chk <name>_excited.fchk` by hand.
+2. `<name>.log`, the output of the whole job. Its last excited-state block and last geometry are step 2's; the tab checks that they match the `.fchk`.
+
+Choose `<name>_excited.fchk` in the tab; `<name>.log` (or `<name>.out`) beside it is filled in automatically. This workflow was checked with Gaussian 16 C.01: two normal terminations, the excited-state step at the optimization's final geometry, and the Excitation tab reading the two files.
+
+Open input reads such a file back as two linked steps (with a note). Choose the job type again to rebuild it from its panels.
 
 ##### Fukui functions job type
 
@@ -7217,7 +7271,7 @@ Version shown by the application:
 gQTEA-1.7.0 Molecular Analysis Toolkit
 ```
 
-Version 1.7.0 (November 2026) replaces the Gaussian Fukui Input Builder on the **Inputs** tab with the [Gaussian 16 Input Builder](#gaussian-16-input-builder), modelled on GaussView 6.1's Gaussian Calculation Setup. It writes Gaussian 16 inputs for energies, optimizations (minimum or transition state), frequencies, IRC, relaxed scans, stability and NMR jobs, with ground or excited states (TD-SCF, TDA, CIS, ZINDO), Hartree-Fock, DFT, semi-empirical, MP2, coupled-cluster and compound methods, basis sets, dispersion, solvation, population analysis and guess options, and a live route line. Several steps can be linked in one input (`--Link1--`), for example an optimization followed by a TD-SCF single point, and **Open input...** reads an existing `.gjf` back into the panels. The Fukui-function calculation is now its job type [Fukui functions](#fukui-functions-job-type) and writes exactly the same files as before.
+Version 1.7.0 (November 2026) replaces the Gaussian Fukui Input Builder on the **Inputs** tab with the [Gaussian 16 Input Builder](#gaussian-16-input-builder), modelled on GaussView 6.1's Gaussian Calculation Setup. It writes Gaussian 16 inputs for energies, optimizations (minimum or transition state), frequencies, IRC, relaxed scans, stability and NMR jobs, with ground or excited states (TD-SCF, TDA, CIS, ZINDO), Hartree-Fock, DFT, semi-empirical, MP2, coupled-cluster and compound methods, basis sets, dispersion, solvation, population analysis and guess options, and a live route line. Several steps can be linked in one input (`--Link1--`), for example an optimization followed by a TD-SCF single point, and **Open input...** reads an existing `.gjf` back into the panels. The Fukui-function calculation is now its job type [Fukui functions](#fukui-functions-job-type) and writes exactly the same files as before. **Load geometry...** also takes the last completed optimization of a Gaussian `.log`/`.out` (an unconverged output is refused), and the job type [Geometry optimization + excited states](#geometry-optimization--excited-states-job-type) writes an optimization and a TD/TDA/CIS step on its geometry, with a separate `<name>_excited.chk` for the Excitation and NTO tabs.
 
 Version 1.6.0 (October 2026) turns the former runatom input builder into the [Vanderbilt USPP Generator (runatom)](#vanderbilt-uspp-generator-runatom) and moves it from the **Inputs** tab to the **Tools** tab, between **Analysis of Fukui Functions** and **Molecular Axis Alignment**. It now does the whole job from one window: it checks the inputs with the program's own rules, runs D. Vanderbilt's `runatom` (USPP 7.3.6, shipped with gqteaWinToga, so nothing else needs to be installed) for the all-electron reference, the pseudopotential generation and the transferability tests, and shows the results. These include the comparison of all-electron and pseudo eigenvalues and a ghost-state check. It also writes a formatted copy of the pseudopotential for CPMD (`<symbol>_ps_formatted.uspp`, used with `*<file> FORMATTED`). The program's own library of tested inputs for 45 elements can be imported as a starting point.
 
