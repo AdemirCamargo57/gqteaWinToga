@@ -151,7 +151,7 @@ The program is a graphical application built with Python and Toga. Most tools fo
 The current application title identifies the toolkit as:
 
 ```text
-gQTEA-1.7.0 Molecular Analysis Toolkit
+gQTEA-1.7.1 Molecular Analysis Toolkit
 ```
 
 ## Installation and Requirements
@@ -7268,10 +7268,12 @@ venv\Lib\site-packages\glfw\glfw3.dll
 Version shown by the application:
 
 ```text
-gQTEA-1.7.0 Molecular Analysis Toolkit
+gQTEA-1.7.1 Molecular Analysis Toolkit
 ```
 
-Version 1.7.0 (November 2026) replaces the Gaussian Fukui Input Builder on the **Inputs** tab with the [Gaussian 16 Input Builder](#gaussian-16-input-builder), modelled on GaussView 6.1's Gaussian Calculation Setup. It writes Gaussian 16 inputs for energies, optimizations (minimum or transition state), frequencies, IRC, relaxed scans, stability and NMR jobs, with ground or excited states (TD-SCF, TDA, CIS, ZINDO), Hartree-Fock, DFT, semi-empirical, MP2, coupled-cluster and compound methods, basis sets, dispersion, solvation, population analysis and guess options, and a live route line. Several steps can be linked in one input (`--Link1--`), for example an optimization followed by a TD-SCF single point, and **Open input...** reads an existing `.gjf` back into the panels. The Fukui-function calculation is now its job type [Fukui functions](#fukui-functions-job-type) and writes exactly the same files as before. **Load geometry...** also takes the last completed optimization of a Gaussian `.log`/`.out` (an unconverged output is refused), and the job type [Geometry optimization + excited states](#geometry-optimization--excited-states-job-type) writes an optimization and a TD/TDA/CIS step on its geometry, with a separate `<name>_excited.chk` for the Excitation and NTO tabs.
+Version 1.7.1 (November 2026) extends the [Gaussian 16 Input Builder](#gaussian-16-input-builder). **Load geometry...** now also reads Gaussian output files (`.log`, `.out`) and takes the geometry, charge and multiplicity of the last **completed** optimization; an output whose optimization did not converge is refused rather than imported. The new job type [Geometry optimization + excited states](#geometry-optimization--excited-states-job-type) writes one input with two linked steps: the optimization, then TD-SCF, TDA or CIS excitations at the optimized geometry, with their own method, basis set and number of states, read from the optimization's checkpoint and saved to a separate `<name>_excited.chk`. Its `<name>_excited.fchk` and `<name>.log` open directly in the 3D Molecular Viewer's Excitation and NTO tabs, which now find `<name>.log` beside `<name>_excited.fchk` by themselves. The Method panel's basis list gains *Read from checkpoint (ChkBasis)* for linked steps.
+
+Version 1.7.0 (November 2026) replaces the Gaussian Fukui Input Builder on the **Inputs** tab with the [Gaussian 16 Input Builder](#gaussian-16-input-builder), modelled on GaussView 6.1's Gaussian Calculation Setup. It writes Gaussian 16 inputs for energies, optimizations (minimum or transition state), frequencies, IRC, relaxed scans, stability and NMR jobs, with ground or excited states (TD-SCF, TDA, CIS, ZINDO), Hartree-Fock, DFT, semi-empirical, MP2, coupled-cluster and compound methods, basis sets, dispersion, solvation, population analysis and guess options, and a live route line. Several steps can be linked in one input (`--Link1--`), for example an optimization followed by a TD-SCF single point, and **Open input...** reads an existing `.gjf` back into the panels. The Fukui-function calculation is now its job type [Fukui functions](#fukui-functions-job-type) and writes exactly the same files as before.
 
 Version 1.6.0 (October 2026) turns the former runatom input builder into the [Vanderbilt USPP Generator (runatom)](#vanderbilt-uspp-generator-runatom) and moves it from the **Inputs** tab to the **Tools** tab, between **Analysis of Fukui Functions** and **Molecular Axis Alignment**. It now does the whole job from one window: it checks the inputs with the program's own rules, runs D. Vanderbilt's `runatom` (USPP 7.3.6, shipped with gqteaWinToga, so nothing else needs to be installed) for the all-electron reference, the pseudopotential generation and the transferability tests, and shows the results. These include the comparison of all-electron and pseudo eigenvalues and a ghost-state check. It also writes a formatted copy of the pseudopotential for CPMD (`<symbol>_ps_formatted.uspp`, used with `*<file> FORMATTED`). The program's own library of tested inputs for 45 elements can be imported as a starting point.
 
