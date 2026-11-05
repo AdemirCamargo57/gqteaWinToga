@@ -453,6 +453,82 @@ class TestFukuiInTheWindow:
         assert "Analysis of Fukui Functions" in ui.messages_output.value
 
 
+class TestOptExcitedInTheWindow:
+    def test_choosing_it_resets_what_it_sets(self, tmp_path):
+        ui = make_ui(tmp_path)
+        change(ui, "state_selection", gk.STATE_TD)
+        change(ui, "old_chk_input", "x.chk")
+        change(ui, "job_type_selection", gk.JOB_OPT_EXCITED)
+        assert ui.state_selection.value == gk.STATE_GROUND and ui.old_chk_input.value == ""
+        assert ui.status_label.text == gb.OPT_EXCITED_STATUS
+        assert not ui.add_step_button.enabled and not ui.state_selection.enabled
+        assert not ui.geometry_source_selection.enabled and not ui.old_chk_input.enabled
+        assert ui.excited_state_selection.enabled and ui.fukui_note_label.text == gb.OPT_EXCITED_NOTE
+
+    def test_excited_controls_are_off_for_other_job_types(self, tmp_path):
+        ui = make_ui(tmp_path)
+        assert not ui.excited_state_selection.enabled and not ui.opt_confirm_freq_switch.enabled
+        assert ui.fukui_note_label.text == ""
+
+    def test_controls_follow_the_choices(self, tmp_path):
+        ui = make_ui(tmp_path)
+        change(ui, "job_type_selection", gk.JOB_OPT_EXCITED)
+        assert not ui.excited_method_selection.enabled and not ui.freq_raman_switch.enabled
+        assert ui.force_constants_selection.enabled and ui.modredundant_input.enabled
+        change(ui, "excited_family_selection", gk.FAMILY_DFT)
+        change(ui, "opt_confirm_freq_switch", True)
+        assert ui.excited_method_selection.enabled and ui.freq_raman_switch.enabled
+        assert not ui.excited_method_other_input.enabled
+        change(ui, "excited_method_selection", gk.OTHER)
+        assert ui.excited_method_other_input.enabled
+        change(ui, "excited_state_selection", gk.STATE_CIS)
+        assert not ui.excited_family_selection.enabled and not ui.excited_method_selection.enabled
+        assert not ui.excited_diffuse_selection.enabled
+        change(ui, "excited_basis_selection", "6-311G")
+        assert ui.excited_diffuse_selection.enabled and not ui.excited_basis_other_input.enabled
+
+    def test_route_line_shows_both_steps(self, tmp_path):
+        ui = make_ui(tmp_path)
+        change(ui, "job_type_selection", gk.JOB_OPT_EXCITED)
+        assert ui.route_label.text.startswith("step 1:  #P B3LYP/6-31G(d) Opt\nstep 2:  #P B3LYP/6-31G(d) TD=")
+        assert ui.summary_label.text.endswith("from water.chk")
+
+    def test_every_excited_field_is_read_from_a_widget(self, tmp_path):
+        ui = make_ui(tmp_path)
+        change(ui, "job_type_selection", gk.JOB_OPT_EXCITED)
+        for attr, value in (("excited_state_selection", gk.STATE_TDA), ("excited_n_states_input", "6"),
+                            ("excited_root_input", "2"), ("excited_state_spin_selection", "Singlets"),
+                            ("excited_family_selection", gk.FAMILY_DFT), ("excited_method_selection", "M06-2X"),
+                            ("excited_basis_selection", "6-311G"), ("excited_diffuse_selection", "+"),
+                            ("excited_coefficients_switch", False), ("excited_keywords_input", "Density=Current"),
+                            ("excited_chk_input", "td.chk"), ("opt_confirm_freq_switch", True)):
+            change(ui, attr, value)
+        first, second = gi.opt_excited_steps(ui._collect_inputs().steps[0], "water")
+        assert first.job_type == gk.JOB_OPT_FREQ
+        assert (second.state, second.n_states, second.root, second.state_spin, second.method_name, second.basis,
+                second.basis_diffuse, second.print_all_coefficients, second.chk) == \
+            (gk.STATE_TDA, 6, 2, "Singlets", "M06-2X", "6-311G", "+", False, "td.chk")
+        assert second.additional_keywords == "Density=Current"
+
+    def test_save_says_where_the_excitation_files_are(self, tmp_path):
+        ui = make_ui(tmp_path)
+        change(ui, "job_type_selection", gk.JOB_OPT_EXCITED)
+        asyncio.run(ui.save_input(None))
+        assert not ui.dialogs
+        text = (tmp_path / "water.gjf").read_text()
+        assert text.count("--Link1--") == 1 and "%OldChk=water.chk\n%Chk=water_excited.chk" in text
+        assert "water_excited.fchk" in ui.messages_output.value and "water.log" in ui.messages_output.value
+        assert "Excitation" in ui.messages_output.value
+        script = (tmp_path / "water_formchk.sh").read_text()
+        assert "water_excited.chk" in script and "water_excited.fchk" in script
+
+    def test_add_linked_step_is_refused(self, tmp_path):
+        ui = make_ui(tmp_path)
+        change(ui, "job_type_selection", gk.JOB_OPT_EXCITED)
+        ui.add_linked_step(None)
+        assert len(ui.steps) == 1 and "already two linked steps" in ui.status_label.text
+
+
 class TestFixRound1:
     def test_other_steps_with_their_own_charge_are_named(self, tmp_path):
         ui = make_ui(tmp_path)

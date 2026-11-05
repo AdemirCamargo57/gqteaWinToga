@@ -23,9 +23,10 @@ JOB_IRC = "IRC"
 JOB_SCAN = "Scan (relaxed)"
 JOB_STABILITY = "Stability"
 JOB_NMR = "NMR"
+JOB_OPT_EXCITED = "Geometry optimization + excited states"
 JOB_FUKUI = "Fukui functions (N, N+p, N-q)"
 JOB_TYPES = (JOB_ENERGY, JOB_OPT, JOB_FREQ, JOB_OPT_FREQ, JOB_IRC, JOB_SCAN, JOB_STABILITY, JOB_NMR,
-             JOB_FUKUI)
+             JOB_OPT_EXCITED, JOB_FUKUI)
 OPTIMIZING_JOBS = (JOB_OPT, JOB_OPT_FREQ, JOB_SCAN)
 FREQUENCY_JOBS = (JOB_FREQ, JOB_OPT_FREQ)
 
@@ -110,6 +111,16 @@ DIFFUSE: Dict[str, str] = {"None": "", "+": "+", "++": "++"}
 POLARIZATION: Dict[str, str] = {"None": "", "(d)": "(d)", "(d,p)": "(d,p)", "(2d,p)": "(2d,p)",
                                 "(2df,2pd)": "(2df,2pd)", "(3df,3pd)": "(3df,3pd)"}
 DISPERSION: Dict[str, Optional[str]] = {"None": None, "GD3": "GD3", "GD3BJ": "GD3BJ", "GD2": "GD2"}
+
+# --- Geometry optimization + excited states: step 2's own controls -----------------
+SAME_AS_OPTIMIZATION = "Same as optimization"
+EXCITED_STATES = (STATE_TD, STATE_TDA, STATE_CIS)          # what the Excitation and NTO tabs read
+EXCITED_FAMILIES = (SAME_AS_OPTIMIZATION, FAMILY_HF, FAMILY_DFT)
+EXCITED_DFT_METHODS = tuple(FAMILY_METHODS[FAMILY_DFT])
+# A Gen/GenECP basis reaches step 2 only as "Same as optimization", written as ChkBasis.
+EXCITED_BASES = (SAME_AS_OPTIMIZATION,) + tuple(b for b in BASES if b not in GENERAL_BASES + (BASIS_CHECKPOINT,))
+DEFAULT_EXCITED_N_STATES = 10
+EXCITED_CHK_SUFFIX = "_excited"                            # <stem>_excited.chk; excitationData looks for it
 
 # --- Molecule -----------------------------------------------------------------
 GEOM_COORDINATES = "Coordinates (the step-1 geometry)"

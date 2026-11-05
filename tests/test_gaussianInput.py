@@ -722,3 +722,189 @@ class TestGeometryFiles:
         path.write_text("")
         with pytest.raises(ValueError, match="log"):
             gi.read_geometry_file(path)
+
+
+# ----------------------------------------------------------------------
+# Geometry optimization + excited states
+# ----------------------------------------------------------------------
+def opt_excited(**changes):
+    changes.setdefault("multiplicity", 1)
+    return gi.opt_excited_defaults(step(**changes))
+
+
+def prepared(tmp_path, *steps, **changes):
+    return gi.GaussianInputBuilder().prepare(job_spec(tmp_path, *steps, **changes))
+
+
+class TestOptExcited:
+    def test_two_linked_steps(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        job = builder.prepare(job_spec(tmp_path, opt_excited()))
+        assert builder.input_text(job) == "\n".join(
+            ["%Chk=water.chk", "%Mem=2GB", "%NProcShared=4", "#P B3LYP/6-31G(d) Opt", "",
+             "water", "", "0 1", *WATER_LINES, "",
+             "--Link1--",
+             "%OldChk=water.chk", "%Chk=water_excited.chk", "%Mem=2GB", "%NProcShared=4",
+             "#P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read", ""]) + "\n"
+        assert job.chk_files == ["water.chk", "water_excited.chk"] and job.excited_fchk == "water_excited.fchk"
+        assert job.warnings == []
+        script = builder.script_text(job)
+        assert "water_excited.chk" in script and "water_excited.fchk" in script and "water.fchk" in script
+
+    def test_typed_checkpoint_names(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(chk="opt.chk", excited_chk="td.chk"))
+        assert job.steps[0].link0[0] == "%Chk=opt.chk" and job.steps[1].link0[:2] == ["%OldChk=opt.chk", "%Chk=td.chk"]
+        assert job.excited_fchk == "td.fchk"
+
+    def test_opt_freq_switch(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(opt_confirm_freq=True, freq_raman=True))
+        assert job.steps[0].route == ["#P B3LYP/6-31G(d) Opt Freq=Raman"]
+        assert "Freq" not in " ".join(job.steps[1].route)
+
+    def test_own_method_and_basis_give_a_new_guess(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(
+            excited_family=gk.FAMILY_DFT, excited_method_name="CAM-B3LYP", excited_basis="6-311G",
+            excited_basis_diffuse="+", excited_basis_polarization="(d,p)", excited_n_states=6,
+            excited_state_spin="Singlets", dispersion="GD3BJ"))
+        assert job.steps[0].route == ["#P B3LYP/6-31G(d) Opt EmpiricalDispersion=GD3BJ"]
+        assert " ".join(job.steps[1].route) == \
+            "#P CAM-B3LYP/6-311+G(d,p) TD=(NStates=6,Singlets) IOp(9/40=4) Geom=AllCheck"
+        assert any("new guess" in w and "6-311+G(d,p)" in w for w in job.warnings)
+
+    def test_same_method_keeps_the_dispersion(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(dispersion="GD3BJ"))
+        assert "EmpiricalDispersion=GD3BJ" in job.steps[1].route[0]
+
+    def test_same_basis_with_another_functional_reads_the_guess(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(excited_family=gk.FAMILY_DFT, excited_method_name="CAM-B3LYP",
+                                             excited_state=gk.STATE_TDA))
+        assert " ".join(job.steps[1].route) == \
+            "#P CAM-B3LYP/6-31G(d) TDA=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read"
+
+    def test_a_listed_basis_equal_to_the_optimizations_reads_the_guess(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(excited_basis="6-31G"))
+        assert job.steps[1].route[0].endswith("Geom=AllCheck Guess=Read")
+
+    def test_hartree_fock(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(excited_family=gk.FAMILY_HF))
+        assert job.steps[1].route == ["#P HF/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read"]
+
+    def test_gen_basis_is_read_from_the_checkpoint(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(basis="Gen", additional_input="O H 0\n6-31G(d)\n****"))
+        assert job.steps[1].route == ["#P B3LYP ChkBasis TD=(NStates=10) IOp(9/40=4) Geom=AllCheck Guess=Read"]
+        assert job.steps[0].additional_input == ["O H 0", "6-31G(d)", "****"] and job.steps[1].additional_input == []
+
+    def test_cis(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(excited_state=gk.STATE_CIS, excited_n_states=4))
+        assert job.steps[1].route == ["#P CIS(NStates=4)/6-31G(d) IOp(9/40=4) Geom=AllCheck Guess=Read"]
+
+    def test_shared_and_step_two_keywords(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(
+            scf_tight=True, nosymm=True, solvation="SMD", solvent="Acetone", pop_nbo=True, guess_mix=True,
+            additional_keywords="Opt=NoEigenTest Int=UltraFine", excited_keywords="Density=Current"))
+        first, second = " ".join(job.steps[0].route), " ".join(job.steps[1].route)
+        assert first == ("#P B3LYP/6-31G(d) Opt=NoEigenTest SCF=Tight NoSymm Guess=Mix Pop=NBO "
+                         "SCRF=(SMD,Solvent=Acetone) Int=UltraFine")
+        assert second == ("#P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) SCF=Tight NoSymm Geom=AllCheck Guess=Read "
+                          "SCRF=(SMD,Solvent=Acetone) Int=UltraFine Density=Current")
+
+    def test_open_shell_reference(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(charge=1, multiplicity=2))
+        assert job.steps[0].charge_line == "1 2"
+        assert job.steps[1].charge_line is None and "Geom=AllCheck" in job.steps[1].route[0]
+
+    def test_freeze_lines_go_to_the_optimization(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(modredundant="A 2 1 3 F"))
+        assert "ModRedundant" in job.steps[0].route[0] and job.steps[0].modredundant == ["A 2 1 3 F"]
+        assert job.steps[1].modredundant == [] and "ModRedundant" not in job.steps[1].route[0]
+
+    @pytest.mark.parametrize("changes,fragment", [
+        (dict(family=gk.FAMILY_COMPOUND, method_name="CBS-QB3"), "Optimization step: Compound methods"),
+        (dict(spin="Restricted-open (RO)", charge=1, multiplicity=2), "Restricted-open (RO) references"),
+        (dict(family=gk.FAMILY_SEMI, method_name="PM7"), "Excited-state step: the optimization (PM7) has no basis"),
+        (dict(family=gk.FAMILY_MP2, method_name=gk.NO_CHOICE), "Excited-state step: TD-SCF needs"),
+        (dict(excited_state=gk.STATE_TDA, excited_family=gk.FAMILY_HF), "Excited-state step: TDA needs a DFT"),
+        (dict(charge=1, multiplicity=2, excited_state_spin="Triplets"), "Excited-state step: States = Triplets"),
+        (dict(excited_chk="WATER.chk"), "Excited-state %Chk 'WATER.chk' is the optimization's %Chk"),
+        (dict(excited_chk="a b.chk"), "Excited-state step: %Chk 'a b.chk'"),
+        (dict(excited_keywords="Freq"), "Excited-state keywords: Freq belongs to the optimization step"),
+        (dict(excited_keywords="Opt=Tight"), "Excited-state keywords: Opt=Tight belongs"),
+        (dict(excited_root=11), "Excited-state step: State of interest (Root) must be between 1 and 10"),
+        (dict(excited_n_states=0), "Excited-state step: Number of states must be at least 1"),
+        (dict(excited_family=gk.FAMILY_DFT, excited_method_name=gk.OTHER), "Excited-state step: Other method"),
+        (dict(excited_basis=gk.OTHER), "Excited-state step: Other basis set"),
+        (dict(modredundant="B 1 2 S 3 0.05"), "Optimization step: Scan lines (S)"),
+        (dict(multiplicity=None), "Optimization step: Multiplicity: enter it"),
+    ])
+    def test_problems(self, tmp_path, changes, fragment):
+        assert fragment in problems(tmp_path, opt_excited(**changes))
+
+    def test_every_problem_on_its_own_line(self, tmp_path):
+        text = problems(tmp_path, opt_excited(multiplicity=None, excited_chk="water.chk"))
+        assert all(line.startswith("- ") for line in text.splitlines()) and len(text.splitlines()) == 2
+
+    def test_semi_empirical_optimization_with_an_excited_basis(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(family=gk.FAMILY_SEMI, method_name="PM7", excited_family=gk.FAMILY_DFT,
+                                             excited_basis="6-31G"))
+        assert job.steps[0].route == ["#P PM7 Opt"]
+        assert job.steps[1].route == ["#P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck"]
+        assert any("PM7" in w and "new guess" in w for w in job.warnings)
+
+    def test_must_be_the_only_step(self, tmp_path):
+        assert "must be the only step" in problems(tmp_path, opt_excited(), step(multiplicity=1))
+
+    @pytest.mark.parametrize("changes,label", [(dict(opt_target=gk.OPT_TS), "Optimize to a"),
+                                               (dict(state=gk.STATE_TD), "Electronic state"),
+                                               (dict(geometry_source=gk.GEOM_CHECK), "Geometry source"),
+                                               (dict(old_chk="x.chk"), "%OldChk"),
+                                               (dict(write_chk=False), "Write a checkpoint (%Chk)")])
+    def test_controls_the_job_sets_itself(self, tmp_path, changes, label):
+        assert f"sets {label} itself" in problems(tmp_path, replace(opt_excited(), **changes))
+
+    def test_readfc_is_refused(self, tmp_path):
+        text = problems(tmp_path, replace(opt_excited(), force_constants="Read from checkpoint (ReadFC)"))
+        assert "Force constants must be" in text
+
+    def test_warnings(self, tmp_path):
+        job = prepared(tmp_path, opt_excited(excited_coefficients=False), write_formchk=False)
+        text = "\n".join(job.warnings)
+        assert "IOp(9/40=4)" in text and "water_excited.fchk" in text and "Density=Current" not in text
+
+    def test_defaults(self):
+        s = gi.opt_excited_defaults(step(state=gk.STATE_TD, geometry_source=gk.GEOM_CHECK, old_chk="x", write_chk=False,
+                                         opt_target=gk.OPT_TS, force_constants="Read from checkpoint (ReadFC)",
+                                         print_all_coefficients=True))
+        assert (s.job_type, s.state, s.geometry_source, s.old_chk, s.write_chk, s.opt_target, s.force_constants,
+                s.print_all_coefficients) == (gk.JOB_OPT_EXCITED, gk.STATE_GROUND, gk.GEOM_COORDINATES, "", True,
+                                              gk.OPT_MINIMUM, gk.FC_DEFAULT, False)
+
+    def test_preview_and_summary(self, tmp_path):
+        spec = job_spec(tmp_path, opt_excited())
+        assert gi.route_preview(spec, 0) == ("step 1:  #P B3LYP/6-31G(d) Opt\n"
+                                             "step 2:  #P B3LYP/6-31G(d) TD=(NStates=10) IOp(9/40=4) Geom=AllCheck "
+                                             "Guess=Read")
+        assert gi.molecule_summary(spec, 0) == ("3 atoms, charge 0, 10 electrons, multiplicity 1\n"
+                                                "step 2 reads the geometry, charge and multiplicity from water.chk")
+
+    def test_preview_shows_merge_problems(self, tmp_path):
+        spec = job_spec(tmp_path, opt_excited(excited_keywords="SCF=(MaxCycle=5) SCF=(MaxCycle=9)"))
+        assert "MaxCycle=9" in gi.route_preview(spec, 0).splitlines()[-1]
+
+    def test_step_label(self):
+        assert gi.step_label(1, opt_excited()) == "1: Geometry optimization + excited states B3LYP/6-31G(d)"
+
+    def test_reopened_file_is_two_linked_steps_with_a_note(self, tmp_path):
+        builder = gi.GaussianInputBuilder()
+        text = builder.input_text(builder.prepare(job_spec(tmp_path, opt_excited())))
+        spec, notes = gi.read_input_text(text, "water", str(tmp_path))
+        assert len(spec.steps) == 2 and spec.steps[1].chk == "water_excited.chk"
+        assert spec.steps[1].old_chk == "water.chk"
+        assert any("Geometry optimization + excited states" in n for n in notes)
+        assert builder.input_text(builder.prepare(spec)) == text
+
+    def test_choices_and_labels(self):
+        default = gi.GaussianStepSpec()
+        assert default.excited_n_states == 10 and default.excited_coefficients
+        assert gk.JOB_TYPES.index(gk.JOB_OPT_EXCITED) == gk.JOB_TYPES.index(gk.JOB_FUKUI) - 1
+        assert gk.BASIS_CHECKPOINT not in gk.EXCITED_BASES and "Gen" not in gk.EXCITED_BASES
+        assert gk.EXCITED_BASES[0] == gk.EXCITED_FAMILIES[0] == gk.SAME_AS_OPTIMIZATION

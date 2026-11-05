@@ -153,6 +153,22 @@ class GaussianStepSpec:
     fukui_plus_multiplicity: Optional[int] = None
     fukui_minus_multiplicity: Optional[int] = None
     fukui_guess_read: bool = True
+    # Geometry optimization + excited states: step 1 is the panels; step 2 (excited states) these
+    opt_confirm_freq: bool = False
+    excited_state: str = gk.STATE_TD
+    excited_n_states: int = gk.DEFAULT_EXCITED_N_STATES
+    excited_root: int = 1
+    excited_state_spin: str = "Default"
+    excited_family: str = gk.SAME_AS_OPTIMIZATION
+    excited_method_name: str = "B3LYP"
+    excited_method_other: str = ""
+    excited_basis: str = gk.SAME_AS_OPTIMIZATION
+    excited_basis_diffuse: str = "None"
+    excited_basis_polarization: str = "(d)"
+    excited_basis_other: str = ""
+    excited_coefficients: bool = True
+    excited_keywords: str = ""
+    excited_chk: str = ""
     # Method
     state: str = gk.STATE_GROUND
     n_states: int = gk.DEFAULT_N_STATES
@@ -221,6 +237,15 @@ FIELD_LABELS: Dict[str, str] = {
     "fukui_p": "p (electrons added)", "fukui_q": "q (electrons removed)",
     "fukui_plus_multiplicity": "Multiplicity of N+p", "fukui_minus_multiplicity": "Multiplicity of N-q",
     "fukui_guess_read": "Ions start from the N-state orbitals",
+    "opt_confirm_freq": "Confirm the minimum with frequencies", "excited_state": "Excited-state method",
+    "excited_n_states": "Number of excited states", "excited_root": "Excited state of interest (Root)",
+    "excited_state_spin": "Excited states", "excited_family": "Excited-state method family",
+    "excited_method_name": "Excited-state functional", "excited_method_other": "Other excited-state method",
+    "excited_basis": "Excited-state basis set", "excited_basis_diffuse": "Excited-state diffuse functions",
+    "excited_basis_polarization": "Excited-state polarization",
+    "excited_basis_other": "Other excited-state basis set",
+    "excited_coefficients": "Print all excitation coefficients (excited-state step)",
+    "excited_keywords": "Excited-state keywords", "excited_chk": "Excited-state %Chk",
     "state": "Electronic state", "n_states": "Number of states", "root": "State of interest (Root)",
     "state_spin": "States", "print_all_coefficients": "Print all excitation coefficients",
     "spin": "Spin", "family": "Method family", "method_name": "Method", "method_other": "Other method",
@@ -249,6 +274,10 @@ CHOICES: Dict[str, Sequence[str]] = {
     "dispersion": tuple(gk.DISPERSION), "geometry_source": tuple(gk.GEOMETRY_SOURCES),
     "print_level": gk.PRINT_LEVELS, "guess": tuple(gk.GUESS_METHODS), "pop_level": tuple(gk.POP_LEVELS),
     "solvation": tuple(gk.SOLVATION_MODELS), "solvent": gk.SOLVENTS,
+    "excited_state": gk.EXCITED_STATES, "excited_state_spin": tuple(gk.STATE_SPINS),
+    "excited_family": gk.EXCITED_FAMILIES, "excited_method_name": gk.EXCITED_DFT_METHODS,
+    "excited_basis": gk.EXCITED_BASES, "excited_basis_diffuse": tuple(gk.DIFFUSE),
+    "excited_basis_polarization": tuple(gk.POLARIZATION),
 }
 
 
@@ -473,7 +502,8 @@ def modredundant_line(kind: str, atoms_text: str, action: str, steps_text: str, 
 INPUT_SUFFIX = ".gjf"
 SCRIPT_HEADER = ("# gQTEA Gaussian 16 input builder: convert the checkpoints to formatted",
                  "# checkpoints for the 3D Molecular Viewer's analysis tabs. Run it where Gaussian")
-ASCII_FIELDS = ("title", "extra_link0", "additional_input", "additional_keywords", "modredundant", "memory")
+ASCII_FIELDS = ("title", "extra_link0", "additional_input", "additional_keywords", "modredundant", "memory",
+                "excited_keywords", "excited_chk")
 OTHER_TEXT_FIELDS = {"method_other": "method_name", "basis_other": "basis", "solvent_other": "solvent"}
 FORCE_CONSTANT_OPTIONS = {"CALCFC", "CALCALL", "READFC", "RCFC", "FCCARDS"}
 # What Gaussian 16 takes for IRC (it refuses ReadFC there); RCFC = ReadCartesianFC.
@@ -516,6 +546,7 @@ class GaussianJob:
     chk_files: List[str]
     warnings: List[str] = field(default_factory=list)
     fukui: Optional[fi.FukuiJob] = None
+    excited_fchk: Optional[str] = None     # Geometry optimization + excited states: the .fchk the tabs read
 
 
 def _relative_name(value: str, label: str) -> str:
@@ -569,10 +600,13 @@ def _trim_blank_lines(text: str) -> List[str]:
 
 
 def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set, write_formchk: bool,
-                  freq_before: bool = False) -> Tuple[List[str], List[str], Optional[PreparedStep]]:
+                  freq_before: bool = False, excited_analysis: bool = False
+                  ) -> Tuple[List[str], List[str], Optional[PreparedStep]]:
     """(errors, warnings, prepared step or None) of one step; messages carry no step prefix.
 
     ``written`` holds the checkpoints of the earlier steps, ``freq_before`` whether one of them runs Freq.
+    ``excited_analysis``: the step's .fchk is for the Excitation/NTO tabs, which use the MO coefficients,
+    so the Density=Current warning does not apply.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -697,7 +731,7 @@ def _prepare_step(step: GaussianStepSpec, stem: str, atoms, written: set, write_
                         "step runs Freq (after an Opt-only TS step, Gaussian 16 stops in l123); add Freq to the "
                         "TS step or use CalcFC.")
     if (write_formchk and step.write_chk and (excited or step.family in gk.POST_SCF_FAMILIES)
-            and "DENSITY" not in options):
+            and "DENSITY" not in options and not excited_analysis):
         warnings.append("The .fchk will hold the SCF density, not the excited-state or correlated one; add "
                         "Density=Current to the Additional Keywords if an analysis needs it.")
     if errors:
@@ -754,7 +788,17 @@ class GaussianInputBuilder:
         """Validate everything; ValueError lists every problem, one '- ' line each."""
         if any(s.job_type == gk.JOB_FUKUI for s in spec.steps):
             return self._prepare_fukui(spec)
-        errors: List[str] = []
+        if any(s.job_type == gk.JOB_OPT_EXCITED for s in spec.steps):
+            return self._prepare_opt_excited(spec)
+        return self._prepare_steps(spec)
+
+    def _prepare_steps(self, spec: GaussianJobSpec, labels: Optional[Sequence[str]] = None,
+                       excited_analysis: bool = False, errors: Optional[List[str]] = None) -> GaussianJob:
+        """The linked steps of ``spec``; messages start with ``labels[i]`` (default 'Step n').
+
+        ``errors`` are problems found before (they are raised together with these steps' problems).
+        """
+        errors = list(errors or [])
         warnings: List[str] = []
         stem = None
         try:
@@ -780,9 +824,10 @@ class GaussianInputBuilder:
         prepared: List[PreparedStep] = []
         for index, step in enumerate(spec.steps, start=1):
             step_errors, step_warnings, item = _prepare_step(step, name, atoms, written, spec.write_formchk,
-                                                             freq_before)
-            errors += [f"Step {index}: {e}" for e in step_errors]
-            warnings += [f"Step {index}: {w}" for w in step_warnings]
+                                                             freq_before, excited_analysis)
+            label = labels[index - 1] if labels else f"Step {index}"
+            errors += [f"{label}: {e}" for e in step_errors]
+            warnings += [f"{label}: {w}" for w in step_warnings]
             if item is not None:
                 prepared.append(item)
             if step.write_chk:
@@ -829,6 +874,20 @@ class GaussianInputBuilder:
         job = self._fukui.prepare(fukui_spec(spec))
         return GaussianJob(spec, job.atoms, [], job.input_path, job.script_path, [s.chk for s in job.states],
                            list(job.warnings), fukui=job)
+
+    def _prepare_opt_excited(self, spec: GaussianJobSpec) -> GaussianJob:
+        """The composite job type: its two steps go through _prepare_steps like any linked steps."""
+        if len(spec.steps) != 1:
+            raise ValueError("- The Geometry optimization + excited states job type is already two linked steps "
+                             "(optimization, excited states): it must be the only step.")
+        step = spec.steps[0]
+        stem = (spec.stem or "").strip() or fi.DEFAULT_STEM
+        first, second = opt_excited_steps(step, stem)
+        job = self._prepare_steps(dataclasses.replace(spec, steps=[first, second]), OPT_EXCITED_STEP_LABELS,
+                                  excited_analysis=True, errors=opt_excited_problems(step, first, stem))
+        job.warnings += opt_excited_warnings(spec, first, second)
+        job.excited_fchk = Path(second.chk).stem + fi.FCHK_EXTENSION
+        return job
 
     def input_text(self, job: GaussianJob) -> str:
         if job.fukui is not None:
@@ -929,6 +988,129 @@ def fukui_spec(spec: GaussianJobSpec) -> fi.FukuiJobSpec:
 
 
 # ----------------------------------------------------------------------
+# Geometry optimization + excited states (two linked steps built from one step's panels)
+# ----------------------------------------------------------------------
+OPT_EXCITED_STEP_LABELS = ("Optimization step", "Excited-state step")
+OPT_EXCITED_NAME = "The Geometry optimization + excited states job type"
+# Fields the job type sets itself; they must hold opt_excited_defaults' values.
+OPT_EXCITED_FIXED = ("opt_target", "force_constants", "state", "print_all_coefficients", "geometry_source",
+                     "write_chk", "old_chk")
+# What step 2 does not take from step 1 (it computes excited states at the checkpoint's geometry).
+STEP_TWO_RESETS = dict(job_type=gk.JOB_ENERGY, geometry_source=gk.GEOM_ALLCHECK, title="", modredundant="",
+                       additional_input="", connectivity=False, guess_mix=False, guess_always=False,
+                       guess_only=False, guess_save=False, pop_level="Default", pop_mk=False, pop_hirshfeld=False,
+                       pop_nbo=False, pop_npa=False, pop_savento=False, write_chk=True)
+READ_GUESS = "Read checkpoint"
+
+
+def opt_excited_defaults(step: GaussianStepSpec) -> GaussianStepSpec:
+    """The step as this job type uses it: an optimization towards a minimum from the typed coordinates."""
+    force_constants = step.force_constants if step.force_constants in gk.FUKUI_FORCE_CONSTANTS else gk.FC_DEFAULT
+    return dataclasses.replace(step, job_type=gk.JOB_OPT_EXCITED, opt_target=gk.OPT_MINIMUM,
+                               force_constants=force_constants, state=gk.STATE_GROUND, print_all_coefficients=False,
+                               geometry_source=gk.GEOM_COORDINATES, write_chk=True, old_chk="")
+
+
+def optimization_chk(step: GaussianStepSpec, stem: str) -> str:
+    return step.chk.strip() or f"{stem}.chk"
+
+
+def excited_chk(step: GaussianStepSpec, stem: str) -> str:
+    return step.excited_chk.strip() or f"{stem}{gk.EXCITED_CHK_SUFFIX}.chk"
+
+
+def _excited_model(step: GaussianStepSpec) -> dict:
+    """Step 2's Method-panel fields: its own state, method and basis, or the optimization's ('Same as')."""
+    fields = dict(state=step.excited_state, n_states=step.excited_n_states, root=step.excited_root,
+                  state_spin=step.excited_state_spin, print_all_coefficients=step.excited_coefficients)
+    if step.excited_family != gk.SAME_AS_OPTIMIZATION or step.excited_state == gk.STATE_CIS:
+        fields["dispersion"] = "None"        # D3 parameters belong to the optimization's functional
+    if step.excited_family != gk.SAME_AS_OPTIMIZATION:
+        fields.update(family=step.excited_family, method_other=step.excited_method_other,
+                      method_name=step.excited_method_name if step.excited_family == gk.FAMILY_DFT else gk.NO_CHOICE)
+    if step.excited_basis == gk.SAME_AS_OPTIMIZATION:
+        if step.basis in gk.GENERAL_BASES:
+            fields["basis"] = gk.BASIS_CHECKPOINT  # the Gen/GenECP section lives in the checkpoint
+    else:
+        fields.update(basis=step.excited_basis, basis_diffuse=step.excited_basis_diffuse,
+                      basis_polarization=step.excited_basis_polarization, basis_other=step.excited_basis_other)
+    return fields
+
+
+def reuses_orbitals(first: GaussianStepSpec, second: GaussianStepSpec) -> bool:
+    """Guess=Read only with the optimization's own basis set (user decision: never assume a projection)."""
+    if no_basis(first):
+        return False
+    if second.basis == gk.BASIS_CHECKPOINT:
+        return True
+    return basis_keyword(first).upper() == basis_keyword(second).upper()
+
+
+def opt_excited_steps(step: GaussianStepSpec, stem: str) -> Tuple[GaussianStepSpec, GaussianStepSpec]:
+    """(optimization, excited states): two ordinary linked steps for _prepare_steps."""
+    first = dataclasses.replace(step, job_type=gk.JOB_OPT_FREQ if step.opt_confirm_freq else gk.JOB_OPT,
+                                state=gk.STATE_GROUND, print_all_coefficients=False, write_chk=True)
+    shared = _without_job_keywords(step.additional_keywords)
+    second = dataclasses.replace(step, **STEP_TWO_RESETS, **_excited_model(step),
+                                 old_chk=optimization_chk(step, stem), chk=excited_chk(step, stem),
+                                 additional_keywords=" ".join(t for t in (shared, step.excited_keywords.strip()) if t))
+    second = dataclasses.replace(second, guess=READ_GUESS if reuses_orbitals(first, second) else "Default")
+    return first, second
+
+
+def opt_excited_problems(step: GaussianStepSpec, first: GaussianStepSpec, stem: str) -> List[str]:
+    """What only this job type refuses (the two steps' own problems come from _prepare_step)."""
+    problems = []
+    reference = opt_excited_defaults(step)
+    for name in OPT_EXCITED_FIXED:
+        if getattr(step, name) == getattr(reference, name):
+            continue
+        if name == "force_constants":
+            *first_choices, last = gk.FUKUI_FORCE_CONSTANTS
+            problems.append(f"{OPT_EXCITED_NAME} optimizes towards a minimum without reading a checkpoint: Force "
+                            f"constants must be {', '.join(first_choices)} or {last} (got {step.force_constants}).")
+        else:
+            problems.append(f"{OPT_EXCITED_NAME} sets {FIELD_LABELS[name]} itself; choose the job type again to "
+                            "reset it.")
+    if step.family == gk.FAMILY_COMPOUND:
+        problems.append("Optimization step: Compound methods (CBS-QB3, G4, ...) cannot be the optimization of this "
+                        "job type; choose Hartree-Fock, DFT, semi-empirical or MP2.")
+    if gk.SPIN_PREFIXES.get(step.spin) == "RO":
+        problems.append("Restricted-open (RO) references are not supported: Gaussian's TD/CIS and the Excitation and "
+                        "NTO tabs need a restricted or unrestricted reference; choose Default or U.")
+    if no_basis(first) and step.excited_basis == gk.SAME_AS_OPTIMIZATION:
+        problems.append(f"Excited-state step: the optimization ({method_keyword(first)}) has no basis set; choose "
+                        "the excited-state basis set.")
+    if excited_chk(step, stem).lower() == optimization_chk(step, stem).lower():
+        problems.append(f"Excited-state %Chk '{excited_chk(step, stem)}' is the optimization's %Chk; give the excited "
+                        f"states their own checkpoint (blank = {stem}{gk.EXCITED_CHK_SUFFIX}.chk).")
+    for token in fi.route_tokens(step.excited_keywords):
+        if keyword_text_name(token).upper() in LINKED_DROPPED_KEYWORDS:
+            problems.append(f"Excited-state keywords: {token} belongs to the optimization step; this step computes "
+                            "the excited states only.")
+    return problems
+
+
+def opt_excited_warnings(spec: GaussianJobSpec, first: GaussianStepSpec, second: GaussianStepSpec) -> List[str]:
+    warnings = []
+    if not second.print_all_coefficients:
+        warnings.append("Excited-state step: without IOp(9/40=4) Gaussian prints only the larger excitation "
+                        "coefficients; the NTO and Excitation tabs then report a normalisation deviation.")
+    if not spec.write_formchk:
+        warnings.append(f"No formchk script: the Excitation and NTO tabs need {Path(second.chk).stem}"
+                        f"{fi.FCHK_EXTENSION}; run formchk {second.chk} after the job.")
+    if second.guess != READ_GUESS:
+        if no_basis(first):
+            warnings.append(f"Excited-state step: the optimization ({method_keyword(first)}) has no basis set, so "
+                            "this step starts from a new guess.")
+        else:
+            warnings.append(f"Excited-state step: its basis set ({basis_keyword(second)}) differs from the "
+                            f"optimization's ({basis_keyword(first)}), so it starts from a new guess, not from the "
+                            "optimization's orbitals.")
+    return warnings
+
+
+# ----------------------------------------------------------------------
 # Live texts of the window (never raise)
 # ----------------------------------------------------------------------
 def route_preview(spec: GaussianJobSpec, index: int) -> str:
@@ -943,12 +1125,22 @@ def route_preview(spec: GaussianJobSpec, index: int) -> str:
             return ("job 1:     " + " ".join(fi.build_route(*args, (f.opt_keyword,))) + "\n"
                     "jobs 2-3:  " + " ".join(fi.build_route(*args, ion_extra))
                     + "".join(f"\n{e}" for e in errors))
-        keywords, errors = route_keywords(step)
-        route = fi.build_route(step.print_level, method_keyword(step), basis_keyword(step),
-                               " ".join(format_keyword(k) for k in keywords))
-        return " ".join(route) + "".join(f"\n{e}" for e in errors)
+        if step.job_type == gk.JOB_OPT_EXCITED:
+            first, second = opt_excited_steps(step, (spec.stem or "").strip() or fi.DEFAULT_STEM)
+            (route1, errors1), (route2, errors2) = _route_and_errors(first), _route_and_errors(second)
+            errors = errors1 + [e for e in errors2 if e not in errors1]    # step 2 repeats step 1's keywords
+            return f"step 1:  {route1}\nstep 2:  {route2}" + "".join(f"\n{e}" for e in errors)
+        route, errors = _route_and_errors(step)
+        return route + "".join(f"\n{e}" for e in errors)
     except (KeyError, ValueError) as exc:
         return f"Cannot build the route yet: {exc}"
+
+
+def _route_and_errors(step: GaussianStepSpec) -> Tuple[str, List[str]]:
+    keywords, errors = route_keywords(step)
+    route = fi.build_route(step.print_level, method_keyword(step), basis_keyword(step),
+                           " ".join(format_keyword(k) for k in keywords))
+    return " ".join(route), errors
 
 
 def _spin_text(electrons: int, multiplicity: Optional[int]) -> str:
@@ -971,11 +1163,14 @@ def molecule_summary(spec: GaussianJobSpec, index: int) -> str:
     except ValueError as exc:
         return f"Cannot count electrons yet: {exc}"
     z_total = nuclear_charge(a[0] for a in atoms)
+    stem = (spec.stem or "").strip() or fi.DEFAULT_STEM
     if step.job_type != gk.JOB_FUKUI:
         electrons = z_total - step.charge
-        return (f"{len(atoms)} atoms, charge {step.charge:+d}, {electrons} electrons, "
+        text = (f"{len(atoms)} atoms, charge {step.charge:+d}, {electrons} electrons, "
                 f"{_spin_text(electrons, step.multiplicity)}").replace("charge +0", "charge 0")
-    stem = (spec.stem or "").strip() or fi.DEFAULT_STEM
+        if step.job_type == gk.JOB_OPT_EXCITED:
+            text += f"\nstep 2 reads the geometry, charge and multiplicity from {optimization_chk(step, stem)}"
+        return text
     lines = []
     multiplicities = (step.multiplicity, step.fukui_plus_multiplicity, step.fukui_minus_multiplicity)
     for (label, tag, _, k, sign), mult in zip(fi.state_tags(step.fukui_p, step.fukui_q), multiplicities):
@@ -1495,6 +1690,10 @@ def read_input_text(text: str, stem: str = fi.DEFAULT_STEM, output_dir: str = ""
     if len(steps) == 3 and " Fukui " in f" {steps[0].title} ":
         notes.append("This is a Fukui job written by the builder; it is shown as three linked steps. Choose the "
                      "Fukui functions job type to rebuild it from its panels.")
+    if (len(steps) == 2 and steps[1].geometry_source == gk.GEOM_ALLCHECK and steps[1].state != gk.STATE_GROUND
+            and steps[1].chk.endswith(gk.EXCITED_CHK_SUFFIX + ".chk")):
+        notes.append("This is a Geometry optimization + excited states job written by the builder; it is shown as "
+                     "two linked steps. Choose that job type to rebuild it from its panels.")
     return GaussianJobSpec(stem=stem, output_dir=output_dir, geometry=geometry, steps=steps), notes
 
 

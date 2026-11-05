@@ -47,6 +47,21 @@ STEP_WIDGETS: Dict[str, Tuple[str, str]] = {
     "fukui_plus_multiplicity": ("fukui_plus_mult_input", OPTIONAL_INT),
     "fukui_minus_multiplicity": ("fukui_minus_mult_input", OPTIONAL_INT),
     "fukui_guess_read": ("fukui_guess_read_switch", BOOL),
+    "opt_confirm_freq": ("opt_confirm_freq_switch", BOOL),
+    "excited_state": ("excited_state_selection", CHOICE),
+    "excited_n_states": ("excited_n_states_input", INT),
+    "excited_root": ("excited_root_input", INT),
+    "excited_state_spin": ("excited_state_spin_selection", CHOICE),
+    "excited_family": ("excited_family_selection", CHOICE),
+    "excited_method_name": ("excited_method_selection", CHOICE),
+    "excited_method_other": ("excited_method_other_input", TEXT),
+    "excited_basis": ("excited_basis_selection", CHOICE),
+    "excited_basis_diffuse": ("excited_diffuse_selection", CHOICE),
+    "excited_basis_polarization": ("excited_polarization_selection", CHOICE),
+    "excited_basis_other": ("excited_basis_other_input", TEXT),
+    "excited_coefficients": ("excited_coefficients_switch", BOOL),
+    "excited_keywords": ("excited_keywords_input", TEXT),
+    "excited_chk": ("excited_chk_input", TEXT),
     "state": ("state_selection", CHOICE),
     "n_states": ("n_states_input", INT),
     "root": ("root_input", INT),
@@ -113,6 +128,10 @@ FUKUI_STATUS = ("Fukui functions: three linked jobs (N, N+p, N-q). Choosing it r
                 "and extra Link 0 lines; the controls the job sets itself are greyed out.")
 FUKUI_NOTE = ("The Fukui job writes three linked jobs itself: the title, %Chk/%OldChk, the guess, Add. Inp., "
               "connectivity, the spin prefix and the electronic state are set by it.")
+OPT_EXCITED_STATUS = ("Geometry optimization + excited states: two linked steps. Choosing it reset the electronic "
+                      "state, the geometry source and %OldChk; set the excited states in the Job Type panel.")
+OPT_EXCITED_NOTE = ("Step 1 is the optimization (Method panel); step 2 computes the excited states at its geometry "
+                    "with the settings above. The Method panel's electronic state stays Ground state.")
 
 
 def _assign(widget, attr: str, value) -> None:
@@ -268,6 +287,29 @@ class GaussianInputBuilderUI:
             self._heading("NMR"),
             self._field("Method:", self._choice("nmr_method_selection", gk.NMR_METHODS)),
             self._checkbox_row(self._switch("nmr_spinspin_switch", "Spin-spin couplings")),
+            self._heading("Geometry optimization + excited states"),
+            self._checkbox_row(self._switch("opt_confirm_freq_switch", "Confirm the minimum with frequencies (Opt Freq)")),
+            self._field("Excited-state method:", self._choice("excited_state_selection", gk.EXCITED_STATES)),
+            self._field("Number of states:", self._text("excited_n_states_input", 80)),
+            self._field("State of interest (Root):", self._text("excited_root_input", 80)),
+            self._field("States:", self._choice("excited_state_spin_selection", gk.STATE_SPINS)),
+            self._field("Method family:", self._choice("excited_family_selection", gk.EXCITED_FAMILIES)),
+            self._field("Functional:", self._choice("excited_method_selection", gk.EXCITED_DFT_METHODS)),
+            self._field("Other method:", self._text("excited_method_other_input", 200), "when Functional is Other..."),
+            self._field("Basis set:", self._choice("excited_basis_selection", gk.EXCITED_BASES)),
+            self._row(self._label("Diffuse, polarization:"), self._choice("excited_diffuse_selection", gk.DIFFUSE, 90),
+                      self._choice("excited_polarization_selection", gk.POLARIZATION, 130),
+                      self._hint("   6-31G and 6-311G only")),
+            self._field("Other basis set:", self._text("excited_basis_other_input", 200), "when Basis set is Other..."),
+            self._checkbox_row(self._switch("excited_coefficients_switch", "Print all excitation coefficients for the "
+                                                                           "NTO and Excitation tabs (IOp(9/40=4))")),
+            self._field("Excited-state keywords:", self._text("excited_keywords_input", placeholder="step 2 only, "
+                                                                                                    "e.g. Density=Current")),
+            self._field("Excited-state %Chk:", self._text("excited_chk_input", 220, "<name>_excited.chk"),
+                        "file name, no folders"),
+            self._hint("Step 1 optimizes with the Method panel's model chemistry and writes %Chk. Step 2 reads the "
+                       "geometry, charge and multiplicity from it (Geom=AllCheck, %OldChk), starts from its orbitals "
+                       "when the basis set is the same, and writes <name>_excited.chk for the Excitation and NTO tabs."),
             self._heading("Fukui functions (N, N+p, N-q)"),
             self._field("p (electrons added):", self._text("fukui_p_input", 80)),
             self._field("q (electrons removed):", self._text("fukui_q_input", 80)),
@@ -448,6 +490,13 @@ class GaussianInputBuilderUI:
                 step = dataclasses.replace(self.steps[self.current_step], job_type=gk.JOB_FUKUI)
             self._load_step(gi.fukui_defaults(step))
             self._status(FUKUI_STATUS)
+        elif widget is self.job_type_selection and widget.value == gk.JOB_OPT_EXCITED:
+            try:
+                step = self._collect_step()
+            except ValueError:
+                step = dataclasses.replace(self.steps[self.current_step], job_type=gk.JOB_OPT_EXCITED)
+            self._load_step(gi.opt_excited_defaults(step))
+            self._status(OPT_EXCITED_STATUS)
         self.refresh()
 
     def refresh(self) -> None:
@@ -476,24 +525,40 @@ class GaussianInputBuilderUI:
     def refresh_controls(self, step: gi.GaussianStepSpec) -> None:
         """Enable only what applies to this step (GaussView greys out the same way)."""
         job, fukui = step.job_type, step.job_type == gk.JOB_FUKUI
+        opt_excited = job == gk.JOB_OPT_EXCITED
         optimizing = job in gk.OPTIMIZING_JOBS
+        frequencies = job in gk.FREQUENCY_JOBS or (opt_excited and step.opt_confirm_freq)
         excited = step.state != gk.STATE_GROUND
         model_state = step.state in gk.MODEL_STATES
         basis_used = not gi.no_basis(step)
         coordinates = step.geometry_source == gk.GEOM_COORDINATES
         solvated = step.solvation != gk.SOLVATION_NONE
+        excited_family = opt_excited and step.excited_state != gk.STATE_CIS
+        excited_dft = excited_family and step.excited_family == gk.FAMILY_DFT
         rules = {
-            "opt_target_selection": optimizing, "force_constants_selection": optimizing or fukui,
-            "opt_tight_switch": optimizing or fukui, "opt_max_cycles_input": optimizing or fukui,
-            "freq_raman_switch": job in gk.FREQUENCY_JOBS, "freq_vcd_switch": job in gk.FREQUENCY_JOBS,
-            "freq_anharmonic_switch": job in gk.FREQUENCY_JOBS,
+            "opt_target_selection": optimizing,
+            "force_constants_selection": optimizing or fukui or opt_excited,
+            "opt_tight_switch": optimizing or fukui or opt_excited,
+            "opt_max_cycles_input": optimizing or fukui or opt_excited,
+            "freq_raman_switch": frequencies, "freq_vcd_switch": frequencies, "freq_anharmonic_switch": frequencies,
+            "opt_confirm_freq_switch": opt_excited, "excited_state_selection": opt_excited,
+            "excited_n_states_input": opt_excited, "excited_root_input": opt_excited,
+            "excited_state_spin_selection": opt_excited, "excited_family_selection": excited_family,
+            "excited_method_selection": excited_dft,
+            "excited_method_other_input": excited_dft and step.excited_method_name == gk.OTHER,
+            "excited_basis_selection": opt_excited,
+            "excited_diffuse_selection": opt_excited and step.excited_basis in gk.EXTENSIBLE_POPLE,
+            "excited_polarization_selection": opt_excited and step.excited_basis in gk.EXTENSIBLE_POPLE,
+            "excited_basis_other_input": opt_excited and step.excited_basis == gk.OTHER,
+            "excited_coefficients_switch": opt_excited, "excited_keywords_input": opt_excited,
+            "excited_chk_input": opt_excited,
             "irc_direction_selection": job == gk.JOB_IRC, "irc_force_constants_selection": job == gk.JOB_IRC,
             "irc_max_points_input": job == gk.JOB_IRC, "irc_step_size_input": job == gk.JOB_IRC,
             "stable_opt_switch": job == gk.JOB_STABILITY,
             "nmr_method_selection": job == gk.JOB_NMR, "nmr_spinspin_switch": job == gk.JOB_NMR,
             "fukui_p_input": fukui, "fukui_q_input": fukui, "fukui_plus_mult_input": fukui,
             "fukui_minus_mult_input": fukui, "fukui_guess_read_switch": fukui,
-            "state_selection": not fukui, "n_states_input": excited and not fukui,
+            "state_selection": not fukui and not opt_excited, "n_states_input": excited and not fukui,
             "root_input": excited and not fukui, "state_spin_selection": excited and not fukui,
             "coefficients_switch": excited and not fukui, "spin_selection": not fukui,
             "family_selection": not model_state,
@@ -503,28 +568,29 @@ class GaussianInputBuilderUI:
             "diffuse_selection": basis_used and step.basis in gk.EXTENSIBLE_POPLE,
             "polarization_selection": basis_used and step.basis in gk.EXTENSIBLE_POPLE,
             "basis_other_input": basis_used and step.basis == gk.OTHER,
-            "geometry_source_selection": not fukui,
+            "geometry_source_selection": not fukui and not opt_excited,
             "charge_input": step.geometry_source != gk.GEOM_ALLCHECK,
             "multiplicity_input": step.geometry_source != gk.GEOM_ALLCHECK,
             "geometry_input": self.current_step == 0 or coordinates,
             "load_geometry_button": self.current_step == 0 or coordinates,
-            "modredundant_input": optimizing, "modred_add_button": optimizing,
-            "modred_type_selection": optimizing, "modred_atoms_input": optimizing,
-            "modred_action_selection": optimizing, "modred_steps_input": optimizing,
-            "modred_size_input": optimizing,
-            "title_input": not fukui, "write_chk_switch": not fukui, "chk_input": not fukui and step.write_chk,
-            "old_chk_input": not fukui, "extra_link0_input": not fukui,
+            "modredundant_input": optimizing or opt_excited, "modred_add_button": optimizing or opt_excited,
+            "modred_type_selection": optimizing or opt_excited, "modred_atoms_input": optimizing or opt_excited,
+            "modred_action_selection": optimizing or opt_excited, "modred_steps_input": optimizing or opt_excited,
+            "modred_size_input": optimizing or opt_excited,
+            "title_input": not fukui, "write_chk_switch": not fukui and not opt_excited,
+            "chk_input": not fukui and step.write_chk,
+            "old_chk_input": not fukui and not opt_excited, "extra_link0_input": not fukui,
             "connectivity_switch": not fukui and coordinates,
             "guess_selection": not fukui, "guess_mix_switch": not fukui, "guess_always_switch": not fukui,
             "guess_only_switch": not fukui, "guess_save_switch": not fukui,
             "solvent_selection": solvated, "solvent_other_input": solvated and step.solvent == gk.OTHER,
             "additional_input_input": not fukui,
-            "add_step_button": not fukui, "remove_step_button": len(self.steps) > 1,
+            "add_step_button": not fukui and not opt_excited, "remove_step_button": len(self.steps) > 1,
             "step_up_button": self.current_step > 0, "step_down_button": self.current_step < len(self.steps) - 1,
         }
         for attr, enabled in rules.items():
             _assign(getattr(self, attr), "enabled", enabled)
-        _assign(self.fukui_note_label, "text", FUKUI_NOTE if fukui else "")
+        _assign(self.fukui_note_label, "text", FUKUI_NOTE if fukui else OPT_EXCITED_NOTE if opt_excited else "")
 
     # --- dialogs ------------------------------------------------------------
     async def _show_error(self, title: str, message: str):
@@ -580,6 +646,10 @@ class GaussianInputBuilderUI:
         step = self.steps[self.current_step]
         if step.job_type == gk.JOB_FUKUI:
             self._status("The Fukui functions job type is already three linked jobs; it cannot take more steps.")
+            return
+        if step.job_type == gk.JOB_OPT_EXCITED:
+            self._status("The Geometry optimization + excited states job type is already two linked steps; it "
+                         "cannot take more.")
             return
         self.steps.insert(self.current_step + 1, gi.linked_step(step))
         self._show_step(self.current_step + 1)
@@ -725,6 +795,10 @@ class GaussianInputBuilderUI:
             lines.append(f"Then open {job.fukui.states[0].fchk.name} in Tools > Analysis of Fukui Functions; the N+1 "
                          "and N-1 files are filled in automatically (copy the three .fchk back first if they were "
                          "made on a cluster).")
+        elif job.excited_fchk:
+            lines.append(f"Then open {job.excited_fchk} in the 3D Molecular Viewer's Excitation (or NTO) tab with "
+                         f"{log}: the output of both steps, whose last excited-state block is step 2's. Both files "
+                         "are needed; the binary .chk cannot be read.")
         elif job.script_path:
             lines.append("Then open the .fchk in the 3D Molecular Viewer (Orbitals, ESP, QTAIM, NTO, Excitation tabs).")
         return "\n".join(lines) + "\n\n" + self._warnings_text(job)
