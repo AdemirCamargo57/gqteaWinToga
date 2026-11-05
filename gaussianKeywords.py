@@ -102,7 +102,9 @@ POPLE_BASES = ("STO-3G", "3-21G", "6-31G", "6-311G")
 EXTENSIBLE_POPLE = ("6-31G", "6-311G")             # the ones the diffuse/polarization lists apply to
 OTHER_BASES = ("cc-pVDZ", "cc-pVTZ", "cc-pVQZ", "aug-cc-pVDZ", "aug-cc-pVTZ", "aug-cc-pVQZ",
                "Def2SVP", "Def2TZVP", "Def2TZVPP", "Def2QZVP", "LanL2DZ", "SDD", "DGDZVP", "Gen", "GenECP")
-BASES = POPLE_BASES + OTHER_BASES + (OTHER,)
+# ChkBasis: the basis set (and ECP) of the checkpoint a linked step reads; how a Gen/GenECP basis is reused.
+BASIS_CHECKPOINT = "Read from checkpoint (ChkBasis)"
+BASES = POPLE_BASES + OTHER_BASES + (BASIS_CHECKPOINT, OTHER)
 GENERAL_BASES = ("Gen", "GenECP")
 DIFFUSE: Dict[str, str] = {"None": "", "+": "+", "++": "++"}
 POLARIZATION: Dict[str, str] = {"None": "", "(d)": "(d)", "(d,p)": "(d,p)", "(2d,p)": "(2d,p)",
@@ -141,7 +143,7 @@ SOLVENTS = ("Water", "Acetonitrile", "Methanol", "Ethanol", "DiMethylSulfoxide",
 # Route keyword (upper case) -> the panel that writes it, for messages.
 PANEL_OF_KEYWORD = {
     "OPT": "Job Type", "FREQ": "Job Type", "IRC": "Job Type", "STABLE": "Job Type", "NMR": "Job Type",
-    "TD": "Method", "TDA": "Method", "EMPIRICALDISPERSION": "Method", "IOP": "Method",
+    "TD": "Method", "TDA": "Method", "EMPIRICALDISPERSION": "Method", "IOP": "Method", "CHKBASIS": "Method",
     "SCF": "General", "NOSYMM": "General", "POLAR": "General", "GEOM": "Molecule/General",
     "GUESS": "Guess", "POP": "Pop", "SCRF": "Solvation",
 }

@@ -91,6 +91,16 @@ def test_every_project_input_reopens_prepares_and_keeps_its_keywords(tmp_path, p
 
 
 class TestReading:
+    def test_chkbasis_reads_back_as_the_basis_choice(self):
+        spec, notes = gi.read_input_text("%OldChk=a.chk\n#P B3LYP ChkBasis Geom=AllCheck Guess=Read TD\n\n")
+        s = spec.steps[0]
+        assert s.basis == gk.BASIS_CHECKPOINT and "ChkBasis" not in s.additional_keywords
+        assert not any("basis" in n for n in notes)
+
+    def test_the_gen_fixture_reads_its_basis_from_the_checkpoint(self):
+        spec, _ = gi.read_input_file(DATA / "gaussian_output" / "inputs" / "h2co_opt_td_gen.gjf")
+        assert (spec.steps[0].basis, spec.steps[1].basis) == ("Gen", gk.BASIS_CHECKPOINT)
+
     def test_star_basis_sets_and_lower_case(self):
         spec, _ = gi.read_input_text("#p pbe1pbe/6-31g** opt\n\nt\n\n0 1\nH 0 0 0\nH 0 0 0.74\n\n")
         s = spec.steps[0]

@@ -297,7 +297,7 @@ def method_keyword(step: GaussianStepSpec, with_prefix: bool = True) -> str:
 
 
 def basis_keyword(step: GaussianStepSpec) -> str:
-    if no_basis(step):
+    if no_basis(step) or step.basis == gk.BASIS_CHECKPOINT:     # ChkBasis is a route keyword (method_keywords)
         return ""
     if step.basis == gk.OTHER:
         return step.basis_other.strip()
@@ -351,8 +351,10 @@ def job_keywords(step: GaussianStepSpec) -> List[RouteKeyword]:
 
 
 def method_keywords(step: GaussianStepSpec) -> List[RouteKeyword]:
-    """TD/TDA, dispersion and the coefficient IOp (CIS and ZINDO live in the model token)."""
+    """ChkBasis, TD/TDA, dispersion and the coefficient IOp (CIS and ZINDO live in the model token)."""
     out = []
+    if step.basis == gk.BASIS_CHECKPOINT and not no_basis(step):
+        out.append(RouteKeyword("ChkBasis"))
     if step.state in (gk.STATE_TD, gk.STATE_TDA):
         out.append(RouteKeyword(gk.STATE_KEYWORDS[step.state], state_options(step)))
     dispersion = gk.DISPERSION.get(step.dispersion)
@@ -542,6 +544,8 @@ def _checkpoint_readers(keywords: Sequence[RouteKeyword]) -> List[str]:
             readers += [f"Guess={o}" for o in gk.READ_GUESSES if o.upper() in options]
         elif keyword.key in ("OPT", "IRC"):
             readers += [f"{keyword.name}={o}" for o in gk.READ_FORCE_CONSTANTS if o.upper() in options]
+        elif keyword.key == "CHKBASIS":
+            readers.append("ChkBasis")
     return readers
 
 
@@ -1043,10 +1047,13 @@ class _RouteReader:
                          "NMR": self._nmr, "TD": self._td, "TDA": self._td,
                          "EMPIRICALDISPERSION": self._dispersion, "IOP": self._iop, "SCF": self._scf,
                          "NOSYMM": self._switch("nosymm"), "POLAR": self._switch("polar"), "GEOM": self._geom,
-                         "GUESS": self._guess, "POP": self._pop, "SCRF": self._scrf}
+                         "GUESS": self._guess, "POP": self._pop, "SCRF": self._scrf,
+                         "CHKBASIS": self._chk_basis}
+        self.chk_basis = False
 
     def read(self, tokens: Sequence[str]) -> None:
         model_seen = False
+        self.chk_basis = any(t.upper() == "CHKBASIS" for t in tokens)      # bare ChkBasis: the basis choice
         for token in tokens:
             if not model_seen and self._model(token):
                 model_seen = True
@@ -1121,6 +1128,8 @@ class _RouteReader:
                               "and were dropped; add them back by hand if they matter.")
         if slash:
             self._basis(basis_text)
+        elif self.chk_basis and not no_basis(self.step):
+            self.step.basis = gk.BASIS_CHECKPOINT
         elif not no_basis(self.step):
             self.step.basis = "STO-3G"
             self.notes.append(f"{self.where}: the route names no basis set; Gaussian's default STO-3G is used.")
@@ -1260,6 +1269,10 @@ class _RouteReader:
             else:
                 rest.append(option)
         return rest
+
+    def _chk_basis(self, keyword: RouteKeyword) -> Optional[List[str]]:
+        """A bare ChkBasis is the basis choice (set in _model); anything else stays as it is written."""
+        return [] if not keyword.options and self.step.basis == gk.BASIS_CHECKPOINT else None
 
     def _switch(self, name: str):
         def handler(keyword: RouteKeyword) -> Optional[List[str]]:

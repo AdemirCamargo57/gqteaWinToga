@@ -196,6 +196,21 @@ class TestOtherPanels:
         assert len(lines) > 1 and all(len(line) <= fi.ROUTE_WIDTH for line in lines)
 
 
+class TestChkBasis:
+    def test_route(self):
+        assert route(basis=gk.BASIS_CHECKPOINT) == "#P B3LYP ChkBasis"
+        assert route(basis=gk.BASIS_CHECKPOINT, state=gk.STATE_TD) == "#P B3LYP ChkBasis TD=(NStates=3)"
+
+    def test_a_method_without_a_basis_writes_no_chkbasis(self):
+        assert route(basis=gk.BASIS_CHECKPOINT, family=gk.FAMILY_SEMI, method_name="PM7") == "#P PM7"
+
+    def test_it_reads_a_checkpoint(self, tmp_path):
+        text = problems(tmp_path, step(basis=gk.BASIS_CHECKPOINT, multiplicity=1, write_chk=False))
+        assert "ChkBasis reads a checkpoint" in text
+        gi.GaussianInputBuilder().prepare(job_spec(tmp_path, step(basis=gk.BASIS_CHECKPOINT, multiplicity=1,
+                                                                    old_chk="old.chk")))
+
+
 class TestModRedundant:
     def test_scan_and_freeze_lines(self):
         assert gi.parse_modredundant("B 1 2 S 10 0.05\n\nd 1 2 3 4 f\nA 1 2 3 F", n_atoms=4) == [
