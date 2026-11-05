@@ -77,11 +77,13 @@ def test_a_file_the_builder_wrote_reads_back_to_its_spec(tmp_path, name):
 @pytest.mark.parametrize("path", FIXTURES, ids=[p.name for p in FIXTURES])
 def test_every_project_input_reopens_prepares_and_keeps_its_keywords(tmp_path, path):
     spec, _ = gi.read_input_file(path)
-    original = path.read_text(errors="replace").splitlines()
-    route = " ".join(l.strip() for l in original if l.strip().startswith("#")).split(None, 1)[1]
-    names = {gi.keyword_text_name(t).upper() for t in fi.route_tokens(route) if "/" not in t}
-    emitted = {gi.keyword_text_name(t).upper() for t in fi.route_tokens(" ".join(gi.route_lines(spec.steps[0])))}
-    assert names <= emitted | {gi.keyword_text_name(gi.method_keyword(spec.steps[0])).upper()}
+    blocks = gi._split_blocks(path.read_text(errors="replace"))      # one per linked step
+    assert len(blocks) == len(spec.steps)
+    for block, step_spec in zip(blocks, spec.steps):
+        route = " ".join(l.strip() for l in block if l.strip().startswith("#")).split(None, 1)[1]
+        names = {gi.keyword_text_name(t).upper() for t in fi.route_tokens(route) if "/" not in t}
+        emitted = {gi.keyword_text_name(t).upper() for t in fi.route_tokens(" ".join(gi.route_lines(step_spec)))}
+        assert names <= emitted | {gi.keyword_text_name(gi.method_keyword(step_spec)).upper()}
     builder = gi.GaussianInputBuilder()
     job = builder.prepare(replace(spec, output_dir=str(tmp_path)))
     again, _ = gi.read_input_text(builder.input_text(job), spec.stem, str(tmp_path))

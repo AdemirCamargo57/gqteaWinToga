@@ -1,0 +1,20 @@
+%Chk=h2co_opt_td.chk
+%Mem=1GB
+%NProcShared=2
+#P B3LYP/6-31G(d) Opt
+
+h2co opt td
+
+0 1
+C    0.0000000000    0.0000000000   -0.5300000000
+O    0.0000000000    0.0000000000    0.6800000000
+H    0.0000000000    0.9500000000   -1.1000000000
+H    0.0000000000   -0.9500000000   -1.1000000000
+
+--Link1--
+%OldChk=h2co_opt_td.chk
+%Chk=h2co_opt_td_excited.chk
+%Mem=1GB
+%NProcShared=2
+#P B3LYP/6-31G(d) TD(NStates=10) Geom=AllCheck Guess=Read IOp(9/40=4)
+

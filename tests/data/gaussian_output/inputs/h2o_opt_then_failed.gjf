@@ -1,0 +1,22 @@
+%Chk=h2o_opt_then_failed.chk
+%Mem=1GB
+%NProcShared=2
+#P HF/3-21G Opt
+
+water opt
+
+0 1
+O    0.0000000000    0.0000000000    0.1500000000
+H    0.0000000000    0.8200000000   -0.4800000000
+H    0.0000000000   -0.8200000000   -0.4800000000
+
+--Link1--
+%Chk=h2o_opt_then_failed.chk
+%Mem=1GB
+%NProcShared=2
+#P UHF/3-21G Opt=(MaxCycles=1) Geom=Check Guess=Mix
+
+water cation opt stopped by MaxCycles
+
+1 2
+

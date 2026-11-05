@@ -1,0 +1,24 @@
+%Chk=h2co_opt_td_gen.chk
+%Mem=1GB
+%NProcShared=2
+#P B3LYP/Gen Opt
+
+h2co opt td gen
+
+0 1
+C    0.0000000000    0.0000000000   -0.5300000000
+O    0.0000000000    0.0000000000    0.6800000000
+H    0.0000000000    0.9500000000   -1.1000000000
+H    0.0000000000   -0.9500000000   -1.1000000000
+
+C O H 0
+6-31G(d)
+****
+
+--Link1--
+%OldChk=h2co_opt_td_gen.chk
+%Chk=h2co_opt_td_gen_excited.chk
+%Mem=1GB
+%NProcShared=2
+#P B3LYP ChkBasis TD(NStates=3) Geom=AllCheck Guess=Read IOp(9/40=4)
+
